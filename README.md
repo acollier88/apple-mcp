@@ -19,9 +19,29 @@ nor subtask relationships — title prefixes and lists are the portable equivale
 ## Build
 
 ```bash
-swift build -c release
-# binary: .build/release/apple-tasks
+make            # builds the CLI and the optional native-tags helper
+# binaries: .build/release/apple-tasks, .build/release/apple-tasks-private
 ```
+
+`swift build -c release` builds just the CLI; everything works without the
+helper.
+
+### Native tag mirroring
+
+When tags are written (`add -t`, `update --add-tag`), the CLI also mirrors them
+to **real Reminders tags** via `apple-tasks-private`, a small helper that uses
+Apple's private ReminderKit framework (see `docs/remctl-spike.md`). The `[tag]`
+title prefix remains the source of truth — the mirror is additive-only and
+best-effort:
+
+- Output gains `"nativeTags": true|false` on add/update (omitted if no tags).
+- A failed mirror warns on stderr but never fails the command.
+- Removal only updates the prefix; ReminderKit exposes no tag-removal API, so
+  stale native tags must be removed in the Reminders app.
+- `--no-native-tags` skips the mirror; deleting the helper binary disables it
+  globally. `APPLE_TASKS_PRIVATE_BIN` overrides the helper path.
+- Private API caveat: may break on any macOS update (the helper probes every
+  class/selector and fails gracefully). Verified working on macOS 27.0 beta.
 
 First run prompts for Reminders access (macOS 14+ "full access"), attributed to the
 terminal/app that launched it. Grant in System Settings > Privacy & Security > Reminders.

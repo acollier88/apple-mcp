@@ -455,5 +455,23 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "doctor",
+  {
+    description:
+      "Diagnose apple-tasks setup for THIS host process: Reminders/Calendar permission status, " +
+      "private native-tags helper availability, notes-scan watermark. TCC grants are per-host-process, " +
+      "so run this when tools fail unexpectedly.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return ok(await cli(["doctor"]));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

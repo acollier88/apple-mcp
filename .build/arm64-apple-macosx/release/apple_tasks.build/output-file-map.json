@@ -1,0 +1,49 @@
+{
+  "": {
+    "dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/apple_tasks.d",
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/apple_tasks.o",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/primary.swiftdeps"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Commands.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Notes.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Notes.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Notes~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Notes.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Notes.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Support.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Support.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Support~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Support.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Support.dia"
+  }
+}

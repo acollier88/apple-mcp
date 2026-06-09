@@ -12,7 +12,7 @@ struct AppleTasks: AsyncParsableCommand {
             ListTasks.self, Show.self, Add.self, Update.self,
             Complete.self, Uncomplete.self, Delete.self, Lists.self,
             Events.self, Calendars.self,
-            Notes.self, Mail.self,
+            Notes.self, Mail.self, Doctor.self,
         ]
     )
 }
@@ -98,6 +98,9 @@ struct Add: AsyncParsableCommand {
     @Option(help: "none | low | medium | high.")
     var priority: PriorityArg?
 
+    @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring tags to native Reminders tags.")
+    var noNativeTags = false
+
     @Argument(help: "Task title (without tag prefix).")
     var title: String
 
@@ -114,7 +117,11 @@ struct Add: AsyncParsableCommand {
         if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
 
         try store.save(reminder)
-        emit(TaskOut(reminder))
+        var out = TaskOut(reminder)
+        if !noNativeTags {
+            out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
+        }
+        emit(out)
     }
 }
 
@@ -150,6 +157,9 @@ struct Update: AsyncParsableCommand {
     @Option(name: .customLong("list"), help: "Move the task to this list.")
     var listName: String?
 
+    @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring added tags to native Reminders tags.")
+    var noNativeTags = false
+
     func run() async throws {
         for tag in addTags { try Tags.validate(tag) }
         let store = Store()
@@ -172,7 +182,11 @@ struct Update: AsyncParsableCommand {
         if let listName { reminder.calendar = try store.calendar(named: listName) }
 
         try store.save(reminder)
-        emit(TaskOut(reminder))
+        var out = TaskOut(reminder)
+        if !noNativeTags && !addTags.isEmpty {
+            out.nativeTags = NativeTags.mirror(tags: addTags, externalId: reminder.calendarItemExternalIdentifier)
+        }
+        emit(out)
     }
 }
 

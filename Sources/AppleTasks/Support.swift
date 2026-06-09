@@ -168,6 +168,9 @@ struct TaskOut: Codable {
     let completed: Bool
     let completedAt: String?
     let createdAt: String?
+    /// Set by add/update only: whether tags were also mirrored to native
+    /// Reminders tags via the private helper. Omitted when not attempted.
+    var nativeTags: Bool?
 
     init(_ r: EKReminder) {
         let raw = r.title ?? ""

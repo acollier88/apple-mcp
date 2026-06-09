@@ -1,0 +1,1 @@
+["_AssistantIntentsProvider", "_GenerativeFunctionExtractable", "_IntentValueRepresentable", "AnyResolverProviding", "AppEntity", "AppEnum", "AppIntent", "AppIntentsPackage", "AppShortcutProviding", "AppShortcutsProvider", "AppUnionValue", "AppUnionValueCasesProviding", "DynamicOptionsProvider", "EntityQuery", "IntentValueQuery", "Resolver", "TransientEntity"]

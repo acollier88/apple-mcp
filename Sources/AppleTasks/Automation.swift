@@ -44,6 +44,57 @@ enum HTML {
     }
 }
 
+// MARK: - Native tag mirror (private ReminderKit, via the apple-tasks-private helper)
+
+enum NativeTags {
+    /// The helper lives next to the main binary; APPLE_TASKS_PRIVATE_BIN overrides.
+    static var helperURL: URL? {
+        if let override = ProcessInfo.processInfo.environment["APPLE_TASKS_PRIVATE_BIN"] {
+            return URL(fileURLWithPath: override)
+        }
+        let sibling = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+            .appendingPathComponent("apple-tasks-private")
+        return FileManager.default.isExecutableFile(atPath: sibling.path) ? sibling : nil
+    }
+
+    /// Best-effort, additive-only mirror of tags onto the reminder's native
+    /// Reminders tags. Returns true on success, false (with a stderr warning)
+    /// on any failure — the [tag] title prefix is the source of truth, so a
+    /// failed mirror never fails the command.
+    static func mirror(tags: [String], externalId: String?) -> Bool? {
+        guard !tags.isEmpty else { return nil }
+        guard let helper = helperURL else { return nil }
+        guard let externalId, !externalId.isEmpty else {
+            FileHandle.standardError.write(Data("warning: native tag mirror skipped (no external identifier yet)\n".utf8))
+            return false
+        }
+        do {
+            let payload = try JSONSerialization.data(withJSONObject: ["externalId": externalId, "tags": tags])
+            let process = Process()
+            process.executableURL = helper
+            let stdin = Pipe()
+            let stderr = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = Pipe()
+            process.standardError = stderr
+            try process.run()
+            stdin.fileHandleForWriting.write(payload)
+            stdin.fileHandleForWriting.closeFile()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 { return true }
+            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            FileHandle.standardError.write(Data("warning: native tag mirror failed: \(detail)\n".utf8))
+            return false
+        } catch {
+            FileHandle.standardError.write(Data("warning: native tag mirror failed: \(error.localizedDescription)\n".utf8))
+            return false
+        }
+    }
+}
+
 // MARK: - Scan watermark state (~/.config/apple-tasks/state.json)
 
 struct ScanState: Codable {
