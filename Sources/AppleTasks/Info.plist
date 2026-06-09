@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.collier.apple-tasks</string>
+    <key>CFBundleName</key>
+    <string>apple-tasks</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>apple-tasks reads and writes Calendar events so agents can schedule and time-block tasks.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>apple-tasks reads and writes Calendar events so agents can schedule and time-block tasks.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>apple-tasks reads and writes Reminders so agents can manage tasks and plans.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>apple-tasks reads and writes Reminders so agents can manage tasks and plans.</string>
+</dict>
+</plist>
