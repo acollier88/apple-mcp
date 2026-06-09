@@ -141,6 +141,33 @@ Give an agent a standing instruction like:
 Tag tasks with the agent (`[claude]`, `[codex]`), the repo (`[repo2]`), or the
 model to run with (`[opus]`) — any combination, filtered with AND semantics.
 
+## Dispatcher & audit log
+
+Every mutation is recorded to `~/.config/apple-tasks/apple-tasks.db` with
+timestamp and caller (`mcp`, `agent:<tag>`, or the parent process). Inspect
+with `apple-tasks log` / `apple-tasks dispatches`, or the `audit_log` MCP tool.
+
+`apple-tasks dispatch` finds open tasks tagged with a configured agent AND
+`[auto]`, marks them `[dispatched]`, and launches the agent with a prompt
+containing the task details and self-complete instructions. Config at
+`~/.config/apple-tasks/agents.json`:
+
+```json
+{
+  "agents": {
+    "claude": { "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"] }
+  },
+  "workdirs": { "repo2": "~/Code/repo2" },
+  "requireAutoTag": true
+}
+```
+
+The first task tag matching a `workdirs` key sets the agent's working
+directory. Dedupe is enforced by both the dispatch ledger and the
+`[dispatched]`/`[failed]` tags. Always test routing with
+`apple-tasks dispatch --dry-run` first. v1 runs sequentially and waits for
+each agent; `--watch`/launchd mode is on the roadmap (IDEAS.md #7).
+
 ## Siri inbox triage
 
 Reminders sync from Siri, watch, iPhone, and CarPlay — so voice capture anywhere

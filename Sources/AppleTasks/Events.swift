@@ -110,7 +110,9 @@ struct EventsAdd: AsyncParsableCommand {
         }
 
         try store.save(event)
-        emit(EventOut(event))
+        let out = EventOut(event)
+        AuditDB.shared.record(command: "events add", taskId: out.id, list: out.calendar, detail: out.rawTitle)
+        emit(out)
     }
 }
 
@@ -178,7 +180,9 @@ struct EventsUpdate: AsyncParsableCommand {
         if let calendarName { event.calendar = try store.eventCalendar(named: calendarName) }
 
         try store.save(event)
-        emit(EventOut(event))
+        let out = EventOut(event)
+        AuditDB.shared.record(command: "events update", taskId: out.id, list: out.calendar, detail: out.rawTitle)
+        emit(out)
     }
 }
 
@@ -195,11 +199,13 @@ struct EventsDelete: AsyncParsableCommand {
         let store = Store()
         try await store.requestEventAccess()
         let event = try store.event(id: id)
+        let out = EventOut(event)
         do {
             try store.ek.remove(event, span: .thisEvent, commit: true)
         } catch {
             throw AppleTasksError.saveFailed(error.localizedDescription)
         }
+        AuditDB.shared.record(command: "events delete", taskId: out.id, list: out.calendar, detail: out.rawTitle)
         emit(["deleted": id])
     }
 }

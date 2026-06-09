@@ -1456,11 +1456,19 @@
       "inputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Audit.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift"
         },
         {
           "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Commands.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift"
         },
         {
           "kind" : "file",
@@ -1499,8 +1507,10 @@
       "moduleName" : "apple_tasks",
       "moduleOutputPath" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/Modules/apple_tasks.swiftmodule",
       "objects" : [
+        "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swift.o",
+        "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swift.o",
@@ -1557,11 +1567,19 @@
       "outputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swift.o"
         },
         {
           "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swift.o"
         },
         {
           "kind" : "file",
@@ -1590,8 +1608,10 @@
       ],
       "prepareForIndexing" : false,
       "sources" : [
+        "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Audit.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Commands.swift",
+        "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift",
@@ -2800,8 +2820,10 @@
       "-package-name",
       "apple_mcp",
       "-c",
+      "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Audit.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Commands.swift",
+      "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift",
@@ -3725,11 +3747,19 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swift.o"
         },
         {
           "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swift.o"
         },
         {
           "kind" : "file",
@@ -3763,11 +3793,19 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Audit.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift"
         },
         {
           "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Commands.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift"
         },
         {
           "kind" : "file",

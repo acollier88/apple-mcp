@@ -13,6 +13,7 @@ struct AppleTasks: AsyncParsableCommand {
             Complete.self, Uncomplete.self, Delete.self, Lists.self,
             Events.self, Calendars.self,
             Notes.self, Mail.self, Doctor.self,
+            Dispatch.self, Dispatches.self, Log.self,
         ]
     )
 }
@@ -121,6 +122,7 @@ struct Add: AsyncParsableCommand {
         if !noNativeTags {
             out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
         }
+        AuditDB.shared.record(command: "add", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)
     }
 }
@@ -186,6 +188,7 @@ struct Update: AsyncParsableCommand {
         if !noNativeTags && !addTags.isEmpty {
             out.nativeTags = NativeTags.mirror(tags: addTags, externalId: reminder.calendarItemExternalIdentifier)
         }
+        AuditDB.shared.record(command: "update", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)
     }
 }
@@ -204,7 +207,9 @@ struct Complete: AsyncParsableCommand {
         let reminder = try await store.reminder(id: id)
         reminder.isCompleted = true
         try store.save(reminder)
-        emit(TaskOut(reminder))
+        let out = TaskOut(reminder)
+        AuditDB.shared.record(command: "complete", taskId: out.id, list: out.list, detail: out.rawTitle)
+        emit(out)
     }
 }
 
@@ -220,7 +225,9 @@ struct Uncomplete: AsyncParsableCommand {
         let reminder = try await store.reminder(id: id)
         reminder.isCompleted = false
         try store.save(reminder)
-        emit(TaskOut(reminder))
+        let out = TaskOut(reminder)
+        AuditDB.shared.record(command: "uncomplete", taskId: out.id, list: out.list, detail: out.rawTitle)
+        emit(out)
     }
 }
 
@@ -234,11 +241,13 @@ struct Delete: AsyncParsableCommand {
         let store = Store()
         try await store.requestAccess()
         let reminder = try await store.reminder(id: id)
+        let out = TaskOut(reminder)
         do {
             try store.ek.remove(reminder, commit: true)
         } catch {
             throw AppleTasksError.saveFailed(error.localizedDescription)
         }
+        AuditDB.shared.record(command: "delete", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(["deleted": id])
     }
 }
@@ -288,6 +297,7 @@ struct ListsAdd: AsyncParsableCommand {
         } catch {
             throw AppleTasksError.saveFailed(error.localizedDescription)
         }
+        AuditDB.shared.record(command: "lists add", list: calendar.title)
         emit(ListOut(id: calendar.calendarIdentifier, name: calendar.title))
     }
 }

@@ -4,6 +4,12 @@
     "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/apple_tasks.o",
     "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/primary.swiftdeps"
   },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Audit.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.dia"
+  },
   "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift": {
     "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swift.o",
     "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation~partial.swiftmodule",
@@ -15,6 +21,12 @@
     "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands~partial.swiftmodule",
     "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swiftdeps",
     "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.dia"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift": {
+    "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swift.o",
+    "swiftmodule": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch~partial.swiftmodule",
+    "swift-dependencies": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swiftdeps",
+    "diagnostics": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.dia"
   },
   "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift": {
     "object": "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.swift.o",

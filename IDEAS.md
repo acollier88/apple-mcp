@@ -4,7 +4,29 @@ Extensions for broader Apple-ecosystem integration. Architecture rule for all of
 them: the Swift CLI stays dumb, fast, and JSON-speaking; agents (via MCP) make
 every judgment call.
 
-## 7. Agent dispatcher — closing the loop (NEXT BIG IDEA, 2026-06-09)
+## 7. Agent dispatcher — closing the loop (CORE SLICE ✅ BUILT 2026-06-09)
+
+**Implemented**: SQLite audit log + dispatch ledger
+(`~/.config/apple-tasks/apple-tasks.db`, WAL, raw sqlite3 — `Audit.swift`);
+audit hooks in every mutating command with caller attribution via
+`APPLE_TASKS_CALLER` env (MCP sets "mcp"; dispatcher sets "agent:<tag>" on
+spawned agents; fallback = parent process name); `apple-tasks log` /
+`dispatches` subcommands + MCP `audit_log` tool (21 tools total);
+`apple-tasks dispatch [--dry-run] [--agent X] [--list Y]` reading
+`~/.config/apple-tasks/agents.json` (agents/command templates with {prompt},
+workdirs tag→folder, requireAutoTag default true). Dedupe = ledger row AND
+[dispatched]/[failed] tag check. Verified end-to-end with an echo agent:
+dry-run → dispatch (cwd from workdir tag, prompt rendered with task id/title/
+notes + self-complete instructions) → ledger succeeded → re-dispatch deduped.
+Live config has claude wired (`claude -p {prompt} --permission-mode
+acceptEdits`) — UNTESTED with a real claude run yet; start with --dry-run.
+
+**Remaining for next session**: `--watch` mode (EKEventStoreChanged or poll
+loop) + launchd plist; timeout handling (v1 waits indefinitely); per-agent
+concurrency (v1 is fully sequential); capture agent stdout/stderr to run log
+files; model-tag → flag mapping; notify on completion/failure.
+
+### Original design sketch (2026-06-09 afternoon)
 
 Today the flow is: capture (Siri/Reminders anywhere) → triage → agents *pull*
 work when a human starts them. The missing piece is **push**: a dispatcher that
@@ -49,6 +71,32 @@ Examples that should Just Work:
 - **Siri tie-in**: with the schema intents this means "Hey Siri, remind me to
   add MFA to repo2, tag claude and auto" → dispatcher picks it up → Claude is
   coding it before you've put the phone down. The full voice-to-PR loop.
+
+### Audit log + dispatch ledger (SQLite)
+
+One DB at `~/.config/apple-tasks/apple-tasks.db` (WAL mode for concurrent
+writers; raw SQLite3 C API, no dependency). Reminders remains the source of
+truth for task STATE; SQLite is the machine-side memory.
+
+- **Write it in the CLI, not the MCP.** Every caller (MCP, App Intents app,
+  dispatcher, bare terminal) already funnels through the Swift binary — one
+  implementation covers all paths, including Siri-created tasks. Callers
+  identify themselves via `APPLE_TASKS_CALLER` env (mcp/app/dispatcher);
+  fallback = parent-process lookup (doctor already does this). The MCP server
+  just sets the env var on every shell-out.
+- **`audit` table** (append-only): ts, caller, command, task_id, external_id,
+  list, args summary (REDACT note bodies), result ok/error, error_text,
+  duration_ms. Log all mutations; log scans minimally (they advance
+  watermarks); skip pure reads or make it configurable.
+- **`dispatches` table** (mutable ledger): task_id, agent, command, cwd,
+  prompt, started_at, finished_at, status running/succeeded/failed/timeout,
+  exit_code, run_log_path. This is the AUTHORITATIVE dedupe — the
+  `[dispatched]` tag stays as the human-visible signal, but the dispatcher
+  checks the DB, so manual tag edits can't cause double-runs.
+- **Surfacing**: `apple-tasks log [--since --task --caller]` and
+  `apple-tasks dispatches [--status running]` subcommands + MCP `audit_log`
+  tool. Agents asking "did I already do this?" = idempotency for free. Feeds
+  the morning digest. `doctor` reports DB path/size/last-write.
 
 ### Open questions for next session
 

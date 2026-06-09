@@ -14,7 +14,10 @@ const BIN =
 
 async function cli(args: string[]): Promise<string> {
   try {
-    const { stdout } = await execFileAsync(BIN, args, { timeout: 30_000 });
+    const { stdout } = await execFileAsync(BIN, args, {
+      timeout: 30_000,
+      env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
+    });
     return stdout.trim();
   } catch (err: any) {
     const detail = err.stderr?.trim() || err.message;
@@ -449,6 +452,33 @@ server.registerTool(
     try {
       await execFileAsync("osascript", ["-e", script, title, message], { timeout: 15_000 });
       return ok("notification shown");
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "audit_log",
+  {
+    description:
+      "Read the apple-tasks audit log: every mutation (task/event create/update/complete/delete, dispatches) " +
+      "with timestamp and caller (mcp/app/dispatcher/terminal). Use to check 'did I already do this?' before acting.",
+    inputSchema: {
+      since: z.string().optional().describe("ISO8601 or yyyy-MM-dd lower bound."),
+      task: z.string().optional().describe("Only entries for this task id."),
+      caller: z.string().optional().describe("Caller substring filter (mcp, agent:claude, ...)."),
+      limit: z.number().int().optional().describe("Max rows, newest first (default 50)."),
+    },
+  },
+  async ({ since, task, caller, limit }) => {
+    const args = ["log"];
+    if (since) args.push("--since", since);
+    if (task) args.push("--task", task);
+    if (caller) args.push("--caller", caller);
+    if (limit !== undefined) args.push("--limit", String(limit));
+    try {
+      return ok(await cli(args));
     } catch (err) {
       return fail(err);
     }

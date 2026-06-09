@@ -70,7 +70,7 @@
     "MANPATH" : "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk/usr/share/man:/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/usr/share/man:/Applications/Xcode.app/Contents/Developer/usr/share/man:/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/man:/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/share/man:/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/usr/share/man:/Applications/Xcode.app/Contents/Developer/usr/share/man:/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/man:",
     "MFLAGS" : "",
     "NoDefaultCurrentDirectoryInExePath" : "1",
-    "OLDPWD" : "/Users/andrewcollier/Code/apple-mcp/spikes/AgentTasksApp",
+    "OLDPWD" : "/Users/andrewcollier/Code/apple-mcp",
     "OLLAMA_HOST" : "http://192.168.1.210:11434",
     "OSLogRateLimit" : "64",
     "PATH" : "/Users/andrewcollier/.bun/bin:/Users/andrewcollier/.antigravity/antigravity/bin:/Users/andrewcollier/flutter/bin:/Users/andrewcollier/.local/bin:\"/opt/homebrew/opt/python@3.11/bin:/opt/homebrew/lib/ruby/gems/3.4.0/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin\":/Users/andrewcollier/.claude/plugins/cache/claude-plugins-official/swift-lsp/1.0.0/bin:/Users/andrewcollier/.claude/plugins/cache/thedotmack/claude-mem/13.4.0/bin",
@@ -86,7 +86,7 @@
     "__CFBundleIdentifier" : "com.apple.Terminal",
     "__CF_USER_TEXT_ENCODING" : "0x1F5:0x0:0x0"
   },
-  "inputHash" : "57e1841637417a79cf4610684c933b86165df574bc0afb07724c45ec6839e66e",
+  "inputHash" : "d56da341daee88efa42d9766f0343b76be2d142d3d7f56ecb383ecfe95229721",
   "output" : "",
   "result" : {
     "exit" : {

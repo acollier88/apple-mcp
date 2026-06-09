@@ -51,8 +51,10 @@
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/ArgumentParser.build/UsageGenerator.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/ArgumentParser.build/ZshCompletionsGenerator.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/ArgumentParserToolInfo.build/ToolInfo.swift.o
+/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Audit.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Automation.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Commands.swift.o
+/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events.swift.o
 /Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swift.o
