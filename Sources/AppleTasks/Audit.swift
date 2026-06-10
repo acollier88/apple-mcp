@@ -48,6 +48,9 @@ final class AuditDB {
             exit_code INTEGER
         )
         """)
+        // Older DBs predate these columns; ALTER errors are ignored when they exist.
+        exec("ALTER TABLE dispatches ADD COLUMN run_log_path TEXT")
+        exec("ALTER TABLE dispatches ADD COLUMN worktree TEXT")
     }
 
     private func exec(_ sql: String) {
@@ -140,6 +143,8 @@ final class AuditDB {
         let finishedAt: String?
         let status: String
         let exitCode: Int?
+        let runLogPath: String?
+        let worktree: String?
     }
 
     /// True if this task already has a running or succeeded dispatch.
@@ -166,6 +171,53 @@ final class AuditDB {
         return sqlite3_last_insert_rowid(db)
     }
 
+    func setDispatchPaths(id: Int64, runLogPath: String?, worktree: String?) {
+        guard db != nil else { return }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE dispatches SET run_log_path = ?, worktree = ? WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        for (index, value) in [runLogPath, worktree].enumerated() {
+            if let value {
+                sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
+            } else {
+                sqlite3_bind_null(stmt, Int32(index + 1))
+            }
+        }
+        sqlite3_bind_int64(stmt, 3, id)
+        sqlite3_step(stmt)
+    }
+
+    /// Rows stuck in 'running' since before the cutoff: marks them 'timeout'
+    /// and returns them so the dispatcher can fix the tasks' tags.
+    func reapStale(before cutoff: String) -> [DispatchRow] {
+        guard db != nil else { return [] }
+        let stale = selectDispatches(
+            where: "status = 'running' AND started_at < ?", binds: [cutoff], limit: 1000)
+        guard !stale.isEmpty else { return [] }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE dispatches SET finished_at = ?, status = 'timeout' WHERE status = 'running' AND started_at < ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, cutoff, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+        return stale
+    }
+
+    /// Failed/timed-out attempt count and latest finish time, for retry backoff.
+    func failedAttempts(taskId: String) -> (count: Int, lastFinishedAt: String?) {
+        guard db != nil else { return (0, nil) }
+        var stmt: OpaquePointer?
+        let sql = "SELECT COUNT(*), MAX(finished_at) FROM dispatches WHERE task_id = ? AND status IN ('failed','timeout')"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return (0, nil) }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return (0, nil) }
+        let last = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+        return (Int(sqlite3_column_int(stmt, 0)), last)
+    }
+
     func finishDispatch(id: Int64, status: String, exitCode: Int32) {
         guard db != nil else { return }
         var stmt: OpaquePointer?
@@ -180,15 +232,23 @@ final class AuditDB {
     }
 
     func dispatchRows(status: String?, limit: Int) -> [DispatchRow] {
+        if let status {
+            return selectDispatches(where: "status = ?", binds: [status], limit: limit)
+        }
+        return selectDispatches(where: "1=1", binds: [], limit: limit)
+    }
+
+    private func selectDispatches(where clause: String, binds: [String], limit: Int) -> [DispatchRow] {
         guard db != nil else { return [] }
-        var sql = "SELECT id, task_id, agent, command, cwd, started_at, finished_at, status, exit_code FROM dispatches"
-        if status != nil { sql += " WHERE status = ?" }
-        sql += " ORDER BY id DESC LIMIT \(limit)"
+        let sql = """
+        SELECT id, task_id, agent, command, cwd, started_at, finished_at, status, exit_code, \
+        run_log_path, worktree FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
+        """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
-        if let status {
-            sqlite3_bind_text(stmt, 1, status, -1, SQLITE_TRANSIENT)
+        for (index, bind) in binds.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), bind, -1, SQLITE_TRANSIENT)
         }
         var rows: [DispatchRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -200,7 +260,8 @@ final class AuditDB {
                 taskId: col(1) ?? "", agent: col(2) ?? "", command: col(3) ?? "",
                 cwd: col(4), startedAt: col(5) ?? "", finishedAt: col(6),
                 status: col(7) ?? "",
-                exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8))))
+                exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8)),
+                runLogPath: col(9), worktree: col(10)))
         }
         return rows
     }

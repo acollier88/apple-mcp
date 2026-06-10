@@ -155,18 +155,46 @@ containing the task details and self-complete instructions. Config at
 ```json
 {
   "agents": {
-    "claude": { "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"] }
+    "claude": {
+      "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
+      "worktree": true,
+      "timeoutMinutes": 60
+    }
   },
   "workdirs": { "repo2": "~/Code/repo2" },
-  "requireAutoTag": true
+  "requireAutoTag": true,
+  "maxRetries": 2,
+  "retryBackoffMinutes": 30
 }
 ```
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
-`apple-tasks dispatch --dry-run` first. v1 runs sequentially and waits for
-each agent; `--watch`/launchd mode is on the roadmap (IDEAS.md #7).
+`apple-tasks dispatch --dry-run` first. v1 runs sequentially;
+`--watch`/launchd mode is on the roadmap (IDEAS.md #7).
+
+Hardening features (all verified end-to-end):
+
+- **Run logs** — each agent's stdout/stderr is captured to
+  `~/.config/apple-tasks/runs/<ledger-id>.log`; the ledger stores the path.
+- **Worktree isolation** (`"worktree": true` per agent) — the dispatcher runs
+  `git worktree add` in the task's workdir and the agent works on its own
+  branch (`agent/<tag>-<ledger-id>`) under
+  `~/.config/apple-tasks/worktrees/<ledger-id>`. Output is a branch, never
+  edits to the main checkout — this is what makes `acceptEdits` reasonable
+  unattended. If worktree creation fails the dispatch is aborted, not run
+  unisolated.
+- **Timeouts** (`"timeoutMinutes"` per agent) — overrunning agents get
+  SIGTERM (SIGKILL after 5s) and the run is marked `timeout`.
+- **Reaper** — every dispatch pass first marks ledger rows stuck in
+  `running` longer than `--reap-hours` (default 4) as `timeout` and swaps the
+  task's `[dispatched]` tag for `[failed]`, recovering from a dispatcher
+  killed mid-run. `apple-tasks dispatch --reap-only` runs just this step.
+- **Retries** (`maxRetries` / `retryBackoffMinutes`, default off) — `[failed]`
+  tasks are re-dispatched up to `maxRetries` times once the backoff has
+  elapsed (it scales linearly with the attempt count). After the budget is
+  spent the task stays `[failed]` for a human or triage agent.
 
 ## Siri inbox triage
 

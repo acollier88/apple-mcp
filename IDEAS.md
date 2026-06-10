@@ -22,9 +22,9 @@ Live config has claude wired (`claude -p {prompt} --permission-mode
 acceptEdits`) — UNTESTED with a real claude run yet; start with --dry-run.
 
 **Remaining for next session**: `--watch` mode (EKEventStoreChanged or poll
-loop) + launchd plist; timeout handling (v1 waits indefinitely); per-agent
-concurrency (v1 is fully sequential); capture agent stdout/stderr to run log
-files; model-tag → flag mapping; notify on completion/failure.
+loop) + launchd plist; per-agent concurrency (v1 is fully sequential);
+model-tag → flag mapping; notify on completion/failure. (Timeout handling and
+run-log capture landed with hardening — see #10.)
 
 ### Original design sketch (2026-06-09 afternoon)
 
@@ -311,6 +311,75 @@ ntfy/Pushover; never script Messages.app for bot traffic.
   the Siri-delegation hook behind "Siri Extensions" press coverage. Almost
   certainly entitlement-gated; watch for public API in later betas, don't
   build on it.
+
+## 8. Morning digest → Apple Note — TODO
+
+Scheduled agent (cron/launchd, or `/loop` at 7am) reads: audit log since
+yesterday (what agents did), dispatch ledger outcomes, open tasks due today,
+today's calendar. Writes a digest as a NEW Apple Note (AppleScript `make new
+note` is safe — our read-only rule was about editing existing bodies) + fires
+`notify`. CLI gains `notes create --folder X --title Y` (body as HTML).
+Result: open Notes on your phone over coffee, see what your agents did
+overnight and what's on deck.
+
+## 9. Siri voice status — "what did my agents do today?" — TODO
+
+App Intent in AgentTasks backed by `apple-tasks log`/`dispatches`: summarizes
+recent audit rows as a spoken dialog. Pairs with the schema intents: voice in
+(create/update tasks) AND voice out (status). Trivial now that the audit log
+exists — the intent is ~30 lines shelling to `log --since`.
+
+## 10. Dispatcher hardening — ✅ DONE 2026-06-09 (all four verified end-to-end)
+
+- **Reaper**: every dispatch pass first marks ledger rows stuck in 'running'
+  longer than `--reap-hours` (default 4) as 'timeout' and swaps the task's
+  [dispatched] tag for [failed]; `dispatch --reap-only` runs just this step.
+- **Retry policy**: `maxRetries`/`retryBackoffMinutes` in agents.json (default
+  off). [failed] tasks re-dispatch once backoff (linear in attempt count) has
+  elapsed; audit rows are `dispatch-retry`. Budget spent → stays [failed].
+  Verified: attempt 2 + 3 ran, attempt 4 refused; 30-min backoff gated an
+  immediate retry.
+- **Worktree isolation**: per-agent `"worktree": true` → `git worktree add -b
+  agent/<tag>-<ledgerId>` under ~/.config/apple-tasks/worktrees/<ledgerId>,
+  agent cwd = worktree, prompt gains a commit-to-current-branch instruction,
+  ledger stores the path. Creation failure aborts the dispatch (never runs
+  unisolated). Makes acceptEdits unattended-safe.
+- **Run logs**: agent stdout/stderr → ~/.config/apple-tasks/runs/<ledgerId>.log
+  (with a header: ts, task, command); ledger column `run_log_path`.
+- **Bonus — per-run timeout**: per-agent `"timeoutMinutes"` → SIGTERM (SIGKILL
+  after 5s grace), ledger status 'timeout' (verified: exit 15 at 61s), task
+  tagged [failed] so retry policy applies. Closes the "v1 waits indefinitely"
+  gap from #7.
+- Schema migration: `run_log_path`/`worktree` columns added via guarded ALTER
+  TABLE; old rows read back fine.
+- Live agents.json now: claude with worktree+60-min timeout, maxRetries 2,
+  backoff 30. Real claude dispatch still untested — start with --dry-run.
+- Worktree cleanup is manual for now (`git worktree remove` + branch delete
+  after merging); a `dispatch --gc` could prune worktrees of merged branches.
+
+## 11. iPhone/watch capture shortcut (no app needed) — TODO
+
+An iOS Shortcut "Agent Task": asks for text + agent (menu: claude/gemini) +
+repo (menu from your workdirs), composes `[agent][repo][auto] title`, adds it
+to the right Reminders list natively on the phone. iCloud syncs it; the Mac
+dispatcher picks it up. Full voice/Action-button/watch capture → running agent
+with ZERO custom iOS code. Document the recipe in README; optionally generate
+the shortcut programmatically.
+
+## 12. Mail rules → push-based email capture — TODO
+
+Mail.app rules can run an AppleScript on matching incoming messages. Rule
+script creates a tagged reminder ([mail][triage]) with subject + sender in
+notes. Push beats our polling `mail_scan` for latency, and the triage agent
+already knows what to do with inbox items. Caveat: Mail must be running.
+
+## 13. Multi-Mac claim protocol — KNOWN LIMITATION / TODO
+
+The dispatch ledger is per-machine but tasks sync via iCloud: two Macs running
+dispatchers would double-run a task ([dispatched] tag helps but races over
+sync lag). Fix: claim tag includes hostname ([dispatched:mbp]) and dispatchers
+only reap/retry their own claims; or designate one dispatch machine via
+config. Note in README if a second Mac ever runs the dispatcher.
 
 ## Status: all six ideas implemented (v0.1)
 
