@@ -196,6 +196,18 @@ Hardening features (all verified end-to-end):
   elapsed (it scales linearly with the attempt count). After the budget is
   spent the task stays `[failed]` for a human or triage agent.
 
+> **Subscription note (Claude Pro/Max):** the dispatcher invokes the official
+> `claude` CLI, which Anthropic permits for scripted/headless use under a
+> Pro/Max subscription — provided it's your own account, on your own machine,
+> for your own tasks. Dispatched runs draw from your normal session/weekly
+> limits, so tune `maxRetries` and `timeoutMinutes` accordingly. Do **not**
+> run this as a shared service on one subscription (account sharing violates
+> Anthropic's Consumer Terms), and use an API key (`ANTHROPIC_API_KEY`, billed
+> pay-as-you-go) for always-on or business deployments. Note the Agent SDK is
+> different: it requires API-key auth — subscription OAuth only covers the
+> first-party CLI. Terms change; this isn't legal advice — check Anthropic's
+> current Consumer Terms before relying on it.
+
 ## Siri inbox triage
 
 Reminders sync from Siri, watch, iPhone, and CarPlay — so voice capture anywhere

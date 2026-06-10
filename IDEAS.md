@@ -381,6 +381,35 @@ sync lag). Fix: claim tag includes hostname ([dispatched:mbp]) and dispatchers
 only reap/retry their own claims; or designate one dispatch machine via
 config. Note in README if a second Mac ever runs the dispatcher.
 
+## 14. CoreLocation "whereami" — TODO (researched 2026-06-09)
+
+`apple-tasks whereami` (+ MCP `whereami` tool): CLLocationManager one-shot
+fix, JSON out (lat/lon/accuracy, reverse-geocoded place name via
+CLGeocoder). Fully public API, ~50 LOC; new TCC prompt (Location Services,
+per-host-process like Reminders — add to `doctor`). Uses: location-aware
+triage ("remind me when I get home" logic), am-I-home checks gating the
+dispatcher, geotagging the morning digest. This is the safe easy win from
+the Find My research.
+
+## 15. FindMy.py sidecar — real Find My data — TODO (researched 2026-06-09)
+
+Find My itself is locked down (verified on macOS 27 beta): no AppleScript
+dictionary; cache TCC-protected AND encrypted since macOS 14.4; the four
+FindMy intents (LocateDevice/Locate/PlaySound/ToggleLocationSharing) are
+SiriKit-only in private SiriFindMy.framework — not Shortcuts actions, so the
+shortcut_run bridge can't reach them. Voice already works ("Hey Siri, where's
+my iPhone") — no MCP needed for that.
+
+The viable route: [FindMy.py](https://github.com/malmeloo/FindMy.py)
+(actively maintained, v0.9.8 Jan 2026) — Apple-account auth (trusted-device/
+SMS 2FA), fetches + decrypts location reports for AirTags, iDevices,
+OpenHaystack tags. Plan: small Python sidecar the MCP server shells to,
+exposing `findmy_devices` / `findmy_locate(name)`. Same pattern as remctl:
+stable backbone + optional gray-area backend (reverse-engineered, read-only
+against your own account; session keys need occasional re-auth). NOT doing:
+FindMySyncPlus-style cache decryption (debugger key extraction, fragile,
+unproven on macOS 27).
+
 ## Status: all six ideas implemented (v0.1)
 
 18 MCP tools total (19 with doctor). Remaining future work, roughly in value order:
