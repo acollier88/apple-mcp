@@ -14,5 +14,9 @@
     <string>apple-tasks reads and writes Reminders so agents can manage tasks and plans.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
     <string>apple-tasks reads and writes Reminders so agents can manage tasks and plans.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>apple-tasks reads this Mac's location so agents can act with location context (whereami).</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>apple-tasks reads this Mac's location so agents can act with location context (whereami).</string>
 </dict>
 </plist>

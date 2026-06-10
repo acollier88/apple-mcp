@@ -381,15 +381,17 @@ sync lag). Fix: claim tag includes hostname ([dispatched:mbp]) and dispatchers
 only reap/retry their own claims; or designate one dispatch machine via
 config. Note in README if a second Mac ever runs the dispatcher.
 
-## 14. CoreLocation "whereami" — TODO (researched 2026-06-09)
+## 14. CoreLocation "whereami" — ✅ BUILT 2026-06-10
 
-`apple-tasks whereami` (+ MCP `whereami` tool): CLLocationManager one-shot
-fix, JSON out (lat/lon/accuracy, reverse-geocoded place name via
-CLGeocoder). Fully public API, ~50 LOC; new TCC prompt (Location Services,
-per-host-process like Reminders — add to `doctor`). Uses: location-aware
-triage ("remind me when I get home" logic), am-I-home checks gating the
-dispatcher, geotagging the morning digest. This is the safe easy win from
-the Find My research.
+`apple-tasks whereami` (+ MCP `whereami` tool): one-shot fix with reverse
+geocode, `--timeout` / `--no-geocode`; `doctor` reports Location Services
+status. Implementation note: the classic CLLocationManager delegate API
+NEVER fires in a bare CLI (no runloop) — use the async
+`CLLocationUpdate.liveUpdates()` API (macOS 14+), which also triggers the
+TCC prompt itself. Info.plist gained NSLocation[WhenInUse]UsageDescription.
+TCC grant is per-host-process; first-run prompt must happen from a real
+terminal (sandboxed/headless shells can't display it). Uses: location-aware
+triage, am-I-home dispatcher gating, geotagging the morning digest.
 
 ## 15. FindMy.py sidecar — real Find My data — TODO (researched 2026-06-09)
 
@@ -400,15 +402,36 @@ SiriKit-only in private SiriFindMy.framework — not Shortcuts actions, so the
 shortcut_run bridge can't reach them. Voice already works ("Hey Siri, where's
 my iPhone") — no MCP needed for that.
 
-The viable route: [FindMy.py](https://github.com/malmeloo/FindMy.py)
-(actively maintained, v0.9.8 Jan 2026) — Apple-account auth (trusted-device/
-SMS 2FA), fetches + decrypts location reports for AirTags, iDevices,
-OpenHaystack tags. Plan: small Python sidecar the MCP server shells to,
-exposing `findmy_devices` / `findmy_locate(name)`. Same pattern as remctl:
-stable backbone + optional gray-area backend (reverse-engineered, read-only
-against your own account; session keys need occasional re-auth). NOT doing:
-FindMySyncPlus-style cache decryption (debugger key extraction, fragile,
-unproven on macOS 27).
+**✅ BUILT 2026-06-10** as `sidecar/findmy-sidecar.py` on
+[FindMy.py](https://github.com/malmeloo/FindMy.py) (v0.9.x): subcommands
+`login` (interactive-only — refuses non-TTY; Apple ID + 2FA via
+LocalAnisetteProvider; session → `~/.config/apple-tasks/findmy/account.json`
+chmod 600, re-saved after fetches since tokens rotate), `status`, `devices`,
+`locate <name>`. Accessories = AirTag pairing `.plist` / FindMy.py `.json`
+exports dropped in `~/.config/apple-tasks/findmy/accessories/`. MCP gained
+`findmy_devices` / `findmy_locate`; python resolved from the dedicated venv
+(`~/.config/apple-tasks/findmy/venv`, auto-detected; override
+`APPLE_TASKS_FINDMY_PYTHON`). `doctor` reports sidecar config state.
+Errors come back as JSON `{error, hint}` so agents can self-serve setup
+guidance. **Untested with a real account/accessory yet** — login + plist
+export are manual first-run steps. NOT doing: FindMySyncPlus-style cache
+decryption (debugger key extraction, fragile, unproven on macOS 27).
+
+## 16. Pre-publish hardening & security review — TODO (process step)
+
+Before publishing the repo, run a dedicated review session:
+
+- `/security-review` over the full tree. Known hot spots to scrutinize:
+  prompt template rendering (task title/notes flow into agent prompts —
+  prompt-injection surface for dispatched agents), dispatcher command
+  construction from agents.json, audit-log redaction (notes bodies should
+  stay out), findmy sidecar session file handling, MCP tool input → CLI
+  argv paths (execFile is argv-safe, keep it that way — never shell
+  interpolation).
+- Hardening pass: pin/document the FindMy.py version; decide what example
+  config ships vs. what's gitignored (agents.json contains local paths;
+  apple-tasks.db and runs/ logs must never be committed).
+- Re-run `/code-review high` on the dispatcher + sidecar as a unit.
 
 ## Status: all six ideas implemented (v0.1)
 

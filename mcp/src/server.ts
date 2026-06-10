@@ -486,6 +486,89 @@ server.registerTool(
 );
 
 server.registerTool(
+  "whereami",
+  {
+    description:
+      "Get this Mac's current location (CoreLocation): lat/lon, accuracy, and reverse-geocoded place. " +
+      "Use for location context (am I home? what city am I in?). First use needs a Location Services grant " +
+      "for the MCP host process — run doctor if it times out.",
+    inputSchema: {
+      timeout: z.number().int().optional().describe("Seconds to wait for a fix (default 15)."),
+      no_geocode: z.boolean().optional().describe("Skip reverse geocoding (coordinates only)."),
+    },
+  },
+  async ({ timeout, no_geocode }) => {
+    const args = ["whereami"];
+    if (timeout !== undefined) args.push("--timeout", String(timeout));
+    if (no_geocode) args.push("--no-geocode");
+    try {
+      return ok(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+const FINDMY_SIDECAR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)), "../../sidecar/findmy-sidecar.py");
+// Prefer the dedicated venv (created per sidecar setup docs), else system python.
+const FINDMY_VENV_PYTHON = path.join(
+  process.env.HOME ?? "", ".config/apple-tasks/findmy/venv/bin/python3");
+const FINDMY_PYTHON =
+  process.env.APPLE_TASKS_FINDMY_PYTHON ??
+  ((await import("node:fs")).existsSync(FINDMY_VENV_PYTHON) ? FINDMY_VENV_PYTHON : "python3");
+
+async function findmy(args: string[]): Promise<string> {
+  // The sidecar prints a JSON {error, hint} object on failure (exit 1).
+  try {
+    const { stdout } = await execFileAsync(FINDMY_PYTHON, [FINDMY_SIDECAR, ...args], {
+      timeout: 120_000,
+    });
+    return stdout.trim();
+  } catch (err: any) {
+    const detail = err.stdout?.trim() || err.stderr?.trim() || err.message;
+    throw new Error(detail);
+  }
+}
+
+server.registerTool(
+  "findmy_devices",
+  {
+    description:
+      "List Find My accessories configured for the FindMy.py sidecar (AirTags/OpenHaystack tags whose " +
+      "pairing files are in ~/.config/apple-tasks/findmy/accessories/). Requires one-time interactive " +
+      "setup: 'python3 sidecar/findmy-sidecar.py login'. Returns {error, hint} JSON when unconfigured.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return ok(await findmy(["devices"]));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "findmy_locate",
+  {
+    description:
+      "Fetch the latest Find My network location report for a configured accessory by name " +
+      "(see findmy_devices). Uses the owner's own Apple account via the FindMy.py sidecar; read-only.",
+    inputSchema: {
+      name: z.string().describe("Accessory name (file stem or pairing name)."),
+    },
+  },
+  async ({ name }) => {
+    try {
+      return ok(await findmy(["locate", name]));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "doctor",
   {
     description:

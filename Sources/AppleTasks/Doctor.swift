@@ -7,6 +7,8 @@ struct DoctorOut: Codable {
     let hostProcess: String
     let reminders: String
     let calendars: String
+    let location: String
+    let findmySidecar: String
     let privateHelper: PrivateHelperStatus
     let notesScanWatermark: String?
     let automationNote: String
@@ -73,12 +75,28 @@ struct Doctor: AsyncParsableCommand {
         }
     }
 
+    private static func findmyStatus() -> String {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/apple-tasks/findmy")
+        let session = FileManager.default.fileExists(atPath: dir.appendingPathComponent("account.json").path)
+        let accessories = ((try? FileManager.default.contentsOfDirectory(
+            atPath: dir.appendingPathComponent("accessories").path)) ?? [])
+            .filter { $0.hasSuffix(".plist") || $0.hasSuffix(".json") }
+            .count
+        guard session || accessories > 0 else {
+            return "not configured (run: sidecar/findmy-sidecar.py login)"
+        }
+        return "session \(session ? "present" : "MISSING"), \(accessories) accessories"
+    }
+
     func run() async throws {
         emit(DoctorOut(
             binary: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path,
             hostProcess: Self.hostProcessName(),
             reminders: Self.describe(EKEventStore.authorizationStatus(for: .reminder)),
             calendars: Self.describe(EKEventStore.authorizationStatus(for: .event)),
+            location: LocationFetcher.describeAuthorization(),
+            findmySidecar: Self.findmyStatus(),
             privateHelper: Self.helperStatus(),
             notesScanWatermark: ScanState.load().notesScanWatermark,
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."

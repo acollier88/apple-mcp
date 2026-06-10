@@ -110,7 +110,7 @@ Register with Claude Code:
 claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
 ```
 
-Tools (18):
+Tools (23):
 
 - Tasks: `task_list`, `task_create`, `task_update`, `task_complete`, `task_delete`
 - Plans: `plan_list`, `plan_create`
@@ -118,9 +118,41 @@ Tools (18):
 - Notes/Mail (read-only): `notes_scan`, `mail_scan`, `mail_show`
 - Bridges: `shortcut_list`, `shortcut_run` (escape hatch to HomeKit/Focus/anything
   Shortcuts can do), `notify` (local notification banner)
+- Location: `whereami` (this Mac), `findmy_devices` / `findmy_locate` (AirTags
+  via the FindMy.py sidecar — see below)
+- Introspection: `audit_log`, `doctor`
 
 The server shells out to the Swift binary at `.build/release/apple-tasks`;
 override with the `APPLE_TASKS_BIN` env var.
+
+### Location: whereami & Find My sidecar
+
+`apple-tasks whereami` (+ MCP `whereami`) returns a one-shot CoreLocation fix
+for this Mac with a reverse-geocoded place name. First use triggers a Location
+Services TCC prompt; like Reminders, the grant is **per host process** (grant
+Terminal ≠ grant your MCP host) — `doctor` reports the status. Agents can use
+it for "am I home?" checks, location-aware triage, and geotagging digests.
+
+Real Find My data (AirTags etc.) has no public API, so it ships as an
+**optional sidecar** built on [FindMy.py](https://github.com/malmeloo/FindMy.py).
+Setup (one-time):
+
+```bash
+python3 -m venv ~/.config/apple-tasks/findmy/venv
+~/.config/apple-tasks/findmy/venv/bin/pip install FindMy
+~/.config/apple-tasks/findmy/venv/bin/python3 sidecar/findmy-sidecar.py login   # Apple ID + 2FA
+# then drop AirTag pairing .plist / accessory .json files into
+# ~/.config/apple-tasks/findmy/accessories/ (see FindMy.py docs for export)
+```
+
+The MCP server auto-detects that venv (override with
+`APPLE_TASKS_FINDMY_PYTHON`). Session tokens are stored at
+`~/.config/apple-tasks/findmy/account.json` (mode 600) — treat that file like
+a password. **Caveats:** FindMy.py reverse-engineers Apple's Find My network;
+it is read-only against your own account, but it is not a sanctioned API and
+may break with Apple changes. Use a dedicated Apple ID if you're uncomfortable
+attaching your main one. The `login` step is interactive by design and is
+refused when invoked non-interactively (e.g. by an agent).
 
 ### Notes-to-tasks triage loop
 
