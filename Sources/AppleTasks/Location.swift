@@ -78,7 +78,18 @@ final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sen
         }
     }
 
+    /// Location helper inside the AgentTasks app bundle. Bare executables
+    /// can't get a Location Services grant on recent macOS (locationd never
+    /// registers them), so unauthorized hosts route through the app — one
+    /// grant to "AgentTasks" then covers every host (terminal, MCP, agents).
+    static let appHelper = "/Applications/AgentTasks.app/Contents/MacOS/AgentTasks"
+
     static func fetch(timeout: TimeInterval) async throws -> CLLocation {
+        // macOS reports granted access as authorizedAlways.
+        if CLLocationManager().authorizationStatus != .authorizedAlways,
+           FileManager.default.isExecutableFile(atPath: appHelper) {
+            return try fetchViaApp(timeout: timeout)
+        }
         let fetcher = LocationFetcher()
         return try await withCheckedThrowingContinuation { cont in
             let thread = Thread {
@@ -87,6 +98,37 @@ final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sen
             thread.name = "whereami-location"
             thread.start()
         }
+    }
+
+    private static func fetchViaApp(timeout: TimeInterval) throws -> CLLocation {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: appHelper)
+        process.arguments = ["--whereami", "--timeout", String(Int(timeout))]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(),
+                                encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw AppleTasksError.automationFailed(
+                "AgentTasks location helper failed: \(detail ?? "unknown error")")
+        }
+
+        struct HelperFix: Decodable {
+            let latitude: Double
+            let longitude: Double
+            let accuracyMeters: Double
+            let timestamp: String
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let fix = try JSONDecoder().decode(HelperFix.self, from: data)
+        return CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude),
+            altitude: 0, horizontalAccuracy: fix.accuracyMeters, verticalAccuracy: -1,
+            timestamp: ISO8601DateFormatter().date(from: fix.timestamp) ?? Date())
     }
 
     private func fetchSync(timeout: TimeInterval) -> Result<CLLocation, Error> {

@@ -20,5 +20,9 @@
     <string>AgentTasks reads and writes Reminders to manage the agent task queue.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
     <string>AgentTasks reads and writes Reminders to manage the agent task queue.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>AgentTasks reads this Mac's location so agents can act with location context (whereami).</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>AgentTasks reads this Mac's location so agents can act with location context (whereami).</string>
 </dict>
 </plist>
