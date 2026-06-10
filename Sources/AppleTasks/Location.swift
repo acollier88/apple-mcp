@@ -56,11 +56,19 @@ struct Whereami: AsyncParsableCommand {
     }
 }
 
-/// Uses the modern async CoreLocation API (macOS 14+): no delegate, no
-/// runloop — which a bare CLI doesn't have. liveUpdates() triggers the TCC
-/// prompt itself when status is notDetermined.
-enum LocationFetcher {
+/// CLI CoreLocation needs the classic delegate API driven by a live runloop
+/// (the async liveUpdates API never engages TCC for a bare executable).
+/// Everything runs on a dedicated thread that pumps its own RunLoop — the
+/// proven CoreLocationCLI pattern — bridged back through a continuation.
+final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sendable {
+    // All state is touched only on the dedicated fetch thread.
+    private var manager: CLLocationManager?
+    private var result: Result<CLLocation, Error>?
+
     static func describeAuthorization() -> String {
+        guard CLLocationManager.locationServicesEnabled() else {
+            return "Location Services OFF system-wide (System Settings > Privacy & Security)"
+        }
         switch CLLocationManager().authorizationStatus {
         case .notDetermined: return "notDetermined (will prompt on first use)"
         case .restricted: return "restricted"
@@ -71,33 +79,67 @@ enum LocationFetcher {
     }
 
     static func fetch(timeout: TimeInterval) async throws -> CLLocation {
-        try await withThrowingTaskGroup(of: CLLocation.self) { group in
-            group.addTask {
-                for try await update in CLLocationUpdate.liveUpdates() {
-                    if #available(macOS 15, *) {
-                        if update.authorizationDenied || update.authorizationDeniedGlobally {
-                            throw AppleTasksError.automationFailed(
-                                "Location Services access denied for this host process. " +
-                                "Grant it in System Settings > Privacy & Security > Location Services.")
-                        }
-                    }
-                    if let location = update.location {
-                        return location
-                    }
-                }
-                throw AppleTasksError.automationFailed("location updates ended without a fix")
+        let fetcher = LocationFetcher()
+        return try await withCheckedThrowingContinuation { cont in
+            let thread = Thread {
+                cont.resume(with: fetcher.fetchSync(timeout: timeout))
             }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw AppleTasksError.automationFailed(
-                    "timed out after \(Int(timeout))s waiting for a location fix " +
-                    "(status: \(describeAuthorization()))")
-            }
-            guard let first = try await group.next() else {
-                throw AppleTasksError.automationFailed("location fetch failed")
-            }
-            group.cancelAll()
-            return first
+            thread.name = "whereami-location"
+            thread.start()
         }
+    }
+
+    private func fetchSync(timeout: TimeInterval) -> Result<CLLocation, Error> {
+        guard CLLocationManager.locationServicesEnabled() else {
+            return .failure(AppleTasksError.automationFailed(
+                "Location Services is off system-wide. Enable it in " +
+                "System Settings > Privacy & Security > Location Services."))
+        }
+
+        let manager = CLLocationManager()
+        self.manager = manager
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+
+        if manager.authorizationStatus == .notDetermined {
+            manager.requestWhenInUseAuthorization()
+        } else {
+            manager.startUpdatingLocation()
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while result == nil && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
+        }
+        manager.stopUpdatingLocation()
+
+        return result ?? .failure(AppleTasksError.automationFailed(
+            "timed out after \(Int(timeout))s waiting for a location fix " +
+            "(status: \(Self.describeAuthorization()))"))
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.startUpdatingLocation()
+        case .denied, .restricted:
+            result = .failure(AppleTasksError.automationFailed(
+                "Location Services access denied for this host process. " +
+                "Grant it in System Settings > Privacy & Security > Location Services."))
+        default:
+            break // .notDetermined — waiting on the user prompt
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let location = locations.last {
+            result = .success(location)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // .locationUnknown is transient — CoreLocation keeps trying.
+        if (error as? CLError)?.code == .locationUnknown { return }
+        result = .failure(error)
     }
 }

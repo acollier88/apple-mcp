@@ -166,6 +166,7 @@ def cmd_login(_args):
     state = account.login(email, password)
 
     if state == findmy.LoginState.REQUIRE_2FA:
+        import re
         methods = account.get_2fa_methods()
         for i, method in enumerate(methods):
             if isinstance(method, findmy.SmsSecondFactorMethod):
@@ -174,7 +175,13 @@ def cmd_login(_args):
                 print(f"  {i} - Trusted Device")
         method = methods[int(input("2FA method # > "))]
         method.request()
-        method.submit(input("Code > ").strip())
+        code = re.sub(r"\D", "", input("Code > "))  # digits only; "811 333" -> "811333"
+        try:
+            method.submit(code)
+        except Exception as err:
+            sys.exit(f"2FA failed ({err}). The code may have expired or been "
+                     f"mistyped — run login again (SMS is the fallback if "
+                     f"Trusted Device keeps failing).")
 
     account.to_json(ACCOUNT_FILE)
     ACCOUNT_FILE.chmod(0o600)
