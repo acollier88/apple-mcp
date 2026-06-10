@@ -115,7 +115,10 @@ final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sen
 
         return result ?? .failure(AppleTasksError.automationFailed(
             "timed out after \(Int(timeout))s waiting for a location fix " +
-            "(status: \(Self.describeAuthorization()))"))
+            "(status: \(Self.describeAuthorization())). macOS often adds CLI " +
+            "hosts to the Location Services list WITHOUT showing a dialog — " +
+            "check System Settings > Privacy & Security > Location Services " +
+            "for your terminal/host app and switch it on, then retry."))
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

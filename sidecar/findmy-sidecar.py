@@ -30,6 +30,18 @@ ANISETTE_LIBS = CONFIG_DIR / "ani_libs.bin"
 ACCESSORIES_DIR = CONFIG_DIR / "accessories"
 
 
+def close_account(account):
+    # close() is a coroutine in current FindMy.py; this is a one-shot process,
+    # so just cancel it quietly rather than spinning up an event loop.
+    import inspect
+    try:
+        result = account.close()
+        if inspect.iscoroutine(result):
+            result.close()
+    except Exception:
+        pass
+
+
 def out(obj, code=0):
     json.dump(obj, sys.stdout, indent=2, default=str)
     print()
@@ -132,9 +144,9 @@ def cmd_locate(args):
         try:
             account.to_json(ACCOUNT_FILE)  # session tokens may have rotated
             ACCOUNT_FILE.chmod(0o600)
-            account.close()
         except Exception:
             pass
+        close_account(account)
 
     if report is None:
         die(f"no recent location report for '{accessory_name(path, acc)}'")
@@ -185,7 +197,7 @@ def cmd_login(_args):
 
     account.to_json(ACCOUNT_FILE)
     ACCOUNT_FILE.chmod(0o600)
-    account.close()
+    close_account(account)
     print(f"Session saved to {ACCOUNT_FILE} (mode 600).")
     print(f"Drop AirTag pairing .plist / accessory .json files into {ACCESSORIES_DIR}.")
 
