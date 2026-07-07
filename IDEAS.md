@@ -357,14 +357,13 @@ exists — the intent is ~30 lines shelling to `log --since`.
 - Worktree cleanup is manual for now (`git worktree remove` + branch delete
   after merging); a `dispatch --gc` could prune worktrees of merged branches.
 
-## 11. iPhone/watch capture shortcut (no app needed) — TODO
+## 11. iPhone/watch capture shortcut (no app needed) — ✅ DONE 2026-07-07
 
 An iOS Shortcut "Agent Task": asks for text + agent (menu: claude/gemini) +
 repo (menu from your workdirs), composes `[agent][repo][auto] title`, adds it
 to the right Reminders list natively on the phone. iCloud syncs it; the Mac
 dispatcher picks it up. Full voice/Action-button/watch capture → running agent
-with ZERO custom iOS code. Document the recipe in README; optionally generate
-the shortcut programmatically.
+with ZERO custom iOS code. Documented the recipe in README.
 
 ## 12. Mail rules → push-based email capture — TODO
 

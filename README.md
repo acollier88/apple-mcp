@@ -302,3 +302,43 @@ Two inbox options:
 
 Time-blocking pairs with this: an agent can read free slots via `event_list`
 and book tagged work sessions via `event_create`.
+
+## iOS Capture Shortcut
+
+You can create an iOS Shortcut to capture agent tasks directly from your iPhone, Apple Watch, or via the Action Button, without needing any custom iOS apps. The task will be added natively to your `Code Tasks` list in Reminders, which syncs to your Mac via iCloud, where the dispatcher picks it up.
+
+### Build Recipe
+
+Create a new Shortcut in the iOS **Shortcuts** app named **"Agent Task"**:
+
+1. **List** (Define the available agents):
+   - Add items: `claude`, `gemini` (or whatever agents you have configured).
+2. **Choose from List**:
+   - Prompt: `Agent?`
+   - Select: `List` (from the previous step).
+3. **List** (Define the available repository tags matching your `workdirs` configuration):
+   - Add items: `apple-mcp`, `repo2`, etc.
+4. **Choose from List**:
+   - Prompt: `Repository?`
+   - Select: `List` (from the previous step).
+5. **Ask for Input**:
+   - Prompt: `What is the task?`
+   - Input Type: `Text`
+6. **Text** (Compose the final reminder title):
+   - Type: `[Chosen Item][Chosen Item 2][auto] Provided Input`
+   - *Example flow*: If you select `claude` and `apple-mcp`, and type `Fix typos in readme`, this block will compile to:
+     `[claude][apple-mcp][auto] Fix typos in readme`
+7. **Add New Reminder**:
+   - Add: `Text` (the composed text from the previous step)
+   - To: `Code Tasks` (or your configured Reminders list)
+   - Set other fields (e.g. priority, due date) if desired.
+
+### Usage
+
+- **Siri**: Say *"Hey Siri, run Agent Task"*. Siri will prompt you for the agent, repository, and task description.
+- **Action Button / Back Tap**: Assign the **Agent Task** shortcut to the Action Button (iPhone 15 Pro+) or a Back Tap gesture for one-tap voice/text capture.
+- **Apple Watch**: Run the shortcut from the Shortcuts app on your watch or add it as a watch face complication for instant capturing.
+
+> [!NOTE]
+> **iCloud Sync Latency**: iOS Reminders sync to your Mac via iCloud. There is typically a 5 to 30-second sync latency before the reminder appears in your Mac's Reminders app. Once synced, the next run of the Mac dispatcher (`apple-tasks dispatch`) will pick up the task and invoke the agent in the correct work directory.
+
