@@ -435,10 +435,226 @@ Before publishing the repo, run a dedicated review session:
 
 ## Status: all six ideas implemented (v0.1)
 
-18 MCP tools total (19 with doctor). Remaining future work, roughly in value order:
+23 MCP tools total as of 2026-07-06. Remaining future work, roughly in value order:
 - Recurrence support for tasks and events.
 - Due-date filters on `task_list` (`--due-before`, overdue) for "what's on deck
   today" queries.
 - Mail draft creation (AppleScript can make drafts; never auto-send).
-- Push-service notify (ntfy/Pushover) for off-Mac report-back.
+- Push-service notify (ntfy/Pushover) for off-Mac report-back — promoted to #24.
 - Watermark state for mail_scan (currently stateless, default 24h lookback).
+
+## Round 4 ideas (2026-07-06) — feature-set review
+
+Inventory at review time: 23 MCP tools (task 5, plan 2, event 4, calendar 1,
+notes_scan, mail 2, shortcut 2, notify, audit_log, whereami, findmy 2, doctor);
+CLI adds show/uncomplete/dispatch/dispatches/log that MCP doesn't expose.
+Themes below: close CLI↔MCP gaps, add the missing People dimension (Contacts),
+new capture channels (OCR, voice, drop folder), and context-aware dispatch.
+
+## 17. Contacts (read-only) — the missing People dimension
+
+We cover tasks, time, notes, mail, place — but not *people*. CNContactStore is
+public API: `apple-tasks contacts search <query>` / `contacts show <id>` →
+name, emails, phones, birthday, postal address. MCP `contact_search`.
+- Triage upgrade: "meet Sarah Tuesday 3pm" → agent resolves WHICH Sarah, puts
+  her email in the event notes; mail triage can rank known-contact senders
+  above strangers.
+- Birthdays/anniversaries → morning digest and task suggestions.
+- Separate TCC prompt (Contacts); doctor gains a line. Read-only forever —
+  agents have no business editing the address book.
+
+## 18. MCP parity + dispatcher control tools
+
+The dispatcher is CLI-only today, so an orchestrating agent can't drive it.
+Add MCP tools shelling to existing subcommands (near-zero Swift work):
+`task_show`, `task_uncomplete`, `dispatch_run` (args: dry_run, agent, list —
+default dry_run TRUE from MCP for safety), `dispatch_list` (ledger w/ status
+filter), `run_log(ledger_id, tail?)` to read runs/<id>.log. Unlocks: a
+supervisor agent that reaps, retries, reads failure logs, and re-dispatches —
+the ops loop closes without a human terminal.
+
+## 19. Task ↔ artifact linkback via the URL field
+
+EKCalendarItem has a public `url` property we don't expose. Add `--url` to
+add/update (tasks AND events) and emit it in list/show JSON. Convention: a
+dispatched agent sets the task URL to the PR/commit it produced before
+task_complete; dispatcher prompt template gains a line instructing this.
+Morning digest then links straight to review targets. Reminders UI shows the
+URL natively on every device. Tiny change, big provenance win.
+
+## 20. Screenshot OCR scan — Vision framework capture channel
+
+`apple-tasks screenshots scan`: watermark over the screenshots folder
+(default ~/Desktop, configurable), Vision `VNRecognizeTextRequest` per new
+image, emit {file, ts, text} JSON. On-device, free, no TCC beyond folder
+access. The phone habit "screenshot it to deal with later" becomes a real
+capture channel: agent reads the text, decides task/event/noise, files it
+with provenance (screenshot filename in notes). Pairs with iCloud Photo
+sync lag caveat — Desktop screenshots first, Photos library NOT in scope
+(separate TCC + heavier API).
+
+## 21. Voice-note transcription scan — Speech framework
+
+`apple-tasks audio scan --folder <dir>`: watermark a watched folder for new
+audio files, transcribe on-device via `SFSpeechRecognizer`
+(requiresOnDeviceRecognition), emit {file, ts, transcript} JSON; agent
+triages like notes_scan. Watch the folder = an iCloud Drive dir so Voice
+Memos/watch recordings can be shared into it from any device (Voice Memos'
+own storage is TCC/FDA-protected — don't touch it; the share-sheet drop
+folder sidesteps that). Speech adds its own TCC prompt; doctor line.
+
+## 22. Context-gated dispatch (location / power / focus rails)
+
+agents.json gains optional per-agent `conditions`:
+`{"location": "home", "power": "ac", "maxLoad": 8}`. Dispatcher checks before
+spawning: location = whereami vs named places in config
+(`places: {home: {lat, lon, radiusM}}`), power = `pmset -g batt`, focus =
+`shortcuts run` bridge or skip v1. Tasks that fail the gate stay queued (no
+[failed]) and get picked up next pass. Use cases: heavy agents only on AC
+power; personal-repo agents only when at home; nothing dispatches while
+presenting. Cheap: all reads, no new permissions (whereami already built).
+
+## 23. iCloud Drive drop-folder capture
+
+A watched folder (`~/Library/Mobile Documents/com~apple~CloudDocs/AgentInbox`)
+where ANY device can drop .txt/.md files (share sheet, Files app, Scriptable,
+laptop). `apple-tasks files scan` watermarks it and emits {file, ts, content};
+triage agent converts to tagged tasks and moves processed files to a done/
+subfolder. This is the universal capture escape hatch when Reminders/Siri
+phrasing is awkward — long pasted content, forwarded text, code snippets.
+Combines with #21 (audio in the same folder) and #20 (images) into one
+"inbox folder" concept.
+
+## 24. Push-service notify (ntfy/Pushover) — off-Mac report-back
+
+Promote the long-standing bullet: `notify` gains `--push` using a configured
+ntfy topic or Pushover key (`~/.config/apple-tasks/notify.json`, gitignored).
+Dispatcher failure/timeout paths fire it automatically. This is the missing
+half of the voice-to-PR loop: you spoke the task from the car; the "PR ready"
+ping should reach the car too, not a Mac banner nobody sees. ntfy first
+(free, no account, plain HTTP POST — curl from Swift or the MCP server).
+
+## 25. Safari Reading List scan
+
+`~/Library/Safari/Bookmarks.plist` holds the Reading List (needs Full Disk
+Access for the host process — doctor should detect and say so). Read-only
+`apple-tasks readinglist scan` with the usual watermark → {title, url,
+dateAdded, previewText}. Triage agent turns saved articles into [read]
+tasks with the URL field (#19), or flags ones relevant to active plans.
+Skip if FDA feels too heavy — this is the only idea in this round that
+needs it, so it ships last and stays optional.
+
+## 26. Sections & subtasks via the private helper (remctl round 2)
+
+The remctl spike proved ReminderKit can write more than tags: subtasks,
+sections, smart lists. Extend apple-tasks-private with `--set-section` and
+`--set-parent` keyed by externalId; CLI flags `--section`/`--parent` mirror
+them additively (same posture as native tags: [tag] prefixes stay the
+stable source of truth, private API is enhancement-only, doctor's --check
+probe is the regression canary). Payoff: a plan list becomes visually
+phased in Reminders (sections = phases, subtasks = steps) — the human's
+view of agent work stops being a flat pile.
+
+## macOS 27 beta 2/3 research (2026-07-06) — what the upgrade unlocks
+
+Beta 2 = build 26A5368g (2026-06-22, mostly under-the-hood); **beta 3 =
+26A5378j landed today (2026-07-06)** — upgrade straight to it. Findings below
+verified against the Xcode 27 beta SDK already on this machine where possible.
+
+## 27. Foundation Models local triage — spike #4 is now fully buildable
+
+Verified in the local macOS 27 SDK: `FoundationModels.swiftinterface` has the
+full provider-agnostic surface — `LanguageModel` + `LanguageModelExecutor`
+protocols, `SystemLanguageModel` (on-device), `PrivateCloudComputeLanguageModel`,
+`Tool` protocol, `@Generable` structured output, attachments. Build
+`apple-tasks triage`: feed notes_scan/mail_scan/untagged-inbox output to
+`SystemLanguageModel` with a `@Generable Classification {kind: task|event|noise,
+tags: [String], due: String?}` — structured output means no JSON-parsing
+slop. Zero API cost, offline, runs in the 7am launchd slot. Escalation
+ladder for hard items: on-device → PCC → Claude (#28) — all the same
+`LanguageModelSession` API, swap the `model:` argument.
+
+## 28. ClaudeForFoundationModels — native in-process agent lane
+
+Anthropic ships [ClaudeForFoundationModels](https://github.com/anthropics/ClaudeForFoundationModels)
+(Swift package, beta 0.1.0, needs macOS 27 + Xcode 27): Claude conforming to
+the `LanguageModel` protocol — same session API as the on-device model, with
+tool calling, streaming, `@Generable` structured output, and server-side
+web search. Dispatcher opportunity: a second agent lane besides spawning
+`claude -p` — an in-process `LanguageModelSession(model: ClaudeLanguageModel,
+tools: [...])` where the tools are thin Swift wrappers over our own CLI
+commands (task_complete, task_update, notify). Right-sized for triage/PM
+tasks that don't need a repo checkout: no Node, no subprocess, no worktree —
+just a session in the AgentTasksApp or a `apple-tasks agent` subcommand.
+Auth via ANTHROPIC_API_KEY env. Beta caveat: APIs may change before GA;
+pin the package version.
+
+## 29. Adopt more App Intents schema domains (calendar, notes, mail, files)
+
+Verified in the local SDK's AppIntents.swiftinterface: schema domains now
+cover **assistant, audio, books, browser, calendar, camera, clock, files,
+journal, mail, maps, messages, notes, phone, photos, presentation, reader,
+reminders, spreadsheet, system, whiteboard**. We adopted reminders only.
+Next for AgentTasksApp:
+- **calendar** domain (events/calendars/attendees intents) — Siri natively
+  creates/updates our tagged events, same win as the reminders schemas.
+- **notes** + **mail** domains — position the app as Siri's handle onto our
+  scan surfaces (a Siri "show me new action items" that fronts notes_scan).
+- **files** domain — pairs with the #23 drop-folder inbox.
+- Investigate the **assistant** and **system** intent schemas (assistant is
+  likely the public face of the `_ModelDelegationIntent` SPI found earlier —
+  if it went public, the Siri-delegation hook may now be buildable).
+
+## 30. Siri Extensions status — WATCH, don't build (beta 2/3 reality check)
+
+The third-party Extensions framework ships dormant in the iOS 27 betas:
+settings panel + dedicated App Store section exist, references to Claude/
+ChatGPT/Gemini are in the binaries, but the feature is disabled on Apple's
+backend and was NOT announced at WWDC (EU DMA negotiations + an OpenAI
+partnership dispute per press reports). Extensions are built ON App Intents,
+so idea #29 IS the preparation — nothing else actionable until Apple flips
+the backend on. Re-check each beta.
+
+## 31. Spotlight "Search or Ask" — make our Siri index donations continuous
+
+Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
+ground its answers. Our `IndexedEntity` donation (built in Round 3) runs only
+on app launch — stale within hours on an active queue. Upgrade: donate on
+every mutation (CLI pings the app, or the app watches EKEventStoreChanged and
+re-donates diffs), adopt `IndexedEntityQuery` for the system's semantic
+reindex callbacks, and verify open tasks actually surface in Spotlight ask
+("what's open for claude in repo2?") on beta 3. Cheap, and it's the layer
+the new Siri actually reads from.
+
+## 32. Beta-upgrade regression drill (process, run after EVERY beta)
+
+The project leans on three fragile seams; after each beta upgrade run, in
+order: `apple-tasks doctor` (TCC grants can reset), the private helper
+`--check` probe (private ReminderKit is the canary most likely to break —
+that's by design), one `whereami` run (locationd behavior changed within
+majors before), one `findmy_devices` call (FindMy.py tracks Apple endpoint
+churn), and rebuild AgentTasksApp against the new SDK (schema shapes are
+compiler-enforced, so drift shows up as build errors — that's a feature).
+Script it as `make betacheck` so it's one command on upgrade morning.
+
+## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
+
+Found 2026-07-07 while building the ClaudeLanguageModel spike (docs/
+claude-language-model-spike.md, spikes/ClaudeLanguageModel/). The macOS beta 3
+runtime (26A5378j) ships a NEWER FoundationModels than the newest Xcode beta
+SDK (27A5194q): code compiles against the SDK, then dies in dyld at launch.
+Confirmed skews (via `dyld_info -exports` + swift-demangle):
+
+- `LanguageModelExecutorGenerationChannel.Event` is a protocol in the SDK but
+  a concrete struct at runtime — `send(some Event)` vs `send(Event)`; every
+  executor that streams events hits this.
+- `LanguageModelError.Refusal.init` gained a required `explanation:` param;
+  most error inits gained an `underlyingErrors:` overload (additive).
+
+Consequence: the Claude executor spike typechecks and the transcript-mapping
+logic is validated, but a live round-trip is blocked until an Xcode beta with
+a matching SDK drops. Action on next Xcode beta: re-run the spike build; the
+Event protocol→struct migration is expected to be a small mechanical diff
+(factory methods look unchanged). Add to the §32 drill: dyld-run a trivial
+FoundationModels binary, not just compile one — compile-clean is no longer
+proof on this framework.
