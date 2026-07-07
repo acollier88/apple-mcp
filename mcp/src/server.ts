@@ -12,10 +12,10 @@ const BIN =
   process.env.APPLE_TASKS_BIN ??
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.build/release/apple-tasks");
 
-async function cli(args: string[]): Promise<string> {
+async function cli(args: string[], timeoutMs = 30_000): Promise<string> {
   try {
     const { stdout } = await execFileAsync(BIN, args, {
-      timeout: 30_000,
+      timeout: timeoutMs,
       env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
     });
     return stdout.trim();
@@ -482,6 +482,124 @@ server.registerTool(
     if (limit !== undefined) args.push("--limit", String(limit));
     try {
       return ok(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "task_show",
+  {
+    description: "Show a single task by id: full JSON including notes (with dispatch trailers) and tags.",
+    inputSchema: { id: z.string().describe("Task id from task_list/dispatch_list.") },
+  },
+  async ({ id }) => {
+    try {
+      return ok(await cli(["show", id]));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "task_uncomplete",
+  {
+    description: "Mark a completed task open again.",
+    inputSchema: { id: z.string().describe("Task id.") },
+  },
+  async ({ id }) => {
+    try {
+      return ok(await cli(["uncomplete", id]));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "dispatch_run",
+  {
+    description:
+      "Run the agent dispatcher: scan open agent-tagged [auto] tasks, launch configured agents, reap stale " +
+      "runs, GC worktrees. dry_run defaults to TRUE (reports what would run, launches nothing); a real run " +
+      "(dry_run: false) spawns agent processes, waits for them, and consumes their session budgets. " +
+      "reap_only reaps + GCs without dispatching.",
+    inputSchema: {
+      dry_run: z.boolean().optional().describe("Default true. Set false to actually launch agents."),
+      agent: z.string().optional().describe("Only dispatch tasks for this agent tag."),
+      list: z.string().optional().describe("Only scan this Reminders list."),
+      reap_only: z.boolean().optional().describe("Only reap stale ledger rows and GC worktrees."),
+    },
+  },
+  async ({ dry_run, agent, list, reap_only }) => {
+    // Dispatched agents may not re-dispatch: an agent whose MCP session was
+    // spawned by the dispatcher inherits APPLE_TASKS_CALLER=agent:<tag>.
+    if ((process.env.APPLE_TASKS_CALLER ?? "").startsWith("agent:")) {
+      return fail("dispatch_run is not available to dispatched agents (no recursive dispatch)");
+    }
+    const args = ["dispatch"];
+    if (dry_run !== false) args.push("--dry-run");
+    if (agent) args.push("--agent", agent);
+    if (list) args.push("--list", list);
+    if (reap_only) args.push("--reap-only");
+    try {
+      // Real runs execute agents inline; give them 2h, not the 30s default.
+      return ok(await cli(args, dry_run !== false && !reap_only ? 30_000 : 7_200_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "dispatch_list",
+  {
+    description:
+      "Show the dispatch ledger: agent runs with status, exit code, outcome summary, run log path, worktree.",
+    inputSchema: {
+      status: z.enum(["running", "succeeded", "failed", "timeout", "aborted"]).optional(),
+      limit: z.number().int().optional().describe("Max rows (default 50, newest first)."),
+    },
+  },
+  async ({ status, limit }) => {
+    const args = ["dispatches"];
+    if (status) args.push("--status", status);
+    if (limit) args.push("--limit", String(limit));
+    try {
+      return ok(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "run_log",
+  {
+    description:
+      "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). " +
+      "Returns the last `tail` lines (reads at most the final 256 KB).",
+    inputSchema: {
+      ledger_id: z.number().int().describe("Ledger row id from dispatch_list."),
+      tail: z.number().int().optional().describe("Lines from the end (default 100)."),
+    },
+  },
+  async ({ ledger_id, tail }) => {
+    try {
+      const fs = await import("node:fs/promises");
+      const os = await import("node:os");
+      const logPath = path.join(os.homedir(), ".config/apple-tasks/runs", `${ledger_id}.log`);
+      const stat = await fs.stat(logPath);
+      const cap = 256 * 1024;
+      const readLen = Math.min(cap, stat.size);
+      const fh = await fs.open(logPath, "r");
+      const { buffer, bytesRead } = await fh.read(
+        Buffer.alloc(readLen), 0, readLen, Math.max(0, stat.size - readLen));
+      await fh.close();
+      const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
+      return ok(lines.slice(-Math.max(1, tail ?? 100)).join("\n"));
     } catch (err) {
       return fail(err);
     }
