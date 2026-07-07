@@ -54,9 +54,13 @@ struct AgentsConfig: Codable {
         let worktree: Bool?
         /// Kill the agent and mark the run 'timeout' after this many minutes.
         let timeoutMinutes: Int?
+        /// Max simultaneous runs for THIS agent (default: no per-agent cap).
+        let maxConcurrent: Int?
     }
 
     var agents: [String: Agent]
+    /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
+    var maxConcurrent: Int?
     /// Repo/project tag -> working directory.
     var workdirs: [String: String]?
     /// When true (default), only tasks also tagged [auto] are dispatched.
@@ -65,6 +69,10 @@ struct AgentsConfig: Codable {
     var maxRetries: Int?
     /// Wait this long after the Nth failure before retry N+1 (scales linearly).
     var retryBackoffMinutes: Int?
+    /// Keep failed/timeout worktrees this many days before GC (default 7).
+    var keepFailedWorktreeDays: Int?
+    /// macOS notification on run finish: "failure" (default) | "all" | "none".
+    var notifyOn: String?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -84,7 +92,9 @@ struct AgentsConfig: Codable {
     List: {list}
     Title: {title}
     Notes: {notes}
-    Do the work described by the task. When finished, mark it done by running:
+    Do the work described by the task. When finished, record a 1-3 sentence
+    outcome summary: apple-tasks update {id} --append-notes "<what you did>"
+    then mark it done by running:
     apple-tasks complete {id}
     and remove the dispatched marker: apple-tasks update {id} --remove-tag dispatched
     """
@@ -114,6 +124,9 @@ struct Dispatch: AsyncParsableCommand {
 
     @Flag(name: .customLong("reap-only"), help: "Only reap stale ledger rows, dispatch nothing.")
     var reapOnly = false
+
+    @Flag(name: .customLong("no-gc"), help: "Skip worktree garbage collection this run.")
+    var noGC = false
 
     struct DispatchReport: Codable {
         let taskId: String
@@ -149,6 +162,53 @@ struct Dispatch: AsyncParsableCommand {
                                           action: "reaped: running > \(reapHours)h, marked timeout",
                                           exitCode: nil, runLog: stale.runLogPath, worktree: stale.worktree))
         }
+        // Worktree GC: reclaim worktrees of finished runs. Merged succeeded
+        // branches (and their worktrees) go immediately; failed/timeout
+        // worktrees are kept keepFailedWorktreeDays for debugging; unmerged
+        // succeeded branches are deliverables and are only surfaced.
+        if !noGC {
+            let keepDays = config.keepFailedWorktreeDays ?? 7
+            let keepCutoff = Date().addingTimeInterval(-TimeInterval(keepDays) * 86400)
+            let iso = ISO8601DateFormatter()
+            for row in AuditDB.shared.worktreeRows() {
+                guard let wt = row.worktree, let repo = row.cwd, !repo.isEmpty else { continue }
+                guard FileManager.default.fileExists(atPath: wt) else {
+                    AuditDB.shared.clearWorktree(id: Int64(row.id))
+                    continue
+                }
+                let branch = "agent/\(row.agent)-\(row.id)"
+                var action: String?
+                switch row.status {
+                case "succeeded":
+                    if Self.runGit(["merge-base", "--is-ancestor", branch, "HEAD"], repo: repo) == 0 {
+                        _ = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
+                        _ = Self.runGit(["branch", "-d", branch], repo: repo)
+                        AuditDB.shared.clearWorktree(id: Int64(row.id))
+                        action = "gc: branch \(branch) merged, worktree removed"
+                    } else {
+                        action = "gc: kept, unmerged branch \(branch) pending"
+                    }
+                case "failed", "timeout":
+                    guard let finished = row.finishedAt,
+                          let date = iso.date(from: finished), date < keepCutoff else { continue }
+                    let empty = Self.gitOutput(["rev-list", "--count", branch, "--not", "HEAD"],
+                                               repo: repo) == "0"
+                    _ = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
+                    if empty { _ = Self.runGit(["branch", "-D", branch], repo: repo) }
+                    AuditDB.shared.clearWorktree(id: Int64(row.id))
+                    action = "gc: removed \(row.status) worktree (>\(keepDays)d), "
+                        + (empty ? "empty branch deleted" : "branch \(branch) kept")
+                default:
+                    break
+                }
+                if let action {
+                    reports.append(DispatchReport(taskId: row.taskId, title: "(ledger #\(row.id))",
+                                                  agent: row.agent, cwd: repo, action: action,
+                                                  exitCode: nil, runLog: row.runLogPath, worktree: wt))
+                }
+            }
+        }
+
         if reapOnly {
             emit(reports)
             return
@@ -156,6 +216,11 @@ struct Dispatch: AsyncParsableCommand {
 
         let calendars = try listName.map { [try store.calendar(named: $0)] }
         let reminders = await store.reminders(in: calendars).filter { !$0.isCompleted }
+
+        // Phase A (serial, EventKit + ledger): scan, claim, tag, prepare.
+        // Emits plain-value RunSpecs; no EKReminder crosses into Phase B.
+        var specs: [RunSpec] = []
+        var specsPerAgent: [String: Int] = [:]
 
         for reminder in reminders {
             let parsed = Tags.parse(reminder.title ?? "")
@@ -183,6 +248,12 @@ struct Dispatch: AsyncParsableCommand {
 
             if AuditDB.shared.hasActiveDispatch(taskId: taskId) { continue }
 
+            // Per-agent cap: ledger 'running' rows + specs already queued this
+            // pass. A full agent is skipped; the next dispatch picks it up.
+            if let cap = agent.maxConcurrent,
+               AuditDB.shared.activeDispatchCount(agent: agentTag)
+                   + specsPerAgent[agentTag, default: 0] >= cap { continue }
+
             let cwd = parsed.tags.lazy
                 .compactMap { config.workdirs?[$0.lowercased()] }
                 .first
@@ -207,16 +278,26 @@ struct Dispatch: AsyncParsableCommand {
                 continue
             }
 
+            // Atomic claim first: the ledger row is the lock (single-statement
+            // insert-if-absent), so two dispatchers can't both take the task.
+            guard let ledgerId = AuditDB.shared.claimDispatch(
+                taskId: taskId, agent: agentTag, command: argv.joined(separator: " "), cwd: cwd) else {
+                continue // another dispatcher claimed it between our scan and now
+            }
+
             // Mark dispatched (visible everywhere via tag + native mirror);
-            // a retry sheds its [failed] tag here.
+            // a retry sheds its [failed] tag here. Written after the claim so
+            // a crash between the two can't strand the tag with no ledger row.
             var tags = parsed.tags.filter { $0.lowercased() != "failed" }
             tags.append("dispatched")
             reminder.title = Tags.compose(tags: tags, title: parsed.title)
-            try store.save(reminder)
+            do {
+                try store.save(reminder)
+            } catch {
+                AuditDB.shared.finishDispatch(id: ledgerId, status: "aborted", exitCode: -1)
+                throw error
+            }
             _ = NativeTags.mirror(tags: ["dispatched"], externalId: reminder.calendarItemExternalIdentifier)
-
-            let ledgerId = AuditDB.shared.startDispatch(
-                taskId: taskId, agent: agentTag, command: argv.joined(separator: " "), cwd: cwd)
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
                                   taskId: taskId, list: reminder.calendar?.title,
                                   detail: "\(agentTag): \(parsed.title)"
@@ -226,6 +307,7 @@ struct Dispatch: AsyncParsableCommand {
             // main checkout. Refuse to run unisolated if creation fails.
             var runCwd = cwd
             var worktreePath: String?
+            var branchName: String?
             if agent.worktree == true {
                 guard let repo = cwd else {
                     AuditDB.shared.finishDispatch(id: ledgerId, status: "failed", exitCode: -1)
@@ -249,71 +331,162 @@ struct Dispatch: AsyncParsableCommand {
                 }
                 runCwd = wt
                 worktreePath = wt
+                branchName = branch
             }
 
             // Run log: everything the agent prints, kept per ledger row.
             let runsDir = AgentsConfig.url.deletingLastPathComponent().appendingPathComponent("runs")
             try? FileManager.default.createDirectory(at: runsDir, withIntermediateDirectories: true)
             let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-            let logHandle = FileHandle(forWritingAtPath: logURL.path)
-            logHandle?.write(Data("""
-            # dispatch #\(ledgerId) \(ISO8601DateFormatter().string(from: Date()))
-            # task \(taskId): \(parsed.title)
-            # \(argv.joined(separator: " "))\n\n
-            """.utf8))
             AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: worktreePath)
 
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = argv
-            if let runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
-            var env = ProcessInfo.processInfo.environment
-            env["APPLE_TASKS_CALLER"] = "agent:\(agentTag)"
-            process.environment = env
-            if let logHandle {
-                process.standardOutput = logHandle
-                process.standardError = logHandle
-            }
+            specs.append(RunSpec(ledgerId: ledgerId, taskId: taskId, title: parsed.title,
+                                 agentTag: agentTag, argv: argv, repo: cwd, runCwd: runCwd,
+                                 worktree: worktreePath, branch: branchName,
+                                 timeoutMinutes: agent.timeoutMinutes, logPath: logURL.path))
+            specsPerAgent[agentTag, default: 0] += 1
+        }
 
-            do {
-                try process.run()
-                var timedOut = false
-                if let minutes = agent.timeoutMinutes {
-                    let deadline = Date().addingTimeInterval(TimeInterval(minutes) * 60)
-                    while process.isRunning && Date() < deadline {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    }
-                    if process.isRunning {
-                        timedOut = true
-                        process.terminate()
-                        for _ in 0..<5 where process.isRunning {
-                            try? await Task.sleep(nanoseconds: 1_000_000_000)
-                        }
-                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    }
+        // Phase B (concurrent, EventKit-free): run the agents, capped. The
+        // collection loop below runs serially on this task, so recording and
+        // write-backs (Phase C) happen per-outcome, as each agent finishes.
+        let cap = max(config.maxConcurrent ?? 1, 1)
+        await withTaskGroup(of: RunOutcome.self) { group in
+            var pending = specs.makeIterator()
+            var inFlight = 0
+            while inFlight < cap, let spec = pending.next() {
+                group.addTask { await Self.execute(spec) }
+                inFlight += 1
+            }
+            while let outcome = await group.next() {
+                if let spec = pending.next() {
+                    group.addTask { await Self.execute(spec) }
                 }
-                process.waitUntilExit()
-                try? logHandle?.close()
-                let code = process.terminationStatus
-                let status = timedOut ? "timeout" : (code == 0 ? "succeeded" : "failed")
-                AuditDB.shared.finishDispatch(id: ledgerId, status: status, exitCode: code)
-                if status != "succeeded" {
-                    await markFailed(store: store, taskId: taskId)
+                let spec = outcome.spec
+                let trailerText = trailer(ledgerId: spec.ledgerId, status: outcome.status,
+                                          exitCode: outcome.exitCode, branch: spec.branch,
+                                          repo: spec.repo, logPath: spec.logPath)
+                AuditDB.shared.finishDispatch(id: spec.ledgerId,
+                                              status: outcome.status == "succeeded" ? "succeeded" : outcome.status == "timeout" ? "timeout" : "failed",
+                                              exitCode: outcome.exitCode ?? -1,
+                                              summary: trailerText.components(separatedBy: "\n").first)
+                if outcome.status != "succeeded" {
+                    await markFailed(store: store, taskId: spec.taskId)
                 }
-                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
-                                              cwd: runCwd, action: status, exitCode: Int(code),
-                                              runLog: logURL.path, worktree: worktreePath))
-            } catch {
-                try? logHandle?.close()
-                AuditDB.shared.finishDispatch(id: ledgerId, status: "failed", exitCode: -1)
-                await markFailed(store: store, taskId: taskId)
-                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
-                                              cwd: runCwd, action: "spawn failed: \(error.localizedDescription)",
-                                              exitCode: nil, runLog: logURL.path, worktree: worktreePath))
+                await appendNotesTrailer(store: store, taskId: spec.taskId, trailer: trailerText)
+                let notifyOn = config.notifyOn ?? "failure"
+                if notifyOn == "all" || (notifyOn == "failure" && outcome.status != "succeeded") {
+                    Self.notify(title: spec.title,
+                                body: trailerText.components(separatedBy: "\n").first ?? outcome.status)
+                }
+                let action = outcome.spawnError.map { "spawn failed: \($0)" } ?? outcome.status
+                reports.append(DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
+                                              cwd: spec.runCwd, action: action,
+                                              exitCode: outcome.exitCode.map(Int.init),
+                                              runLog: spec.logPath, worktree: spec.worktree))
             }
         }
         emit(reports)
+    }
+
+    /// Everything Phase B needs to run one agent; value-typed so it can cross
+    /// into the task group (EKReminder must not).
+    struct RunSpec: Sendable {
+        let ledgerId: Int64
+        let taskId: String
+        let title: String
+        let agentTag: String
+        let argv: [String]
+        /// The workdir/repo (for trailer git queries), not the process cwd.
+        let repo: String?
+        let runCwd: String?
+        let worktree: String?
+        let branch: String?
+        let timeoutMinutes: Int?
+        let logPath: String
+    }
+
+    struct RunOutcome: Sendable {
+        let spec: RunSpec
+        let status: String // succeeded | failed | timeout | spawn failed
+        let exitCode: Int32?
+        let spawnError: String?
+    }
+
+    /// Runs one agent process to completion. No EventKit, no AuditDB — safe
+    /// to run concurrently; all recording happens serially in Phase C.
+    private static func execute(_ spec: RunSpec) async -> RunOutcome {
+        FileManager.default.createFile(atPath: spec.logPath, contents: nil)
+        let logHandle = FileHandle(forWritingAtPath: spec.logPath)
+        logHandle?.write(Data("""
+        # dispatch #\(spec.ledgerId) \(ISO8601DateFormatter().string(from: Date()))
+        # task \(spec.taskId): \(spec.title)
+        # \(spec.argv.joined(separator: " "))\n\n
+        """.utf8))
+        defer { try? logHandle?.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = spec.argv
+        if let runCwd = spec.runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
+        var env = ProcessInfo.processInfo.environment
+        env["APPLE_TASKS_CALLER"] = "agent:\(spec.agentTag)"
+        process.environment = env
+        if let logHandle {
+            process.standardOutput = logHandle
+            process.standardError = logHandle
+        }
+
+        do {
+            try process.run()
+        } catch {
+            return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
+                              spawnError: error.localizedDescription)
+        }
+        var timedOut = false
+        if let minutes = spec.timeoutMinutes {
+            let deadline = Date().addingTimeInterval(TimeInterval(minutes) * 60)
+            while process.isRunning && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            if process.isRunning {
+                timedOut = true
+                process.terminate()
+                for _ in 0..<5 where process.isRunning {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            }
+        }
+        process.waitUntilExit()
+        let code = process.terminationStatus
+        let status = timedOut ? "timeout" : (code == 0 ? "succeeded" : "failed")
+        return RunOutcome(spec: spec, status: status, exitCode: code, spawnError: nil)
+    }
+
+    /// One-line run outcome for the ledger, plus (for succeeded worktree
+    /// runs) up to 3 commit oneliners showing what the branch produced.
+    private func trailer(ledgerId: Int64, status: String, exitCode: Int32?,
+                         branch: String?, repo: String?, logPath: String?) -> String {
+        var line = "[dispatch #\(ledgerId)] \(status)"
+        if let exitCode { line += " exit=\(exitCode)" }
+        if let branch { line += " branch=\(branch)" }
+        if let logPath { line += " log=\(logPath)" }
+        if status == "succeeded", let branch, let repo,
+           let commits = Self.gitOutput(["log", "--oneline", "-3", branch, "--not", "HEAD"], repo: repo),
+           !commits.isEmpty {
+            line += "\n" + commits
+        }
+        return line
+    }
+
+    /// Append the run trailer to the task notes, re-fetching first because
+    /// the agent may have edited the task meanwhile. Best-effort.
+    private func appendNotesTrailer(store: Store, taskId: String, trailer: String) async {
+        guard let current = try? await store.reminder(id: taskId) else { return }
+        let existing = current.notes.map { $0.isEmpty ? "" : $0 + "\n\n" } ?? ""
+        current.notes = existing + trailer
+        try? store.save(current)
     }
 
     /// Swap [dispatched] for [failed] on the task, re-fetching first because
@@ -330,10 +503,40 @@ struct Dispatch: AsyncParsableCommand {
         _ = NativeTags.mirror(tags: ["failed"], externalId: current.calendarItemExternalIdentifier)
     }
 
+    /// Best-effort macOS notification; args passed as argv, never interpolated.
+    private static func notify(title: String, body: String) {
+        let script = """
+        function run(argv) {
+            const app = Application.currentApplication();
+            app.includeStandardAdditions = true;
+            app.displayNotification(argv[1], { withTitle: argv[0] });
+        }
+        """
+        _ = try? OSA.runJXA(script, args: [title, body])
+    }
+
+    private static func gitOutput(_ args: [String], repo: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", repo] + args
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func runGit(_ args: [String], repo: String) -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", repo] + args
+        // Keep git chatter out of the command's JSON stdout.
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
             process.waitUntilExit()

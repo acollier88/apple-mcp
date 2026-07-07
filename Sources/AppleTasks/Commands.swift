@@ -148,6 +148,10 @@ struct Update: AsyncParsableCommand {
     @Option(help: "New notes body.")
     var notes: String?
 
+    @Option(name: .customLong("append-notes"),
+            help: "Append a paragraph to the notes (keeps the existing body).")
+    var appendNotes: String?
+
     @Option(help: "New due date: yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601.")
     var due: String?
 
@@ -179,6 +183,10 @@ struct Update: AsyncParsableCommand {
         reminder.title = Tags.compose(tags: tags, title: cleanTitle)
 
         if let notes { reminder.notes = notes }
+        if let appendNotes {
+            let existing = reminder.notes.map { $0.isEmpty ? "" : $0 + "\n\n" } ?? ""
+            reminder.notes = existing + appendNotes
+        }
         if clearDue { reminder.dueDateComponents = nil }
         if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
         if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }

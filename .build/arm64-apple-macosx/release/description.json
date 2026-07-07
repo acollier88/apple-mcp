@@ -11,8 +11,8 @@
     }
   },
   "generatedSourceTargetSet" : [
-    "GenerateDoccReference",
-    "GenerateManual"
+    "GenerateManual",
+    "GenerateDoccReference"
   ],
   "pluginDescriptions" : [
     {
@@ -1480,6 +1480,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Location.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift"
         },
         {
@@ -1513,6 +1517,7 @@
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Dispatch.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Doctor.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Events.swift.o",
+        "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Location.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Notes.swift.o",
         "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Support.swift.o"
@@ -1591,6 +1596,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Location.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swift.o"
         },
         {
@@ -1614,6 +1623,7 @@
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift",
+        "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Location.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Notes.swift",
         "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Support.swift"
@@ -2826,6 +2836,7 @@
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift",
+      "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Location.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Notes.swift",
       "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Support.swift",
@@ -3771,6 +3782,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Location.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/.build/arm64-apple-macosx/release/apple_tasks.build/Mail.swift.o"
         },
         {
@@ -3814,6 +3829,10 @@
         {
           "kind" : "file",
           "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Location.swift"
         },
         {
           "kind" : "file",

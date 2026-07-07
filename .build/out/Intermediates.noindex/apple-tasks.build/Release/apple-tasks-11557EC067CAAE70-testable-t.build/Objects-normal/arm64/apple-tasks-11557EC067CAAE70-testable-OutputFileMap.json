@@ -1,0 +1,61 @@
+{
+  "" : {
+    "const-values" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary.swiftconstvalues",
+    "dependencies" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary.d",
+    "diagnostics" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary.dia",
+    "emit-module-dependencies" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary-emit-module.dia",
+    "pch" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/apple-tasks-11557EC067CAAE70-testable-primary.swiftdeps"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Audit.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Audit.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Audit.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Audit.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Automation.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Automation.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Automation.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Automation.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Commands.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Commands.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Commands.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Commands.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Dispatch.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Dispatch.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Dispatch.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Doctor.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Doctor.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Doctor.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Doctor.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Events.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Events.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Events.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Events.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Location.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Location.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Location.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Location.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Mail.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Mail.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Mail.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Mail.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Notes.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Notes.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Notes.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Notes.o"
+  },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Support.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Support.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Support.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-11557EC067CAAE70-testable-t.build/Objects-normal/arm64/Support.o"
+  }
+}
