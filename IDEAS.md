@@ -626,7 +626,7 @@ reindex callbacks, and verify open tasks actually surface in Spotlight ask
 ("what's open for claude in repo2?") on beta 3. Cheap, and it's the layer
 the new Siri actually reads from.
 
-## 32. Beta-upgrade regression drill (process, run after EVERY beta)
+## 32. Beta-upgrade regression drill (✅ SCRIPTED as `make betacheck` 2026-07-07; run after EVERY beta)
 
 The project leans on three fragile seams; after each beta upgrade run, in
 order: `apple-tasks doctor` (TCC grants can reset), the private helper
@@ -636,6 +636,13 @@ majors before), one `findmy_devices` call (FindMy.py tracks Apple endpoint
 churn), and rebuild AgentTasksApp against the new SDK (schema shapes are
 compiler-enforced, so drift shows up as build errors — that's a feature).
 Script it as `make betacheck` so it's one command on upgrade morning.
+
+**Scripted 2026-07-07**: `make betacheck` runs doctor → private `--check` →
+`whereami` → `list --status open` smoke → `swift build -c release`, with a
+PASS/FAIL line per step and stop-on-first-failure, then (per §33) compiles
+AND dyld-runs `spikes/ClaudeLanguageModel/SchemaProbe.swift` when present.
+Still manual: `findmy_devices` (network-dependent) and the AgentTasksApp
+rebuild (needs Xcode, not in the SwiftPM build).
 
 ## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
 
