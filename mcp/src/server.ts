@@ -105,19 +105,22 @@ server.registerTool(
       title: z.string().optional().describe("New title (tags are preserved)."),
       add_tags: z.array(z.string()).optional(),
       remove_tags: z.array(z.string()).optional(),
-      notes: z.string().optional(),
+      notes: z.string().optional().describe("Replace the notes body."),
+      append_notes: z.string().optional().describe(
+        "Append a paragraph to the notes, keeping the existing body (use for outcome summaries)."),
       due: z.string().optional().describe("yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."),
       clear_due: z.boolean().optional(),
       priority: z.enum(["none", "low", "medium", "high"]).optional(),
       list: z.string().optional().describe("Move the task to this list."),
     },
   },
-  async ({ id, title, add_tags, remove_tags, notes, due, clear_due, priority, list }) => {
+  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list }) => {
     const args = ["update", id];
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
     for (const t of remove_tags ?? []) args.push("--remove-tag", t);
     if (notes !== undefined) args.push("--notes", notes);
+    if (append_notes !== undefined) args.push("--append-notes", append_notes);
     if (clear_due) args.push("--clear-due");
     if (due) args.push("--due", due);
     if (priority) args.push("--priority", priority);

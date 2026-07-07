@@ -190,24 +190,50 @@ containing the task details and self-complete instructions. Config at
     "claude": {
       "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
       "worktree": true,
-      "timeoutMinutes": 60
+      "timeoutMinutes": 60,
+      "maxConcurrent": 1
     }
   },
   "workdirs": { "repo2": "~/Code/repo2" },
   "requireAutoTag": true,
   "maxRetries": 2,
-  "retryBackoffMinutes": 30
+  "retryBackoffMinutes": 30,
+  "maxConcurrent": 2,
+  "keepFailedWorktreeDays": 7,
+  "notifyOn": "failure"
 }
 ```
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
-`apple-tasks dispatch --dry-run` first. v1 runs sequentially;
+`apple-tasks dispatch --dry-run` first.
 `--watch`/launchd mode is on the roadmap (IDEAS.md #7).
 
-Hardening features (all verified end-to-end):
+Hardening features (all verified end-to-end; see docs/dispatcher-v2.md for
+the design):
 
+- **Atomic claim** — the ledger row is the dispatch lock, taken with a
+  single-statement insert-if-absent, so overlapping dispatchers (cron +
+  manual, two shells) can't both run the same task. The `[dispatched]` tag is
+  written after the claim and is only the human-visible mirror.
+- **Concurrency** (`maxConcurrent`, global and per-agent) — agent runs
+  execute in a capped task group; the global default of 1 preserves
+  sequential behavior until you opt in. Outcomes are recorded as each run
+  finishes, so ledger timestamps are per-run accurate.
+- **Result write-back** — when a run finishes, the dispatcher appends a
+  trailer to the task's notes (`[dispatch #N] <status> exit=… branch=… log=…`
+  plus commit oneliners for succeeded worktree runs) and stores its first
+  line in the ledger's `summary` column. Agents are prompted to record their
+  own 1–3 sentence outcome first via `apple-tasks update <id> --append-notes`
+  (non-destructive; appends a paragraph).
+- **Worktree GC** — every pass reclaims finished runs' worktrees: merged
+  branches are removed immediately, unmerged succeeded branches are kept and
+  surfaced as pending deliverables, failed/timeout worktrees are kept
+  `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
+  only if empty). `--no-gc` skips the pass.
+- **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
+  macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to
   `~/.config/apple-tasks/runs/<ledger-id>.log`; the ledger stores the path.
 - **Worktree isolation** (`"worktree": true` per agent) — the dispatcher runs
