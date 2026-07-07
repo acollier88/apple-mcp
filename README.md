@@ -166,12 +166,10 @@ refused when invoked non-interactively (e.g. by an agent).
 
 ### Notes-to-tasks triage loop
 
-> /loop 1h Call notes_scan() (the watermark advances automatically). For each
-> returned note, extract action items: things with a date/time become calendar
-> events (event_create), actionable work becomes tagged tasks (task_create,
-> list "Code Tasks" or the right plan). Put the source note's name in the
-> created item's notes field. Ignore journal-style content; when unsure, skip —
-> never create duplicates of items you created in a previous iteration.
+> [!TIP]
+> You can automate this loop using the **Automatic Triage** dispatcher configuration (see [Dispatcher & audit log](#dispatcher--audit-log)). If running manually or without automatic triage, run it in Claude Code with `/loop`:
+> 
+> `/loop 1h Call notes_scan() (the watermark advances automatically). For each returned note, extract action items: things with a date/time become calendar events (event_create), actionable work becomes tagged tasks (task_create, list "Code Tasks" or the right plan). Put the source note's name in the created item's notes field. Ignore journal-style content; when unsure, skip — never create duplicates of items you created in a previous iteration.`
 
 ## Agent routing pattern
 
@@ -204,6 +202,10 @@ containing the task details and self-complete instructions. Config at
       "maxConcurrent": 1
     }
   },
+  "triage": {
+    "agent": "claude",
+    "inboxList": "Reminders"
+  },
   "workdirs": { "repo2": "~/Code/repo2" },
   "requireAutoTag": true,
   "maxRetries": 2,
@@ -219,6 +221,8 @@ directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
 `apple-tasks dispatch --dry-run` first.
 `--watch`/launchd mode is on the roadmap (IDEAS.md #7).
+
+If a `triage` agent is configured, the dispatcher will automatically kick off a triage and tagging run at the beginning of the dispatch cycle. It queries the configured `inboxList` (e.g. `"Reminders"`) for untagged tasks, feeds them and any new notes to the triage agent to classify, tag, and move, and then proceeds to dispatch the newly triaged tasks in the same run. This completely removes the need to run a manual `/loop` process for triage.
 
 Hardening features (all verified end-to-end; see docs/dispatcher-v2.md for
 the design):
@@ -280,17 +284,12 @@ the design):
 
 Reminders sync from Siri, watch, iPhone, and CarPlay — so voice capture anywhere
 becomes the front door of the agent queue. "Hey Siri, remind me to fix the login
-bug" lands untagged in your default "Reminders" list; a triage agent on a loop
-classifies and routes it.
+bug" lands untagged in your default "Reminders" list.
 
-Run it in Claude Code with `/loop` (or a scheduled agent):
-
-> /loop 30m Triage my reminders inbox: call task_list(list: "Reminders",
-> status: "open") and look at tasks with NO tags. For each one, decide whether
-> it's actionable agent work or personal. Route agent work with task_update —
-> add tags for the agent ([claude]), repo, and model, and move it to the right
-> plan list (see plan_list). Tag personal items [personal] and leave them where
-> they are. Never touch tasks that already have tags.
+> [!TIP]
+> You can configure the dispatcher to run this triage automatically on every run (see [Dispatcher & audit log](#dispatcher--audit-log)). If running manually or without automatic triage, run it in Claude Code with `/loop`:
+> 
+> `/loop 30m Triage my reminders inbox: call task_list(list: "Reminders", status: "open") and look at tasks with NO tags. For each one, decide whether it's actionable agent work or personal. Route agent work with task_update — add tags for the agent ([claude]), repo, and model, and move it to the right plan list (see plan_list). Tag personal items [personal] and leave them where they are. Never touch tasks that already have tags.`
 
 Two inbox options:
 

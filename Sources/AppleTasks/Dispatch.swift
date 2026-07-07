@@ -58,7 +58,15 @@ struct AgentsConfig: Codable {
         let maxConcurrent: Int?
     }
 
+    struct TriageConfig: Codable {
+        let agent: String
+        let inboxList: String?
+        let command: [String]?
+        let prompt: String?
+    }
+
     var agents: [String: Agent]
+    var triage: TriageConfig?
     /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
     var maxConcurrent: Int?
     /// Repo/project tag -> working directory.
@@ -214,6 +222,64 @@ struct Dispatch: AsyncParsableCommand {
         if reapOnly {
             emit(reports)
             return
+        }
+
+        // Auto triage: run triage agent if configured
+        if let triage = config.triage {
+            guard let agent = config.agents[triage.agent.lowercased()] else {
+                throw AppleTasksError.saveFailed("triage agent '\(triage.agent)' not found in agents configuration")
+            }
+            let inboxList = triage.inboxList ?? "Reminders"
+            let defaultPrompt = """
+            Triage my reminders inbox and notes.
+            1. Call task_list(list: "\(inboxList)", status: "open") to scan the inbox. Look at tasks with NO tags. For each one, decide whether it's actionable agent work or personal. Route agent work with task_update — add tags for the agent ([claude] or another agent), repo, and model, and move it to the right plan list (like "Code Tasks"). Tag personal items [personal] and leave them where they are. Never touch tasks that already have tags.
+            2. Call notes_scan(). For each returned note, extract action items: things with a date/time become calendar events (event_create), actionable work becomes tagged tasks (task_create, list "Code Tasks" or the right plan). Put the source note's name in the created item's notes field. Ignore journal-style content; when unsure, skip — never create duplicates of items you created in a previous iteration.
+            """
+            let prompt = triage.prompt ?? defaultPrompt
+            let commandArgv = triage.command ?? agent.command
+            let argv = commandArgv.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+            let triageTaskId = "triage-\(Int(Date().timeIntervalSince1970))"
+
+            if dryRun {
+                reports.append(DispatchReport(taskId: triageTaskId, title: "Triage Inbox & Notes", agent: triage.agent,
+                                              cwd: nil, action: "would run triage agent", exitCode: nil,
+                                              runLog: nil, worktree: nil))
+            } else {
+                if let ledgerId = AuditDB.shared.claimDispatch(
+                    taskId: triageTaskId, agent: triage.agent, command: argv.joined(separator: " "), cwd: nil) {
+                    
+                    let runsDir = AgentsConfig.url.deletingLastPathComponent().appendingPathComponent("runs")
+                    try? FileManager.default.createDirectory(at: runsDir, withIntermediateDirectories: true)
+                    let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
+                    AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: nil)
+
+                    let spec = RunSpec(ledgerId: ledgerId, taskId: triageTaskId, title: "Triage Inbox & Notes",
+                                       agentTag: triage.agent, argv: argv, repo: nil, runCwd: nil,
+                                       worktree: nil, branch: nil,
+                                       timeoutMinutes: agent.timeoutMinutes, logPath: logURL.path)
+                    
+                    let outcome = await Self.execute(spec)
+                    let trailerText = "[dispatch #\(ledgerId)] \(outcome.status)" +
+                        (outcome.exitCode.map { " exit=\($0)" } ?? "") + " log=\(spec.logPath)"
+                    AuditDB.shared.finishDispatch(id: ledgerId,
+                                                  status: outcome.status == "succeeded" ? "succeeded" : outcome.status == "timeout" ? "timeout" : "failed",
+                                                  exitCode: outcome.exitCode ?? -1,
+                                                  summary: trailerText)
+                    
+                    let notifyOn = config.notifyOn ?? "failure"
+                    if notifyOn == "all" || (notifyOn == "failure" && outcome.status != "succeeded") {
+                        Notifier.banner(title: spec.title, body: trailerText)
+                    }
+                    if outcome.status != "succeeded" {
+                        await Notifier.push(title: "agent \(outcome.status): \(spec.title)", body: trailerText)
+                    }
+                    let action = outcome.spawnError.map { "spawn failed: \($0)" } ?? outcome.status
+                    reports.append(DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
+                                                  cwd: spec.runCwd, action: action,
+                                                  exitCode: outcome.exitCode.map(Int.init),
+                                                  runLog: spec.logPath, worktree: spec.worktree))
+                }
+            }
         }
 
         let calendars = try listName.map { [try store.calendar(named: $0)] }
