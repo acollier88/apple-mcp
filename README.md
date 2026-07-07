@@ -312,7 +312,7 @@ You can create an iOS Shortcut to capture agent tasks directly from your iPhone,
 Create a new Shortcut in the iOS **Shortcuts** app named **"Agent Task"**:
 
 1. **List** (Define the available agents):
-   - Add items: `claude`, `gemini` (or whatever agents you have configured).
+   - Add items: `claude`, `antigravity` (or whatever agents you have configured).
 2. **Choose from List**:
    - Prompt: `Agent?`
    - Select: `List` (from the previous step).
