@@ -53,6 +53,11 @@
     "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Notes.bc",
     "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Notes.o"
   },
+  "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Notify.swift" : {
+    "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Notify.o",
+    "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Notify.bc",
+    "object" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Notify.o"
+  },
   "/Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Support.swift" : {
     "index-unit-output-path" : "/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Support.o",
     "llvm-bc" : "/Users/andrewcollier/Code/apple-mcp/.build/out/Intermediates.noindex/apple-tasks.build/Release/apple-tasks-p.build/Objects-normal/arm64/Support.bc",

@@ -112,15 +112,25 @@ claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/se
 
 Tools (23):
 
-- Tasks: `task_list`, `task_create`, `task_update`, `task_complete`, `task_delete`
+- Tasks: `task_list`, `task_show`, `task_create`, `task_update`,
+  `task_complete`, `task_uncomplete`, `task_delete`
 - Plans: `plan_list`, `plan_create`
 - Events: `event_list`, `event_create`, `event_update`, `event_delete`, `calendar_list`
 - Notes/Mail (read-only): `notes_scan`, `mail_scan`, `mail_show`
 - Bridges: `shortcut_list`, `shortcut_run` (escape hatch to HomeKit/Focus/anything
-  Shortcuts can do), `notify` (local notification banner)
+  Shortcuts can do), `notify` (banner; `push: true` also sends via ntfy so it
+  reaches your phone — config `~/.config/apple-tasks/notify.json`:
+  `{"ntfy": {"topic": "your-topic"}}`, optional `"server"`; never commit it)
+- Dispatcher ops: `dispatch_run` (dry-run by default; refuses recursive
+  dispatch from agent-spawned sessions), `dispatch_list`, `run_log` — a
+  supervisor agent can reap, retry, and read failure logs over MCP
 - Location: `whereami` (this Mac), `findmy_devices` / `findmy_locate` (AirTags
   via the FindMy.py sidecar — see below)
 - Introspection: `audit_log`, `doctor`
+
+The CLI mirrors the push path as `apple-tasks notify <title> <message>
+[--push]`; the dispatcher pushes failures/timeouts automatically when
+notify.json is configured (banners follow `notifyOn`).
 
 The server shells out to the Swift binary at `.build/release/apple-tasks`;
 override with the `APPLE_TASKS_BIN` env var.

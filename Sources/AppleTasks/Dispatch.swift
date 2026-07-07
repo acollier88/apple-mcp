@@ -375,9 +375,14 @@ struct Dispatch: AsyncParsableCommand {
                 }
                 await appendNotesTrailer(store: store, taskId: spec.taskId, trailer: trailerText)
                 let notifyOn = config.notifyOn ?? "failure"
+                let summaryLine = trailerText.components(separatedBy: "\n").first ?? outcome.status
                 if notifyOn == "all" || (notifyOn == "failure" && outcome.status != "succeeded") {
-                    Self.notify(title: spec.title,
-                                body: trailerText.components(separatedBy: "\n").first ?? outcome.status)
+                    Notifier.banner(title: spec.title, body: summaryLine)
+                }
+                // Failures always reach the phone when ntfy is configured —
+                // the banner is useless if you're not at the Mac.
+                if outcome.status != "succeeded" {
+                    await Notifier.push(title: "agent \(outcome.status): \(spec.title)", body: summaryLine)
                 }
                 let action = outcome.spawnError.map { "spawn failed: \($0)" } ?? outcome.status
                 reports.append(DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
@@ -501,18 +506,6 @@ struct Dispatch: AsyncParsableCommand {
         current.title = Tags.compose(tags: tags, title: title)
         try? store.save(current)
         _ = NativeTags.mirror(tags: ["failed"], externalId: current.calendarItemExternalIdentifier)
-    }
-
-    /// Best-effort macOS notification; args passed as argv, never interpolated.
-    private static func notify(title: String, body: String) {
-        let script = """
-        function run(argv) {
-            const app = Application.currentApplication();
-            app.includeStandardAdditions = true;
-            app.displayNotification(argv[1], { withTitle: argv[0] });
-        }
-        """
-        _ = try? OSA.runJXA(script, args: [title, body])
     }
 
     private static func gitOutput(_ args: [String], repo: String) -> String? {

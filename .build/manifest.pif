@@ -5,12 +5,12 @@
       "name" : "apple-tasks",
       "path" : "/Users/andrewcollier/Code/apple-mcp",
       "projects" : [
-        "620337f216e0d9166eaa1ffac21074f563a064a57bff92f62302d0f6977cd68d",
+        "bf94ab9377aba4f1ec76daf6e991e6252cf51bd1d945245f8256826ddcbf6dd9",
         "700c01404c8cfe8773a456e9f9d996e5249ea60df82a2c0983dc5b3f074b9e97",
         "25ff0c248c59347b8695f9e75744097a4f05af888256029c67948b8f0e6a697a"
       ]
     },
-    "signature" : "2d9e09164fcf2c1c3ce172cbc71af56840e2782f1809b9d7cf526c924a3af594",
+    "signature" : "0ae0b469d760be181d793aad3425ccc2df59d9e94de80d5d4afb09c01ceae852",
     "type" : "workspace"
   },
   {
@@ -274,6 +274,14 @@
               {
                 "fileType" : "sourcecode.swift",
                 "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_2::REF_9",
+                "name" : "Notify.swift",
+                "path" : "Notify.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_2::REF_10",
                 "name" : "Support.swift",
                 "path" : "Support.swift",
                 "sourceTree" : "<group>",
@@ -363,6 +371,14 @@
               {
                 "fileType" : "sourcecode.swift",
                 "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_3::REF_9",
+                "name" : "Notify.swift",
+                "path" : "Notify.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_3::REF_10",
                 "name" : "Support.swift",
                 "path" : "Support.swift",
                 "sourceTree" : "<group>",
@@ -388,12 +404,12 @@
       "projectIsPackage" : "true",
       "projectName" : "apple-tasks",
       "targets" : [
-        "a00633deed31d944ed7fa829ea36160a62822b4b428ae607d4ca320b09552901",
-        "cd2e881ca621b5eb20932bfbdff1579b8fd69f3cfafec06c46ab93bbe134343c",
+        "7933615e218d440584c5aaab762a0c68f5fdd93fdc830e7a614aacc3426d99c1",
+        "fe48d08552135d9d060022a9d661ba41f27f0f1f1e4a2f36d34ace76d71fb88c",
         "920077cf2468a294afae1e24afadefc71343e8ade88f7a1d6aef680574b36c6e"
       ]
     },
-    "signature" : "620337f216e0d9166eaa1ffac21074f563a064a57bff92f62302d0f6977cd68d",
+    "signature" : "bf94ab9377aba4f1ec76daf6e991e6252cf51bd1d945245f8256826ddcbf6dd9",
     "type" : "project"
   },
   {
@@ -605,6 +621,15 @@
 
               ],
               "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:apple-mcp::MAINGROUP::REF_2::REF_10",
+              "guid" : "PACKAGE-PRODUCT:apple-mcp_apple-tasks.apple-tasks::BUILDPHASE_0::10",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
             }
           ],
           "guid" : "PACKAGE-PRODUCT:apple-mcp_apple-tasks.apple-tasks::BUILDPHASE_0",
@@ -648,7 +673,7 @@
       "productTypeIdentifier" : "com.apple.product-type.tool",
       "type" : "standard"
     },
-    "signature" : "a00633deed31d944ed7fa829ea36160a62822b4b428ae607d4ca320b09552901",
+    "signature" : "7933615e218d440584c5aaab762a0c68f5fdd93fdc830e7a614aacc3426d99c1",
     "type" : "target"
   },
   {
@@ -913,6 +938,15 @@
 
               ],
               "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:apple-mcp::MAINGROUP::REF_3::REF_10",
+              "guid" : "PACKAGE-TARGET:apple-tasks-11557EC067CAAE70-testable::BUILDPHASE_0::10",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
             }
           ],
           "guid" : "PACKAGE-TARGET:apple-tasks-11557EC067CAAE70-testable::BUILDPHASE_0",
@@ -943,7 +977,7 @@
       "productTypeIdentifier" : "org.swift.product-type.common.object",
       "type" : "standard"
     },
-    "signature" : "cd2e881ca621b5eb20932bfbdff1579b8fd69f3cfafec06c46ab93bbe134343c",
+    "signature" : "fe48d08552135d9d060022a9d661ba41f27f0f1f1e4a2f36d34ace76d71fb88c",
     "type" : "target"
   },
   {

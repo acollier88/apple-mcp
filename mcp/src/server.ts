@@ -440,14 +440,25 @@ server.registerTool(
 server.registerTool(
   "notify",
   {
-    description: "Show a local macOS notification banner (e.g. to report a finished task).",
+    description:
+      "Show a local macOS notification banner (e.g. to report a finished task). " +
+      "push: true also sends it via ntfy so it reaches the user's phone off-Mac " +
+      "(requires ~/.config/apple-tasks/notify.json).",
     inputSchema: {
       title: z.string(),
       message: z.string(),
       sound: z.boolean().optional().describe("Play the default notification sound."),
+      push: z.boolean().optional().describe("Also push via ntfy."),
     },
   },
-  async ({ title, message, sound }) => {
+  async ({ title, message, sound, push }) => {
+    if (push) {
+      try {
+        return ok(await cli(["notify", title, message, "--push"]));
+      } catch (err) {
+        return fail(err);
+      }
+    }
     const body = sound
       ? "display notification (item 2 of argv) with title (item 1 of argv) sound name \"default\""
       : "display notification (item 2 of argv) with title (item 1 of argv)";
