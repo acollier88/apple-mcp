@@ -79,14 +79,16 @@ server.registerTool(
       notes: z.string().optional(),
       due: z.string().optional().describe("yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."),
       priority: z.enum(["none", "low", "medium", "high"]).optional(),
+      url: z.string().optional().describe("URL to attach (PR/artifact links)."),
     },
   },
-  async ({ list, title, tags, notes, due, priority }) => {
+  async ({ list, title, tags, notes, due, priority, url }) => {
     const args = ["add", "--list", list];
     for (const t of tags ?? []) args.push("--tag", t);
     if (notes) args.push("--notes", notes);
     if (due) args.push("--due", due);
     if (priority) args.push("--priority", priority);
+    if (url) args.push("--url", url);
     args.push(title);
     try {
       return ok(await cli(args));
@@ -112,15 +114,19 @@ server.registerTool(
       clear_due: z.boolean().optional(),
       priority: z.enum(["none", "low", "medium", "high"]).optional(),
       list: z.string().optional().describe("Move the task to this list."),
+      url: z.string().optional().describe("Set the task URL (PR/artifact links)."),
+      clear_url: z.boolean().optional(),
     },
   },
-  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list }) => {
+  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url }) => {
     const args = ["update", id];
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
     for (const t of remove_tags ?? []) args.push("--remove-tag", t);
     if (notes !== undefined) args.push("--notes", notes);
     if (append_notes !== undefined) args.push("--append-notes", append_notes);
+    if (url) args.push("--url", url);
+    if (clear_url) args.push("--clear-url");
     if (clear_due) args.push("--clear-due");
     if (due) args.push("--due", due);
     if (priority) args.push("--priority", priority);
@@ -233,9 +239,10 @@ server.registerTool(
       duration: z.number().int().optional().describe("Duration in minutes (default 60 when end omitted)."),
       location: z.string().optional(),
       notes: z.string().optional(),
+      url: z.string().optional().describe("URL to attach (PR/artifact links)."),
     },
   },
-  async ({ calendar, title, tags, start, end, duration, location, notes }) => {
+  async ({ calendar, title, tags, start, end, duration, location, notes, url }) => {
     const args = ["events", "add", "--start", start];
     if (calendar) args.push("--calendar", calendar);
     for (const t of tags ?? []) args.push("--tag", t);
@@ -243,6 +250,7 @@ server.registerTool(
     if (duration !== undefined) args.push("--duration", String(duration));
     if (location) args.push("--location", location);
     if (notes) args.push("--notes", notes);
+    if (url) args.push("--url", url);
     args.push(title);
     try {
       return ok(await cli(args));
@@ -266,10 +274,14 @@ server.registerTool(
       location: z.string().optional(),
       notes: z.string().optional(),
       calendar: z.string().optional().describe("Move the event to this calendar."),
+      url: z.string().optional().describe("Set the event URL (PR/artifact links)."),
+      clear_url: z.boolean().optional(),
     },
   },
-  async ({ id, title, add_tags, remove_tags, start, end, location, notes, calendar }) => {
+  async ({ id, title, add_tags, remove_tags, start, end, location, notes, calendar, url, clear_url }) => {
     const args = ["events", "update", id];
+    if (url) args.push("--url", url);
+    if (clear_url) args.push("--clear-url");
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
     for (const t of remove_tags ?? []) args.push("--remove-tag", t);

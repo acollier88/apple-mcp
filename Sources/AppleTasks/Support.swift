@@ -168,6 +168,7 @@ struct TaskOut: Codable {
     let completed: Bool
     let completedAt: String?
     let createdAt: String?
+    let url: String?
     /// Set by add/update only: whether tags were also mirrored to native
     /// Reminders tags via the private helper. Omitted when not attempted.
     var nativeTags: Bool?
@@ -187,6 +188,7 @@ struct TaskOut: Codable {
         completed = r.isCompleted
         completedAt = Dates.formatTimestamp(r.completionDate)
         createdAt = Dates.formatTimestamp(r.creationDate)
+        url = r.url?.absoluteString
     }
 }
 
@@ -206,6 +208,7 @@ struct EventOut: Codable {
     let allDay: Bool
     let location: String?
     let notes: String?
+    let url: String?
 
     init(_ e: EKEvent) {
         let raw = e.title ?? ""
@@ -221,6 +224,7 @@ struct EventOut: Codable {
         allDay = e.isAllDay
         location = e.location
         notes = e.notes
+        url = e.url?.absoluteString
     }
 }
 

@@ -94,6 +94,8 @@ struct AgentsConfig: Codable {
     Notes: {notes}
     Do the work described by the task. When finished, record a 1-3 sentence
     outcome summary: apple-tasks update {id} --append-notes "<what you did>"
+    If your work produced a PR, commit, or file, link it:
+    apple-tasks update {id} --url "<link>"
     then mark it done by running:
     apple-tasks complete {id}
     and remove the dispatched marker: apple-tasks update {id} --remove-tag dispatched

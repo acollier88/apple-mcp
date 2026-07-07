@@ -77,6 +77,9 @@ struct EventsAdd: AsyncParsableCommand {
     @Option(help: "Notes body.")
     var notes: String?
 
+    @Option(help: "URL to attach (use for PR/artifact links).")
+    var url: String?
+
     @Argument(help: "Event title (without tag prefix).")
     var title: String
 
@@ -97,6 +100,7 @@ struct EventsAdd: AsyncParsableCommand {
         event.title = Tags.compose(tags: tags, title: title)
         event.location = location
         event.notes = notes
+        if let url { event.url = URL(string: url) }
 
         let (startDate, dateOnly) = try Dates.parseDateTime(start)
         event.startDate = startDate
@@ -146,6 +150,12 @@ struct EventsUpdate: AsyncParsableCommand {
     @Option(help: "New notes body.")
     var notes: String?
 
+    @Option(help: "Set the event URL (use for PR/artifact links).")
+    var url: String?
+
+    @Flag(name: .customLong("clear-url"), help: "Remove the event URL.")
+    var clearUrl = false
+
     @Option(name: .customLong("calendar"), help: "Move the event to this calendar.")
     var calendarName: String?
 
@@ -177,6 +187,8 @@ struct EventsUpdate: AsyncParsableCommand {
         if let end { event.endDate = try Dates.parseDateTime(end).date }
         if let location { event.location = location }
         if let notes { event.notes = notes }
+        if clearUrl { event.url = nil }
+        if let url { event.url = URL(string: url) }
         if let calendarName { event.calendar = try store.eventCalendar(named: calendarName) }
 
         try store.save(event)

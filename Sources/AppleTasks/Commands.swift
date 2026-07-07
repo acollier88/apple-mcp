@@ -100,6 +100,9 @@ struct Add: AsyncParsableCommand {
     @Option(help: "none | low | medium | high.")
     var priority: PriorityArg?
 
+    @Option(help: "URL to attach (shows natively in Reminders; use for PR/artifact links).")
+    var url: String?
+
     @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring tags to native Reminders tags.")
     var noNativeTags = false
 
@@ -115,6 +118,7 @@ struct Add: AsyncParsableCommand {
         reminder.calendar = try store.calendar(named: listName)
         reminder.title = Tags.compose(tags: tags, title: title)
         reminder.notes = notes
+        if let url { reminder.url = URL(string: url) }
         if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
         if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
 
@@ -164,6 +168,12 @@ struct Update: AsyncParsableCommand {
     @Option(name: .customLong("list"), help: "Move the task to this list.")
     var listName: String?
 
+    @Option(help: "Set the task URL (use for PR/artifact links).")
+    var url: String?
+
+    @Flag(name: .customLong("clear-url"), help: "Remove the task URL.")
+    var clearUrl = false
+
     @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring added tags to native Reminders tags.")
     var noNativeTags = false
 
@@ -189,6 +199,8 @@ struct Update: AsyncParsableCommand {
         }
         if clearDue { reminder.dueDateComponents = nil }
         if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
+        if clearUrl { reminder.url = nil }
+        if let url { reminder.url = URL(string: url) }
         if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
         if let listName { reminder.calendar = try store.calendar(named: listName) }
 
