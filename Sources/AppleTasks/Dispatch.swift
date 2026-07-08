@@ -56,6 +56,25 @@ struct AgentsConfig: Codable {
         let timeoutMinutes: Int?
         /// Max simultaneous runs for THIS agent (default: no per-agent cap).
         let maxConcurrent: Int?
+        /// Context gates (IDEAS #22): all must pass or the task stays queued
+        /// (no claim, no [failed]) and is retried next pass.
+        let conditions: Conditions?
+    }
+
+    struct Conditions: Codable {
+        /// Named place from `places` this Mac must be within.
+        let location: String?
+        /// Required power source: "ac" | "battery".
+        let power: String?
+        /// Skip dispatch while the 1-minute load average exceeds this.
+        let maxLoad: Double?
+    }
+
+    struct Place: Codable {
+        let lat: Double
+        let lon: Double
+        /// Geofence radius in meters (default 150).
+        let radiusM: Double?
     }
 
     struct TriageConfig: Codable {
@@ -66,6 +85,8 @@ struct AgentsConfig: Codable {
     }
 
     var agents: [String: Agent]
+    /// Named places for `conditions.location` gates.
+    var places: [String: Place]?
     /// When present, run a one-shot inbox triage (see Triage.swift) at the
     /// start of every dispatch cycle, before scanning for dispatchable tasks.
     var triage: TriageConfig?
@@ -268,6 +289,7 @@ struct Dispatch: AsyncParsableCommand {
         // Emits plain-value RunSpecs; no EKReminder crosses into Phase B.
         var specs: [RunSpec] = []
         var specsPerAgent: [String: Int] = [:]
+        let gates = GateContext() // probes cached across candidates this pass
 
         for reminder in reminders {
             let parsed = Tags.parse(reminder.title ?? "")
@@ -300,6 +322,16 @@ struct Dispatch: AsyncParsableCommand {
             if let cap = agent.maxConcurrent,
                AuditDB.shared.activeDispatchCount(agent: agentTag)
                    + specsPerAgent[agentTag, default: 0] >= cap { continue }
+
+            // Context gates (IDEAS #22): a failed gate leaves the task
+            // queued untouched — reconsidered next pass, never [failed].
+            if let conditions = agent.conditions,
+               let reason = await gates.gateReason(conditions, config: config) {
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                              cwd: nil, action: "gated: \(reason) — stays queued",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            }
 
             let cwd = parsed.tags.lazy
                 .compactMap { config.workdirs?[$0.lowercased()] }

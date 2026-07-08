@@ -206,9 +206,11 @@ containing the task details and self-complete instructions. Config at
       "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
       "worktree": true,
       "timeoutMinutes": 60,
-      "maxConcurrent": 1
+      "maxConcurrent": 1,
+      "conditions": { "location": "home", "power": "ac", "maxLoad": 8 }
     }
   },
+  "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
   "triage": { "agent": "triage", "inbox": "Reminders" },
   "workdirs": { "repo2": "~/Code/repo2" },
   "requireAutoTag": true,
@@ -237,6 +239,12 @@ is reported but never blocks the dispatch pass.
 Hardening features (all verified end-to-end; see docs/dispatcher-v2.md for
 the design):
 
+- **Context gates** (per-agent `conditions`: `location` — a named entry in
+  `places`, checked against a whereami fix; `power` — `"ac"`/`"battery"` via
+  pmset; `maxLoad` — 1-min load average cap) — a task failing a gate stays
+  queued untouched (no claim, no `[failed]`) and is reconsidered next pass.
+  All reads, no new permissions. Use cases: heavy agents only on AC, personal
+  repos only at home, nothing heavy while the machine is busy.
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is

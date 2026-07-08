@@ -435,8 +435,15 @@ final class AppLocationFetcher: NSObject, CLLocationManagerDelegate {
         }
         manager.stopUpdatingLocation()
         if result == nil {
-            fail("timed out after \(Int(timeout))s (authorization: \(manager.authorizationStatus.rawValue)). " +
-                 "Enable AgentTasks in System Settings > Privacy & Security > Location Services.")
+            // locationd doesn't always deliver a live callback promptly; its
+            // cached fix (≤10 min old) beats failing for "am I home?" checks.
+            if let cached = manager.location,
+               Date().timeIntervalSince(cached.timestamp) < 600 {
+                result = .success(cached)
+            } else {
+                fail("timed out after \(Int(timeout))s (authorization: \(manager.authorizationStatus.rawValue)). " +
+                     "Enable AgentTasks in System Settings > Privacy & Security > Location Services.")
+            }
         }
         return result!
     }

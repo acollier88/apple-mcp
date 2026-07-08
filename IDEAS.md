@@ -502,7 +502,7 @@ Memos/watch recordings can be shared into it from any device (Voice Memos'
 own storage is TCC/FDA-protected — don't touch it; the share-sheet drop
 folder sidesteps that). Speech adds its own TCC prompt; doctor line.
 
-## 22. Context-gated dispatch (location / power / focus rails)
+## 22. Context-gated dispatch — ✅ DONE 2026-07-08 (location/power/maxLoad; focus deferred)
 
 agents.json gains optional per-agent `conditions`:
 `{"location": "home", "power": "ac", "maxLoad": 8}`. Dispatcher checks before
@@ -512,6 +512,15 @@ spawning: location = whereami vs named places in config
 [failed]) and get picked up next pass. Use cases: heavy agents only on AC
 power; personal-repo agents only when at home; nothing dispatches while
 presenting. Cheap: all reads, no new permissions (whereami already built).
+
+Shipped (ContextGate.swift): per-agent `conditions` + top-level `places`,
+gate checked after the cheap skips and before the claim, probes cached
+per pass, gated tasks report "stays queued" and are never tagged. Focus
+gate deferred (needs the shortcuts bridge). Side fix while verifying: both
+location fetchers (CLI + app helper) now fall back to locationd's cached
+fix (≤10 min) when no live callback arrives — live delivery proved flaky
+on beta 3 and the timeout-only path made whereami fail even with a warm
+cache.
 
 ## 23. iCloud Drive drop-folder capture
 

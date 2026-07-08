@@ -155,6 +155,13 @@ final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sen
         }
         manager.stopUpdatingLocation()
 
+        // locationd doesn't always deliver a live callback promptly; its
+        // cached fix (≤10 min old) beats failing for location-context checks.
+        if result == nil, let cached = manager.location,
+           Date().timeIntervalSince(cached.timestamp) < 600 {
+            return .success(cached)
+        }
+
         return result ?? .failure(AppleTasksError.automationFailed(
             "timed out after \(Int(timeout))s waiting for a location fix " +
             "(status: \(Self.describeAuthorization())). macOS often adds CLI " +
