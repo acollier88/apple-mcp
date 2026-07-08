@@ -84,8 +84,16 @@ struct Triage: AsyncParsableCommand {
     static func triage(store: Store, inbox: String, agentTag: String, apply: Bool,
                        includeNotes: Bool = false) async throws -> TriageResult {
         let inboxCal = try store.calendar(named: inbox)
+        // Candidates: untagged items, plus items carrying ONLY provenance
+        // tags (e.g. [mail] from the mail-rule capture) — those were tagged
+        // by a capture channel, not a triage, and still need routing.
+        let provenanceTags: Set<String> = ["mail"]
         let untagged = (await store.reminders(in: [inboxCal]))
-            .filter { !$0.isCompleted && Tags.parse($0.title ?? "").tags.isEmpty }
+            .filter { r in
+                guard !r.isCompleted else { return false }
+                return Tags.parse(r.title ?? "").tags
+                    .allSatisfy { provenanceTags.contains($0.lowercased()) }
+            }
 
         // Available plan lists (routing targets) — everything except the inbox.
         let planLists = store.ek.calendars(for: .reminder)
@@ -160,12 +168,16 @@ struct Triage: AsyncParsableCommand {
             }
 
             if apply {
-                reminder.title = Tags.compose(tags: addTags, title: parsed.title)
+                // Provenance tags a capture channel already set (e.g. [mail]) survive.
+                let merged = parsed.tags + addTags.filter { new in
+                    !parsed.tags.contains { $0.caseInsensitiveCompare(new) == .orderedSame }
+                }
+                reminder.title = Tags.compose(tags: merged, title: parsed.title)
                 if let moveTo { reminder.calendar = try store.calendar(named: moveTo) }
                 try store.save(reminder)
-                _ = NativeTags.mirror(tags: addTags, externalId: reminder.calendarItemExternalIdentifier)
+                _ = NativeTags.mirror(tags: merged, externalId: reminder.calendarItemExternalIdentifier)
                 AuditDB.shared.record(command: "triage", taskId: id, list: moveTo ?? inbox,
-                                      detail: "[\(addTags.joined(separator: "]["))] \(parsed.title)")
+                                      detail: "[\(merged.joined(separator: "]["))] \(parsed.title)")
             }
             actions.append(.init(id: id, title: parsed.title, kind: c.kind,
                                  addedTags: addTags, movedTo: moveTo, note: nil))

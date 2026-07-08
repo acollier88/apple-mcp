@@ -14,6 +14,16 @@ helper: cli
 clean:
 	swift package clean
 
+# Mail-rule capture (IDEAS #12): compile + install the AppleScript that Mail
+# rules invoke. Attaching it is manual: Mail > Settings > Rules > Add Rule >
+# "Run AppleScript" > apple-tasks-capture.
+MAIL_SCRIPTS_DIR = $(HOME)/Library/Application Scripts/com.apple.mail
+mail-rule:
+	mkdir -p "$(MAIL_SCRIPTS_DIR)"
+	osacompile -o "$(MAIL_SCRIPTS_DIR)/apple-tasks-capture.scpt" scripts/mail-rule-capture.applescript
+	@echo "installed: $(MAIL_SCRIPTS_DIR)/apple-tasks-capture.scpt"
+	@echo "attach it: Mail > Settings > Rules > Add Rule > Run AppleScript > apple-tasks-capture"
+
 # Beta upgrade regression drill (IDEAS #32/#33): one command for upgrade
 # morning. Runs each check in order, prints PASS/FAIL per step, and stops
 # on the first failure (dumping that step's output). Rebuilds last so a
@@ -34,4 +44,4 @@ betacheck:
 	  step "fm probe run"     "$$probe"; \
 	fi
 
-.PHONY: all cli helper clean betacheck
+.PHONY: all cli helper clean betacheck mail-rule

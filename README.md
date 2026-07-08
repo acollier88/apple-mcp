@@ -388,6 +388,28 @@ Two inbox options:
 Time-blocking pairs with this: an agent can read free slots via `event_list`
 and book tagged work sessions via `event_create`.
 
+## Mail rule capture (push)
+
+Polling `mail_scan` has latency; Mail rules are push. `make mail-rule`
+compiles `scripts/mail-rule-capture.applescript` into Mail's sandboxed
+scripts folder, then attach it once: **Mail > Settings > Rules > Add Rule >
+"Run AppleScript" > apple-tasks-capture** (pick your own matching conditions —
+sender, subject, mailbox). Matching incoming messages become `[mail]`-tagged
+reminders in the inbox with From/Subject/Message-ID in the notes; triage
+treats `[mail]`-only items as untagged, so they get routed like any other
+capture (keeping the `[mail]` provenance tag).
+
+Details: all values pass through AppleScript's `quoted form of` (injection
+tested); the handler uses raw event codes because `using terms from
+application "Mail"` doesn't compile on macOS 27 beta 3; Mail must be running
+for rules to fire; the first capture may show a Reminders permission prompt
+for Mail's rule runner. `doctor` reports install status on its `mailRule`
+line. Smoke-test without waiting for mail:
+
+```bash
+osascript "$HOME/Library/Application Scripts/com.apple.mail/apple-tasks-capture.scpt"
+```
+
 ## Morning digest
 
 `apple-tasks digest` is a deterministic aggregation (no model, safe to run

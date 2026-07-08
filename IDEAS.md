@@ -365,12 +365,22 @@ to the right Reminders list natively on the phone. iCloud syncs it; the Mac
 dispatcher picks it up. Full voice/Action-button/watch capture → running agent
 with ZERO custom iOS code. Documented the recipe in README.
 
-## 12. Mail rules → push-based email capture — TODO
+## 12. Mail rules → push-based email capture — ✅ DONE 2026-07-08 (`make mail-rule`)
 
 Mail.app rules can run an AppleScript on matching incoming messages. Rule
 script creates a tagged reminder ([mail][triage]) with subject + sender in
 notes. Push beats our polling `mail_scan` for latency, and the triage agent
 already knows what to do with inbox items. Caveat: Mail must be running.
+
+Shipped: scripts/mail-rule-capture.applescript (installed via `make
+mail-rule`; attach manually in Mail Settings > Rules). Creates [mail]-tagged
+reminders with From/Subject/Message-ID notes; triage now treats items whose
+only tags are provenance tags ([mail]) as candidates and preserves those
+tags when routing. Injection-tested (`quoted form of` everywhere). Beta
+finding: `using terms from application "Mail"` fails to compile on macOS
+27 beta 3 though the sdef still declares the terms — the script uses raw
+event/class codes («event emalcpma», sndr/subj/meid) instead; add to the
+§32 watch list.
 
 ## 13. Multi-Mac claim protocol — KNOWN LIMITATION / TODO
 
