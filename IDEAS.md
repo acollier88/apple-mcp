@@ -312,7 +312,7 @@ ntfy/Pushover; never script Messages.app for bot traffic.
   certainly entitlement-gated; watch for public API in later betas, don't
   build on it.
 
-## 8. Morning digest → Apple Note — TODO
+## 8. Morning digest → Apple Note — ✅ DONE 2026-07-07 (`apple-tasks digest`)
 
 Scheduled agent (cron/launchd, or `/loop` at 7am) reads: audit log since
 yesterday (what agents did), dispatch ledger outcomes, open tasks due today,
@@ -322,7 +322,7 @@ note` is safe — our read-only rule was about editing existing bodies) + fires
 Result: open Notes on your phone over coffee, see what your agents did
 overnight and what's on deck.
 
-## 9. Siri voice status — "what did my agents do today?" — TODO
+## 9. Siri voice status — "what did my agents do today?" — ✅ DONE 2026-07-07 (AgentStatusIntent)
 
 App Intent in AgentTasks backed by `apple-tasks log`/`dispatches`: summarizes
 recent audit rows as a spoken dialog. Pairs with the schema intents: voice in

@@ -130,6 +130,56 @@ struct TriageInboxIntent: AppIntent {
     }
 }
 
+struct AgentStatusIntent: AppIntent {
+    static let title: LocalizedStringResource = "Agent Status Report"
+    static let description = IntentDescription("Speaks what the agents did recently: dispatch outcomes, agent actions, tasks due today, and today's calendar load.")
+
+    @Parameter(title: "Since (e.g. 2026-07-07 or ISO8601)", default: nil)
+    var since: String?
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("What did my agents do?") {
+            \.$since
+        }
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
+        var args = ["digest"]
+        if let since, !since.isEmpty { args += ["--since", since] }
+        let json = try CLI.run(args)
+
+        struct Digest: Decodable {
+            struct Line: Decodable { let agent: String; let status: String }
+            struct Item: Decodable { let title: String }
+            let dispatches: [Line]
+            let auditActions: Int
+            let dueToday: [Item]
+            let events: [Item]
+        }
+        guard let d = try? JSONDecoder().decode(Digest.self, from: Data(json.utf8)) else {
+            return .result(value: json, dialog: "Couldn't read the digest.")
+        }
+
+        let ok = d.dispatches.filter { $0.status == "succeeded" }.count
+        let failed = d.dispatches.count - ok
+        var parts: [String] = []
+        if d.dispatches.isEmpty {
+            parts.append("No agent runs")
+        } else {
+            parts.append("\(d.dispatches.count) agent run\(d.dispatches.count == 1 ? "" : "s"): \(ok) succeeded"
+                + (failed > 0 ? ", \(failed) failed" : ""))
+        }
+        parts.append("\(d.auditActions) action\(d.auditActions == 1 ? "" : "s") in the audit log")
+        parts.append(d.dueToday.isEmpty ? "nothing due today"
+            : "\(d.dueToday.count) task\(d.dueToday.count == 1 ? "" : "s") due today: "
+              + d.dueToday.prefix(3).map(\.title).joined(separator: ", "))
+        parts.append(d.events.isEmpty ? "calendar is clear"
+            : "\(d.events.count) event\(d.events.count == 1 ? "" : "s") on the calendar")
+        let spoken = parts.joined(separator: ". ") + "."
+        return .result(value: spoken, dialog: IntentDialog(stringLiteral: spoken))
+    }
+}
+
 struct AgentTasksShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -148,6 +198,15 @@ struct AgentTasksShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Add Agent Task",
             systemImageName: "plus.circle"
+        )
+        AppShortcut(
+            intent: AgentStatusIntent(),
+            phrases: [
+                "What did my agents do in \(.applicationName)",
+                "Agent status in \(.applicationName)",
+            ],
+            shortTitle: "Agent Status",
+            systemImageName: "waveform.and.person.filled"
         )
         AppShortcut(
             intent: TriageInboxIntent(),

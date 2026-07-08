@@ -12,8 +12,8 @@ struct NoteOut: Codable {
 
 struct Notes: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Read Apple Notes (read-only; via Apple Events).",
-        subcommands: [NotesScan.self],
+        abstract: "Apple Notes via Apple Events: scan (read-only) and create NEW notes (existing notes are never edited).",
+        subcommands: [NotesScan.self, NotesCreate.self],
         defaultSubcommand: NotesScan.self
     )
 }

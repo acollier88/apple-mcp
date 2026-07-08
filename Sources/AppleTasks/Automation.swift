@@ -31,6 +31,14 @@ enum OSA {
 // MARK: - HTML to plain text (Notes bodies come back as HTML)
 
 enum HTML {
+    /// Escape text for embedding in HTML we generate (digest, notes create).
+    static func escape(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
     static func toText(_ html: String) -> String {
         var s = html
         s = s.replacingOccurrences(of: "<br[^>]*>", with: "\n", options: [.regularExpression, .caseInsensitive])

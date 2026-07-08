@@ -110,13 +110,14 @@ Register with Claude Code:
 claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
 ```
 
-Tools (29):
+Tools (31):
 
 - Tasks: `task_list`, `task_show`, `task_create`, `task_update`,
   `task_complete`, `task_uncomplete`, `task_delete`
 - Plans: `plan_list`, `plan_create`
 - Events: `event_list`, `event_create`, `event_update`, `event_delete`, `calendar_list`
-- Notes/Mail (read-only): `notes_scan`, `mail_scan`, `mail_show`
+- Notes/Mail: `notes_scan`, `mail_scan`, `mail_show` (read-only),
+  `note_create` (NEW notes only — existing notes are never edited)
 - Bridges: `shortcut_list`, `shortcut_run` (escape hatch to HomeKit/Focus/anything
   Shortcuts can do), `notify` (banner; `push: true` also sends via ntfy so it
   reaches your phone — config `~/.config/apple-tasks/notify.json`:
@@ -127,6 +128,9 @@ Tools (29):
 - Location: `whereami` (this Mac), `findmy_devices` / `findmy_locate` (AirTags
   via the FindMy.py sidecar — see below)
 - Triage: `triage_inbox` (one-shot classify + route untagged inbox items; dry-run by default)
+- Digest: `digest` (agent activity + dispatch outcomes + due today + today's
+  calendar as one JSON blob; `note: true` writes it as an Apple Note,
+  `push: true` sends a one-line ntfy summary)
 - Introspection: `audit_log`, `doctor`
 
 The CLI mirrors the push path as `apple-tasks notify <title> <message>
@@ -347,6 +351,30 @@ Two inbox options:
 
 Time-blocking pairs with this: an agent can read free slots via `event_list`
 and book tagged work sessions via `event_create`.
+
+## Morning digest
+
+`apple-tasks digest` is a deterministic aggregation (no model, safe to run
+unattended): agent activity since yesterday (audit log), dispatch outcomes,
+tasks due today (with #19 URL linkbacks to PRs), and today's calendar.
+
+```bash
+apple-tasks digest                # JSON to stdout
+apple-tasks digest --note         # + write it as a new Apple Note
+apple-tasks digest --note --push  # + one-line summary to your ntfy topic
+```
+
+Schedule it for coffee time (cron/launchd):
+
+```cron
+0 7 * * * /path/to/.build/release/apple-tasks digest --note --push
+```
+
+Open Notes on your phone over breakfast and see what your agents did
+overnight and what's on deck. Also exposed as the MCP `digest` tool, and as a
+Siri/Shortcuts intent in AgentTasks — *"Hey Siri, what did my agents do in
+AgentTasks?"* speaks the dispatch outcomes, action count, due tasks, and
+calendar load.
 
 ## iOS Capture Shortcut
 

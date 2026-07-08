@@ -357,6 +357,58 @@ server.registerTool(
 );
 
 server.registerTool(
+  "note_create",
+  {
+    description:
+      "Create a NEW Apple Note (existing notes are never edited). Body is HTML; the title is " +
+      "prepended as an <h1> and becomes the note's name.",
+    inputSchema: {
+      title: z.string().describe("Note title (first line of the note)."),
+      body_html: z.string().describe("Note body as HTML."),
+      folder: z.string().optional().describe("Notes folder (default: the default folder)."),
+    },
+  },
+  async ({ title, body_html, folder }) => {
+    const args = ["notes", "create", "--title", title];
+    if (folder) args.push("--folder", folder);
+    args.push(body_html);
+    try {
+      return ok(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "digest",
+  {
+    description:
+      "Morning digest: agent activity since yesterday (audit log), dispatch outcomes, tasks due today, " +
+      "and today's calendar, as one JSON blob. Optionally writes it as a new Apple Note (note: true) " +
+      "and/or pushes a one-line summary to the configured ntfy topic (push: true).",
+    inputSchema: {
+      since: z.string().optional().describe("Look-back start (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601; default 24h ago)."),
+      note: z.boolean().optional().describe("Write the digest as a new Apple Note."),
+      note_folder: z.string().optional().describe("Notes folder for the digest note."),
+      push: z.boolean().optional().describe("Send a short summary to the configured ntfy topic."),
+    },
+  },
+  async ({ since, note, note_folder, push }) => {
+    const args = ["digest"];
+    if (since) args.push("--since", since);
+    if (note) args.push("--note");
+    if (note_folder) args.push("--note-folder", note_folder);
+    if (push) args.push("--push");
+    try {
+      return ok(await cli(args, 60_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "mail_scan",
   {
     description:
