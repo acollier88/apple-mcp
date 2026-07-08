@@ -1,4 +1,0 @@
-module apple_tasks {
-header "apple-tasks-Swift.h"
-export *
-}

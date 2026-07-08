@@ -1,1 +1,0 @@
-/Users/andrewcollier/Code/apple-mcp/spikes/AgentTasksApp/build/AgentTasks.swiftconstvalues

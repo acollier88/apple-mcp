@@ -1,3 +1,0 @@
-/Users/andrewcollier/Code/apple-mcp/spikes/AgentTasksApp/Sources/App.swift
-/Users/andrewcollier/Code/apple-mcp/spikes/AgentTasksApp/Sources/Intents.swift
-/Users/andrewcollier/Code/apple-mcp/spikes/AgentTasksApp/Sources/SchemaIntents.swift

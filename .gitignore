@@ -1,0 +1,17 @@
+# Swift / SwiftPM
+.build/
+*.dSYM/
+
+# Node
+node_modules/
+mcp/dist/
+
+# App build outputs (regenerate with spikes/AgentTasksApp/build.sh)
+spikes/AgentTasksApp/build/
+spikes/ClaudeLanguageModel/build/
+
+# macOS
+.DS_Store
+
+# Local-only config lives in ~/.config/apple-tasks (agents.json, notify.json,
+# apple-tasks.db, runs/) — never in the repo.
