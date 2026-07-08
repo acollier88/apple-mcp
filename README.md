@@ -110,7 +110,7 @@ Register with Claude Code:
 claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
 ```
 
-Tools (23):
+Tools (29):
 
 - Tasks: `task_list`, `task_show`, `task_create`, `task_update`,
   `task_complete`, `task_uncomplete`, `task_delete`
@@ -126,6 +126,7 @@ Tools (23):
   supervisor agent can reap, retry, and read failure logs over MCP
 - Location: `whereami` (this Mac), `findmy_devices` / `findmy_locate` (AirTags
   via the FindMy.py sidecar — see below)
+- Triage: `triage_inbox` (one-shot classify + route untagged inbox items; dry-run by default)
 - Introspection: `audit_log`, `doctor`
 
 The CLI mirrors the push path as `apple-tasks notify <title> <message>
@@ -280,10 +281,33 @@ the design):
 
 Reminders sync from Siri, watch, iPhone, and CarPlay — so voice capture anywhere
 becomes the front door of the agent queue. "Hey Siri, remind me to fix the login
-bug" lands untagged in your default "Reminders" list; a triage agent on a loop
-classifies and routes it.
+bug" lands untagged in your default "Reminders" list; triage classifies and
+routes it.
 
-Run it in Claude Code with `/loop` (or a scheduled agent):
+### On-demand triage (no loop)
+
+`apple-tasks triage` runs the whole classification in one shot: it spawns the
+cheap `triage` agent (an `agents.json` entry, e.g. `agy` on Gemini Flash) to
+label each untagged inbox item as agent-work or personal, then **the CLI
+applies** the tags and list moves itself (the agent only judges, so it needs no
+tool-execution permissions). Default is a dry run:
+
+```bash
+apple-tasks triage                 # report proposed routing, change nothing
+apple-tasks triage --apply         # apply tags + move agent work to its plan list
+apple-tasks triage --inbox Inbox --apply
+```
+
+Also exposed as MCP `triage_inbox` (dry-run by default), a **"Triage Inbox"
+button** in the AgentTasks app's activity view, and a Siri/Shortcuts intent —
+*"Hey Siri, triage my inbox in AgentTasks."* Agent work is routed to a plan
+list; personal items get a `[personal]` tag and stay put. Already-tagged tasks
+are never touched.
+
+### Continuous triage (a loop)
+
+For hands-off classification as items arrive, run it in Claude Code with
+`/loop` (or a scheduled agent):
 
 > /loop 30m Triage my reminders inbox: call task_list(list: "Reminders",
 > status: "open") and look at tasks with NO tags. For each one, decide whether
