@@ -630,6 +630,30 @@ server.registerTool(
 );
 
 server.registerTool(
+  "triage_inbox",
+  {
+    description:
+      "One-shot triage of untagged inbox reminders: a cheap classifier agent tags each as agent-work " +
+      "or personal and routes agent work to a plan list. dry_run defaults to TRUE (reports proposed " +
+      "changes, mutates nothing); pass dry_run: false to apply. Replaces the /loop triage pattern.",
+    inputSchema: {
+      inbox: z.string().optional().describe("Reminders list to triage (default: Reminders)."),
+      dry_run: z.boolean().optional().describe("Default true. Set false to apply tags/list moves."),
+    },
+  },
+  async ({ inbox, dry_run }) => {
+    const args = ["triage"];
+    if (inbox) args.push("--inbox", inbox);
+    if (dry_run === false) args.push("--apply");
+    try {
+      return ok(await cli(args, 360_000)); // classifier spawn can take a minute
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "whereami",
   {
     description:

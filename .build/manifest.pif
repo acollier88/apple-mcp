@@ -5,12 +5,12 @@
       "name" : "apple-tasks",
       "path" : "/Users/andrewcollier/Code/apple-mcp",
       "projects" : [
-        "bf94ab9377aba4f1ec76daf6e991e6252cf51bd1d945245f8256826ddcbf6dd9",
+        "6e78b916f5f96dbb093c21e58eb4f3a460060030c6ae75cfaf1c924433f5cdee",
         "700c01404c8cfe8773a456e9f9d996e5249ea60df82a2c0983dc5b3f074b9e97",
         "25ff0c248c59347b8695f9e75744097a4f05af888256029c67948b8f0e6a697a"
       ]
     },
-    "signature" : "0ae0b469d760be181d793aad3425ccc2df59d9e94de80d5d4afb09c01ceae852",
+    "signature" : "9cfb39f30612584ec3d1d976e47044caca497ac39b802b9b82b56929d3f955e5",
     "type" : "workspace"
   },
   {
@@ -286,6 +286,14 @@
                 "path" : "Support.swift",
                 "sourceTree" : "<group>",
                 "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_2::REF_11",
+                "name" : "Triage.swift",
+                "path" : "Triage.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
               }
             ],
             "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_2",
@@ -383,6 +391,14 @@
                 "path" : "Support.swift",
                 "sourceTree" : "<group>",
                 "type" : "file"
+              },
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_3::REF_11",
+                "name" : "Triage.swift",
+                "path" : "Triage.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
               }
             ],
             "guid" : "PACKAGE:apple-mcp::MAINGROUP::REF_3",
@@ -404,12 +420,12 @@
       "projectIsPackage" : "true",
       "projectName" : "apple-tasks",
       "targets" : [
-        "7933615e218d440584c5aaab762a0c68f5fdd93fdc830e7a614aacc3426d99c1",
-        "fe48d08552135d9d060022a9d661ba41f27f0f1f1e4a2f36d34ace76d71fb88c",
+        "cd855d4d121572961003248be8276e8b1c2a1635c314014fe4b829dfaedd38e2",
+        "d02edd6103cbf0b998b0b6904f5049f3d273c591a6bab9e738c4aa8a3d5446a2",
         "920077cf2468a294afae1e24afadefc71343e8ade88f7a1d6aef680574b36c6e"
       ]
     },
-    "signature" : "bf94ab9377aba4f1ec76daf6e991e6252cf51bd1d945245f8256826ddcbf6dd9",
+    "signature" : "6e78b916f5f96dbb093c21e58eb4f3a460060030c6ae75cfaf1c924433f5cdee",
     "type" : "project"
   },
   {
@@ -630,6 +646,15 @@
 
               ],
               "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:apple-mcp::MAINGROUP::REF_2::REF_11",
+              "guid" : "PACKAGE-PRODUCT:apple-mcp_apple-tasks.apple-tasks::BUILDPHASE_0::11",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
             }
           ],
           "guid" : "PACKAGE-PRODUCT:apple-mcp_apple-tasks.apple-tasks::BUILDPHASE_0",
@@ -673,7 +698,7 @@
       "productTypeIdentifier" : "com.apple.product-type.tool",
       "type" : "standard"
     },
-    "signature" : "7933615e218d440584c5aaab762a0c68f5fdd93fdc830e7a614aacc3426d99c1",
+    "signature" : "cd855d4d121572961003248be8276e8b1c2a1635c314014fe4b829dfaedd38e2",
     "type" : "target"
   },
   {
@@ -947,6 +972,15 @@
 
               ],
               "removeHeadersOnCopy" : "false"
+            },
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:apple-mcp::MAINGROUP::REF_3::REF_11",
+              "guid" : "PACKAGE-TARGET:apple-tasks-11557EC067CAAE70-testable::BUILDPHASE_0::11",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
             }
           ],
           "guid" : "PACKAGE-TARGET:apple-tasks-11557EC067CAAE70-testable::BUILDPHASE_0",
@@ -977,7 +1011,7 @@
       "productTypeIdentifier" : "org.swift.product-type.common.object",
       "type" : "standard"
     },
-    "signature" : "fe48d08552135d9d060022a9d661ba41f27f0f1f1e4a2f36d34ace76d71fb88c",
+    "signature" : "d02edd6103cbf0b998b0b6904f5049f3d273c591a6bab9e738c4aa8a3d5446a2",
     "type" : "target"
   },
   {

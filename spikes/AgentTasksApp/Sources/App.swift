@@ -93,6 +93,8 @@ func relativeTime(from isoString: String) -> String {
 struct ContentView: View {
     @State private var events: [AuditEvent] = []
     @State private var isLoading = false
+    @State private var isTriaging = false
+    @State private var triageResult: String?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -110,7 +112,29 @@ struct ContentView: View {
                 }
                 
                 Spacer()
-                
+
+                if let triageResult {
+                    Text(triageResult)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
+
+                Button {
+                    Task { await triage() }
+                } label: {
+                    HStack(spacing: 5) {
+                        if isTriaging {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "tray.and.arrow.down")
+                        }
+                        Text("Triage Inbox")
+                    }
+                }
+                .disabled(isTriaging)
+                .help("Classify and route untagged reminders in your inbox")
+
                 RefreshButton(isLoading: isLoading) {
                     Task {
                         await refresh()
@@ -162,6 +186,31 @@ struct ContentView: View {
         }
     }
     
+    private func triage() async {
+        guard !isTriaging else { return }
+        isTriaging = true
+        triageResult = nil
+        let summary: String = await Task.detached {
+            do {
+                let json = try CLI.run(["triage", "--apply"])
+                let data = Data(json.utf8)
+                guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let actions = obj["actions"] as? [[String: Any]] else { return "Triage done" }
+                if actions.isEmpty { return "Inbox clear — nothing to triage" }
+                let agents = actions.filter { ($0["kind"] as? String) == "agent" }.count
+                let personal = actions.filter { ($0["kind"] as? String) == "personal" }.count
+                return "Triaged \(actions.count): \(agents) agent, \(personal) personal"
+            } catch {
+                return "Triage failed"
+            }
+        }.value
+        await MainActor.run {
+            self.triageResult = summary
+            self.isTriaging = false
+        }
+        await refresh() // show the new triage audit rows in the feed
+    }
+
     private func refresh() async {
         guard !isLoading else { return }
         isLoading = true

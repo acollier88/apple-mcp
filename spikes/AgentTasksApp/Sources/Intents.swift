@@ -100,6 +100,36 @@ struct CreateAgentTaskIntent: AppIntent {
     }
 }
 
+struct TriageInboxIntent: AppIntent {
+    static let title: LocalizedStringResource = "Triage Agent Inbox"
+    static let description = IntentDescription("Classifies and routes untagged reminders in the inbox: agent work gets tagged and filed, personal items get a [personal] tag.")
+
+    @Parameter(title: "Inbox List", default: "Reminders")
+    var inbox: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Triage \(\.$inbox) inbox")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
+        let json = try CLI.run(["triage", "--inbox", inbox, "--apply"])
+        // Parse the small result to speak a count; fall back to raw on any change.
+        var spoken = "Triage complete."
+        if let data = json.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let actions = obj["actions"] as? [[String: Any]] {
+            let agents = actions.filter { ($0["kind"] as? String) == "agent" }.count
+            let personal = actions.filter { ($0["kind"] as? String) == "personal" }.count
+            if actions.isEmpty {
+                spoken = "Nothing to triage — the inbox has no untagged items."
+            } else {
+                spoken = "Triaged \(actions.count) item\(actions.count == 1 ? "" : "s"): \(agents) routed to agents, \(personal) marked personal."
+            }
+        }
+        return .result(value: json, dialog: IntentDialog(stringLiteral: spoken))
+    }
+}
+
 struct AgentTasksShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -118,6 +148,15 @@ struct AgentTasksShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Add Agent Task",
             systemImageName: "plus.circle"
+        )
+        AppShortcut(
+            intent: TriageInboxIntent(),
+            phrases: [
+                "Triage my \(.applicationName) inbox",
+                "Triage my inbox in \(.applicationName)",
+            ],
+            shortTitle: "Triage Inbox",
+            systemImageName: "tray.and.arrow.down"
         )
     }
 }
