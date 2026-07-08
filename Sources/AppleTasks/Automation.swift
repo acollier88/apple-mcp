@@ -107,6 +107,8 @@ enum NativeTags {
 
 struct ScanState: Codable {
     var notesScanWatermark: String?
+    var screenshotsScanWatermark: String?
+    var filesScanWatermark: String?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser

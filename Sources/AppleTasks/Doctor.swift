@@ -12,6 +12,7 @@ struct DoctorOut: Codable {
     let foundationModels: String
     let findmySidecar: String
     let mailRule: String
+    let dropFolder: String
     let privateHelper: PrivateHelperStatus
     let notesScanWatermark: String?
     let automationNote: String
@@ -107,6 +108,9 @@ struct Doctor: AsyncParsableCommand {
                     .appendingPathComponent("Library/Application Scripts/com.apple.mail/apple-tasks-capture.scpt").path)
                 ? "installed (attach via Mail > Settings > Rules)"
                 : "not installed (run: make mail-rule)",
+            dropFolder: FileManager.default.fileExists(atPath: Files.defaultDir)
+                ? "present: \(Files.defaultDir)"
+                : "not created yet: \(Files.defaultDir)",
             privateHelper: Self.helperStatus(),
             notesScanWatermark: ScanState.load().notesScanWatermark,
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."

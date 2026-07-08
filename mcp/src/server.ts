@@ -456,6 +456,64 @@ server.registerTool(
 );
 
 server.registerTool(
+  "screenshots_scan",
+  {
+    description:
+      "OCR screenshots/images modified since the last scan (watermark auto-advances; first run looks back 24h). " +
+      "On-device Vision, read-only. Returns {file, modified, text} per image. Use to turn 'screenshot it to deal " +
+      "with later' captures into tasks/events (task_create/event_create); keep the file path as provenance.",
+    inputSchema: {
+      dir: z.string().optional().describe("Folder to scan (default: ~/Desktop)."),
+      since: z.string().optional().describe(
+        "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+      ),
+      max_chars: z.number().int().optional().describe("Truncate each image's text (default 4000)."),
+    },
+  },
+  async ({ dir, since, max_chars }) => {
+    const args = ["screenshots", "scan"];
+    if (dir) args.push("--dir", dir);
+    if (since) args.push("--since", since);
+    if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+    try {
+      return ok(await cli(args, 120_000)); // OCR of many images can be slow
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "files_scan",
+  {
+    description:
+      "Read .txt/.md files dropped in the iCloud inbox folder since the last scan (watermark auto-advances; " +
+      "first run looks back 24h). The universal capture escape hatch — any device drops a file, this emits " +
+      "{file, modified, content}. Set archive:true to move processed files into a done/ subfolder.",
+    inputSchema: {
+      dir: z.string().optional().describe("Folder to scan (default: iCloud Drive/AgentInbox)."),
+      since: z.string().optional().describe(
+        "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+      ),
+      max_chars: z.number().int().optional().describe("Truncate each file's content (default 8000)."),
+      archive: z.boolean().optional().describe("Move processed files into a done/ subfolder."),
+    },
+  },
+  async ({ dir, since, max_chars, archive }) => {
+    const args = ["files", "scan"];
+    if (dir) args.push("--dir", dir);
+    if (since) args.push("--since", since);
+    if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+    if (archive) args.push("--archive");
+    try {
+      return ok(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "mail_scan",
   {
     description:

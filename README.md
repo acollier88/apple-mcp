@@ -125,7 +125,7 @@ Register with Claude Code:
 claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
 ```
 
-Tools (33):
+Tools (35):
 
 - Tasks: `task_list`, `task_show`, `task_create`, `task_update`,
   `task_complete`, `task_uncomplete`, `task_delete`
@@ -133,6 +133,9 @@ Tools (33):
 - Events: `event_list`, `event_create`, `event_update`, `event_delete`, `calendar_list`
 - Notes/Mail: `notes_scan`, `mail_scan`, `mail_show` (read-only),
   `note_create` (NEW notes only — existing notes are never edited)
+- Capture channels: `screenshots_scan` (on-device Vision OCR of an image
+  folder), `files_scan` (text/markdown dropped in an iCloud inbox folder,
+  optional archive) — both watermarked; feed the text to triage
 - Contacts (read-only, always): `contact_search` (by name, or by email when
   the query contains `@`), `contact_show` — resolve WHICH Sarah a task means,
   rank known senders in mail triage; separate Contacts TCC prompt, `doctor`
@@ -409,6 +412,34 @@ line. Smoke-test without waiting for mail:
 ```bash
 osascript "$HOME/Library/Application Scripts/com.apple.mail/apple-tasks-capture.scpt"
 ```
+
+## Capture channels (screenshots, drop-folder)
+
+Two more front doors into the inbox, both watermarked like `notes scan` (the
+stored watermark auto-advances; `--since` overrides statelessly):
+
+```bash
+apple-tasks screenshots scan                 # OCR new images in ~/Desktop
+apple-tasks screenshots scan --dir ~/Shots --since 2026-07-01
+apple-tasks files scan                       # .txt/.md in iCloud Drive/AgentInbox
+apple-tasks files scan --archive             # + move processed files to done/
+```
+
+- **`screenshots scan`** turns the "screenshot it to deal with later" habit
+  into real capture: on-device Vision text recognition per new image (`png`,
+  `jpg`, `heic`, …), emitting `{file, modified, text}`. Free, offline, no TCC
+  beyond folder access. The Photos library is deliberately out of scope
+  (separate permission + heavier API) — point it at a folder of saved images.
+- **`files scan`** is the universal escape hatch: any device drops a `.txt`/
+  `.md` into the iCloud `AgentInbox` folder (share sheet, Files app,
+  Scriptable, a laptop), and this emits `{file, modified, content}`. Good for
+  long pasted text, forwarded snippets, code — anything awkward to say to
+  Siri. `--archive` moves processed files into `done/` so they aren't
+  re-read (belt-and-suspenders with the watermark); iCloud placeholders are
+  materialized before reading.
+
+Feed either output to triage: the agent decides task/event/noise and files it
+with the source path as provenance. `doctor` reports the drop-folder path.
 
 ## Morning digest
 

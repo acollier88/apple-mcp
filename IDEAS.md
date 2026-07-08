@@ -491,7 +491,7 @@ task_complete; dispatcher prompt template gains a line instructing this.
 Morning digest then links straight to review targets. Reminders UI shows the
 URL natively on every device. Tiny change, big provenance win.
 
-## 20. Screenshot OCR scan — Vision framework capture channel
+## 20. Screenshot OCR scan — ✅ DONE 2026-07-08 (`screenshots scan`, Vision)
 
 `apple-tasks screenshots scan`: watermark over the screenshots folder
 (default ~/Desktop, configurable), Vision `VNRecognizeTextRequest` per new
@@ -532,7 +532,7 @@ fix (≤10 min) when no live callback arrives — live delivery proved flaky
 on beta 3 and the timeout-only path made whereami fail even with a warm
 cache.
 
-## 23. iCloud Drive drop-folder capture
+## 23. iCloud Drive drop-folder capture — ✅ DONE 2026-07-08 (`files scan [--archive]`)
 
 A watched folder (`~/Library/Mobile Documents/com~apple~CloudDocs/AgentInbox`)
 where ANY device can drop .txt/.md files (share sheet, Files app, Scriptable,
