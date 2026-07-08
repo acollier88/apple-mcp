@@ -58,7 +58,17 @@ struct AgentsConfig: Codable {
         let maxConcurrent: Int?
     }
 
+    struct TriageConfig: Codable {
+        /// Agent tag in `agents` used as the classifier (default "triage").
+        let agent: String?
+        /// Reminders list to triage (default "Reminders").
+        let inbox: String?
+    }
+
     var agents: [String: Agent]
+    /// When present, run a one-shot inbox triage (see Triage.swift) at the
+    /// start of every dispatch cycle, before scanning for dispatchable tasks.
+    var triage: TriageConfig?
     /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
     var maxConcurrent: Int?
     /// Repo/project tag -> working directory.
@@ -214,6 +224,41 @@ struct Dispatch: AsyncParsableCommand {
         if reapOnly {
             emit(reports)
             return
+        }
+
+        // Auto-triage (salvaged from PR #3, reworked): when agents.json has a
+        // "triage" block, classify and route untagged inbox items before the
+        // scan, so voice captures get tagged — and, if routed with [auto],
+        // dispatched — in the same cycle. Same rule as everywhere else: the
+        // classifier agent only judges; this CLI applies and audits every
+        // mutation (see Triage.swift). Triage failure never blocks dispatch.
+        if let t = config.triage {
+            let inbox = t.inbox ?? "Reminders"
+            let triageAgent = t.agent ?? "triage"
+            if dryRun {
+                reports.append(DispatchReport(taskId: "triage", title: "inbox '\(inbox)'",
+                                              agent: triageAgent, cwd: nil,
+                                              action: "would triage untagged inbox items before dispatch",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+            } else {
+                do {
+                    let result = try await Triage.triage(store: store, inbox: inbox,
+                                                         agentTag: triageAgent, apply: true)
+                    if result.untaggedCount > 0 {
+                        let agentCount = result.actions.filter { $0.kind == "agent" }.count
+                        let personal = result.actions.filter { $0.kind == "personal" }.count
+                        reports.append(DispatchReport(taskId: "triage", title: "inbox '\(inbox)'",
+                                                      agent: triageAgent, cwd: nil,
+                                                      action: "triaged \(result.actions.count): \(agentCount) agent, \(personal) personal",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    }
+                } catch {
+                    reports.append(DispatchReport(taskId: "triage", title: "inbox '\(inbox)'",
+                                                  agent: triageAgent, cwd: nil,
+                                                  action: "triage failed: \(error.localizedDescription)",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                }
+            }
         }
 
         let calendars = try listName.map { [try store.calendar(named: $0)] }

@@ -50,14 +50,17 @@ struct Triage: AsyncParsableCommand {
     func run() async throws {
         let store = Store()
         try await store.requestAccess()
+        emit(try await Self.triage(store: store, inbox: inbox, agentTag: agentTag, apply: apply))
+    }
 
+    /// Core triage pass, callable from the command or the dispatcher.
+    static func triage(store: Store, inbox: String, agentTag: String, apply: Bool) async throws -> TriageResult {
         let inboxCal = try store.calendar(named: inbox)
         let untagged = (await store.reminders(in: [inboxCal]))
             .filter { !$0.isCompleted && Tags.parse($0.title ?? "").tags.isEmpty }
 
         guard !untagged.isEmpty else {
-            emit(TriageResult(inbox: inbox, untaggedCount: 0, applied: false, actions: []))
-            return
+            return TriageResult(inbox: inbox, untaggedCount: 0, applied: false, actions: [])
         }
 
         // Available plan lists (routing targets) — everything except the inbox.
@@ -122,7 +125,7 @@ struct Triage: AsyncParsableCommand {
                                  addedTags: addTags, movedTo: moveTo, note: nil))
         }
 
-        emit(TriageResult(inbox: inbox, untaggedCount: untagged.count, applied: apply, actions: actions))
+        return TriageResult(inbox: inbox, untaggedCount: untagged.count, applied: apply, actions: actions)
     }
 
     // MARK: - prompt + agent spawn

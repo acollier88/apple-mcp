@@ -205,6 +205,7 @@ containing the task details and self-complete instructions. Config at
       "maxConcurrent": 1
     }
   },
+  "triage": { "agent": "triage", "inbox": "Reminders" },
   "workdirs": { "repo2": "~/Code/repo2" },
   "requireAutoTag": true,
   "maxRetries": 2,
@@ -220,6 +221,14 @@ directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
 `apple-tasks dispatch --dry-run` first.
 `--watch`/launchd mode is on the roadmap (IDEAS.md #7).
+
+The optional `triage` block runs the [on-demand inbox
+triage](#on-demand-triage-no-loop) at the start of every dispatch cycle:
+untagged captures get classified and routed first, so a voice memo tagged
+`[auto]` by the classifier can be dispatched in the same run. Same contract as
+standalone triage — the classifier agent only judges; the CLI applies and
+audits every mutation. Omit the block to keep triage manual. A triage failure
+is reported but never blocks the dispatch pass.
 
 Hardening features (all verified end-to-end; see docs/dispatcher-v2.md for
 the design):
@@ -303,6 +312,9 @@ button** in the AgentTasks app's activity view, and a Siri/Shortcuts intent —
 *"Hey Siri, triage my inbox in AgentTasks."* Agent work is routed to a plan
 list; personal items get a `[personal]` tag and stay put. Already-tagged tasks
 are never touched.
+
+To run this automatically before every dispatch cycle instead, add a `triage`
+block to `agents.json` (see [Dispatcher & audit log](#dispatcher--audit-log)).
 
 ### Continuous triage (a loop)
 
