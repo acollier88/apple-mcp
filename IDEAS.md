@@ -462,7 +462,7 @@ name, emails, phones, birthday, postal address. MCP `contact_search`.
 - Separate TCC prompt (Contacts); doctor gains a line. Read-only forever —
   agents have no business editing the address book.
 
-## 18. MCP parity + dispatcher control tools
+## 18. MCP parity + dispatcher control tools — ✅ DONE 2026-07-07 (batch 1)
 
 The dispatcher is CLI-only today, so an orchestrating agent can't drive it.
 Add MCP tools shelling to existing subcommands (near-zero Swift work):
@@ -472,7 +472,7 @@ filter), `run_log(ledger_id, tail?)` to read runs/<id>.log. Unlocks: a
 supervisor agent that reaps, retries, reads failure logs, and re-dispatches —
 the ops loop closes without a human terminal.
 
-## 19. Task ↔ artifact linkback via the URL field
+## 19. Task ↔ artifact linkback via the URL field — ✅ DONE 2026-07-07 (batch 1)
 
 EKCalendarItem has a public `url` property we don't expose. Add `--url` to
 add/update (tasks AND events) and emit it in list/show JSON. Convention: a
@@ -524,7 +524,7 @@ phrasing is awkward — long pasted content, forwarded text, code snippets.
 Combines with #21 (audio in the same folder) and #20 (images) into one
 "inbox folder" concept.
 
-## 24. Push-service notify (ntfy/Pushover) — off-Mac report-back
+## 24. Push-service notify (ntfy/Pushover) — off-Mac report-back — ✅ DONE 2026-07-07 (ntfy, batch 1)
 
 Promote the long-standing bullet: `notify` gains `--push` using a configured
 ntfy topic or Pushover key (`~/.config/apple-tasks/notify.json`, gitignored).
@@ -560,7 +560,7 @@ Beta 2 = build 26A5368g (2026-06-22, mostly under-the-hood); **beta 3 =
 26A5378j landed today (2026-07-06)** — upgrade straight to it. Findings below
 verified against the Xcode 27 beta SDK already on this machine where possible.
 
-## 27. Foundation Models local triage — spike #4 is now fully buildable
+## 27. Foundation Models local triage — ✅ DONE 2026-07-07 (`triage --agent local`)
 
 Verified in the local macOS 27 SDK: `FoundationModels.swiftinterface` has the
 full provider-agnostic surface — `LanguageModel` + `LanguageModelExecutor`
@@ -572,6 +572,15 @@ tags: [String], due: String?}` — structured output means no JSON-parsing
 slop. Zero API cost, offline, runs in the 7am launchd slot. Escalation
 ladder for hard items: on-device → PCC → Claude (#28) — all the same
 `LanguageModelSession` API, swap the `model:` argument.
+
+Shipped as `triage --agent local` (LocalTriage.swift): per-item structured
+generation (~1.6s/item, ids mapped positionally so they can't be
+hallucinated), picks validated against known agents/workdirs/plan lists,
+doctor gains a `foundationModels` availability line, FoundationModels is
+weak-linked so the .v14 binary floor stands. Live-verified on beta 3
+(26A5378j): dev task → [claude][apple-mcp] → Code Tasks, errand → [personal].
+Note: basic SystemLanguageModel use is NOT affected by the #33 executor-seam
+skew. notes_scan/mail_scan feeds remain open under #34.
 
 ## 28. ClaudeForFoundationModels — native in-process agent lane
 

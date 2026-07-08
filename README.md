@@ -305,7 +305,16 @@ tool-execution permissions). Default is a dry run:
 apple-tasks triage                 # report proposed routing, change nothing
 apple-tasks triage --apply         # apply tags + move agent work to its plan list
 apple-tasks triage --inbox Inbox --apply
+apple-tasks triage --agent local --apply   # on-device Apple model, no subprocess
 ```
+
+`--agent local` classifies with Apple's on-device `SystemLanguageModel`
+(FoundationModels, macOS 26+, Apple Intelligence enabled): zero API cost,
+offline, and `@Generable` structured output instead of parsing agent stdout.
+`doctor` reports availability on its `foundationModels` line. The same value
+works in the dispatcher's triage block (`"agent": "local"`) and the MCP tool's
+`agent` param. This is the first rung of the escalation ladder: on-device →
+cheap cloud classifier (`agy` on Flash) → Claude.
 
 Also exposed as MCP `triage_inbox` (dry-run by default), a **"Triage Inbox"
 button** in the AgentTasks app's activity view, and a Siri/Shortcuts intent —

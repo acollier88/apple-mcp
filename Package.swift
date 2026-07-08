@@ -22,6 +22,11 @@ let package = Package(
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
                     "-Xlinker", "Sources/AppleTasks/Info.plist",
+                    // FoundationModels is macOS 26+; weak-link so the binary
+                    // still loads on the declared .v14 floor (all uses are
+                    // #available-guarded — see LocalTriage.swift).
+                    "-Xlinker", "-weak_framework",
+                    "-Xlinker", "FoundationModels",
                 ])
             ]
         )

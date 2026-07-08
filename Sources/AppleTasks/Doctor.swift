@@ -8,6 +8,7 @@ struct DoctorOut: Codable {
     let reminders: String
     let calendars: String
     let location: String
+    let foundationModels: String
     let findmySidecar: String
     let privateHelper: PrivateHelperStatus
     let notesScanWatermark: String?
@@ -96,6 +97,7 @@ struct Doctor: AsyncParsableCommand {
             reminders: Self.describe(EKEventStore.authorizationStatus(for: .reminder)),
             calendars: Self.describe(EKEventStore.authorizationStatus(for: .event)),
             location: LocationFetcher.describeAuthorization(),
+            foundationModels: LocalClassifier.status(),
             findmySidecar: Self.findmyStatus(),
             privateHelper: Self.helperStatus(),
             notesScanWatermark: ScanState.load().notesScanWatermark,

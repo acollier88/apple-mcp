@@ -19,7 +19,7 @@ struct Triage: AsyncParsableCommand {
     @Option(help: "Reminders list to triage (default: Reminders).")
     var inbox: String = "Reminders"
 
-    @Option(name: .customLong("agent"), help: "Agent tag in agents.json to classify with (default: triage).")
+    @Option(name: .customLong("agent"), help: "Classifier: an agents.json tag, or 'local' for the on-device Apple model (default: triage).")
     var agentTag: String = "triage"
 
     @Flag(help: "Apply the classifications (default is a dry run that only reports).")
@@ -69,24 +69,35 @@ struct Triage: AsyncParsableCommand {
             .filter { $0.caseInsensitiveCompare(inbox) != .orderedSame }
 
         let config = try AgentsConfig.load()
-        guard let agent = config.agents[agentTag.lowercased()] else {
-            throw AppleTasksError.saveFailed(
-                "no '\(agentTag)' agent in agents.json; add one, e.g. "
-                + "{\"command\": [\"agy\", \"-p\", \"{prompt}\", \"--model\", \"Gemini 3.5 Flash (Medium)\"]}")
-        }
-
         let items = untagged.map { r -> [String: String] in
             let parsed = Tags.parse(r.title ?? "")
             return ["id": r.calendarItemExternalIdentifier ?? r.calendarItemIdentifier,
                     "title": parsed.title,
                     "notes": (r.notes ?? "").prefix(300).description]
         }
-        let prompt = Self.prompt(items: items, agents: config.agents.keys.filter { $0 != agentTag.lowercased() },
-                                 workdirs: Array(config.workdirs?.keys ?? [:].keys), planLists: planLists)
+        // Routing targets exclude classifier lanes — never route work TO a classifier.
+        let classifierTags: Set<String> = [agentTag.lowercased(), "triage", LocalClassifier.agentTag]
+        let routingAgents = config.agents.keys.filter { !classifierTags.contains($0) }.sorted()
+        let workdirs = Array(config.workdirs?.keys ?? [:].keys)
 
-        let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
-        let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5)
-        let classifications = try Self.parseClassifications(raw)
+        let classifications: [Classification]
+        if agentTag.lowercased() == LocalClassifier.agentTag {
+            // IDEAS #27: on-device SystemLanguageModel, no subprocess.
+            classifications = try await LocalClassifier.classify(
+                items: items, agents: routingAgents, workdirs: workdirs, planLists: planLists)
+        } else {
+            guard let agent = config.agents[agentTag.lowercased()] else {
+                throw AppleTasksError.saveFailed(
+                    "no '\(agentTag)' agent in agents.json; add one, e.g. "
+                    + "{\"command\": [\"agy\", \"-p\", \"{prompt}\", \"--model\", \"Gemini 3.5 Flash (Medium)\"]}"
+                    + " — or use --agent local for the on-device model")
+            }
+            let prompt = Self.prompt(items: items, agents: routingAgents,
+                                     workdirs: workdirs, planLists: planLists)
+            let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+            let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5)
+            classifications = try Self.parseClassifications(raw)
+        }
         let byId = Dictionary(classifications.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
         var actions: [TriageResult.Action] = []
