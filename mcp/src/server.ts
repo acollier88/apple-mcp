@@ -52,13 +52,20 @@ server.registerTool(
       list: z.string().optional().describe("Reminders list name (a plan). Omit for all lists."),
       tags: tagsField,
       status: z.enum(["open", "completed", "all"]).optional().describe("Default: open."),
+      due_before: z
+        .string()
+        .optional()
+        .describe("Only tasks due before this date (yyyy-MM-dd inclusive of that day, 'yyyy-MM-dd HH:mm', or ISO8601). Undated tasks are excluded."),
+      overdue: z.boolean().optional().describe("Only tasks whose due date has passed (excludes undated tasks)."),
     },
   },
-  async ({ list, tags, status }) => {
+  async ({ list, tags, status, due_before, overdue }) => {
     const args = ["list"];
     if (list) args.push("--list", list);
     for (const t of tags ?? []) args.push("--tag", t);
     if (status) args.push("--status", status);
+    if (due_before) args.push("--due-before", due_before);
+    if (overdue) args.push("--overdue");
     try {
       return ok(await cli(args));
     } catch (err) {

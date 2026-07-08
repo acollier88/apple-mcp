@@ -44,6 +44,13 @@ struct ListTasks: AsyncParsableCommand {
     @Option(help: "open | completed | all (default: open).")
     var status: StatusFilter = .open
 
+    @Option(name: .customLong("due-before"), help:
+        "Only tasks due before this date: yyyy-MM-dd (inclusive of that whole day), 'yyyy-MM-dd HH:mm', or ISO8601. Tasks with no due date are excluded.")
+    var dueBefore: String?
+
+    @Flag(help: "Only tasks whose due date has passed (excludes undated tasks).")
+    var overdue = false
+
     func run() async throws {
         let store = Store()
         try await store.requestAccess()
@@ -54,6 +61,24 @@ struct ListTasks: AsyncParsableCommand {
         case .open: reminders = reminders.filter { !$0.isCompleted }
         case .completed: reminders = reminders.filter { $0.isCompleted }
         case .all: break
+        }
+
+        var dueCutoff: Date?
+        if let dueBefore {
+            let (date, dateOnly) = try Dates.parseDateTime(dueBefore)
+            // A date-only bound should include that whole day.
+            dueCutoff = dateOnly ? date.addingTimeInterval(86_400) : date
+        }
+        if overdue {
+            dueCutoff = min(dueCutoff ?? .distantFuture, Date())
+        }
+        if let dueCutoff {
+            let calendar = Calendar.current
+            reminders = reminders.filter { r in
+                guard let comps = r.dueDateComponents, let due = calendar.date(from: comps)
+                else { return false }
+                return due < dueCutoff
+            }
         }
 
         var tasks = reminders.map(TaskOut.init)

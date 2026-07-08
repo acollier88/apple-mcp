@@ -55,6 +55,8 @@ apple-tasks add --list "Code Tasks" -t claude -t repo2 \
     --due 2026-06-10 --priority high "Add MFA to sign in page"
 apple-tasks list --list "Code Tasks" -t claude     # open tasks tagged claude
 apple-tasks list --status all                      # everything, everywhere
+apple-tasks list --overdue                         # due date has passed
+apple-tasks list --due-before 2026-07-12           # due before then (whole day incl.)
 apple-tasks update <id> --add-tag backend --remove-tag repo2 --title "New title"
 apple-tasks complete <id>
 apple-tasks uncomplete <id>
