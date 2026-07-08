@@ -188,7 +188,13 @@ struct Digest: AsyncParsableCommand {
         } else {
             parts.append("<ul>" + d.dueToday.map { t in
                 let title = HTML.escape(t.title)
-                let linked = t.url.map { "<a href=\"\(HTML.escape($0))\">\(title)</a>" } ?? title
+                // Only link http(s) — a task URL is agent/classifier-written,
+                // so other schemes (javascript:, file:) don't get an <a>.
+                let safeURL = t.url.flatMap { url in
+                    let lower = url.lowercased()
+                    return lower.hasPrefix("http://") || lower.hasPrefix("https://") ? url : nil
+                }
+                let linked = safeURL.map { "<a href=\"\(HTML.escape($0))\">\(title)</a>" } ?? title
                 return "<li>\(linked) (\(HTML.escape(t.list))\(t.due.map { ", due \(HTML.escape($0))" } ?? ""))</li>"
             }.joined() + "</ul>")
         }
