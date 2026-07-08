@@ -98,6 +98,19 @@ Bodies come back as plain text (HTML stripped). Password-protected notes are
 invisible to scripting. `mail scan` returns `[]` unless Mail.app is actually
 syncing the account.
 
+### Contacts (read-only, always)
+
+CNContactStore is public API — no JXA needed, but it's a separate Contacts
+TCC prompt per host process (`doctor` reports it).
+
+```bash
+apple-tasks contacts search sarah            # by name → id, emails, phones, birthday, addresses
+apple-tasks contacts search sarah@corp.com   # '@' in the query switches to email match
+apple-tasks contacts show <id>
+```
+
+Agents never edit the address book — there is deliberately no write path.
+
 ## MCP server
 
 ```bash
@@ -110,7 +123,7 @@ Register with Claude Code:
 claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
 ```
 
-Tools (31):
+Tools (33):
 
 - Tasks: `task_list`, `task_show`, `task_create`, `task_update`,
   `task_complete`, `task_uncomplete`, `task_delete`
@@ -118,6 +131,10 @@ Tools (31):
 - Events: `event_list`, `event_create`, `event_update`, `event_delete`, `calendar_list`
 - Notes/Mail: `notes_scan`, `mail_scan`, `mail_show` (read-only),
   `note_create` (NEW notes only — existing notes are never edited)
+- Contacts (read-only, always): `contact_search` (by name, or by email when
+  the query contains `@`), `contact_show` — resolve WHICH Sarah a task means,
+  rank known senders in mail triage; separate Contacts TCC prompt, `doctor`
+  reports the grant
 - Bridges: `shortcut_list`, `shortcut_run` (escape hatch to HomeKit/Focus/anything
   Shortcuts can do), `notify` (banner; `push: true` also sends via ntfy so it
   reaches your phone — config `~/.config/apple-tasks/notify.json`:

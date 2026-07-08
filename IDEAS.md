@@ -450,7 +450,7 @@ CLI adds show/uncomplete/dispatch/dispatches/log that MCP doesn't expose.
 Themes below: close CLI↔MCP gaps, add the missing People dimension (Contacts),
 new capture channels (OCR, voice, drop folder), and context-aware dispatch.
 
-## 17. Contacts (read-only) — the missing People dimension
+## 17. Contacts (read-only) — ✅ DONE 2026-07-08 (`contacts search/show`, MCP contact_search/contact_show, doctor line)
 
 We cover tasks, time, notes, mail, place — but not *people*. CNContactStore is
 public API: `apple-tasks contacts search <query>` / `contacts show <id>` →

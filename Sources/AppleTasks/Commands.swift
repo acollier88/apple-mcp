@@ -12,7 +12,7 @@ struct AppleTasks: AsyncParsableCommand {
             ListTasks.self, Show.self, Add.self, Update.self,
             Complete.self, Uncomplete.self, Delete.self, Lists.self,
             Events.self, Calendars.self,
-            Notes.self, Mail.self, Doctor.self,
+            Notes.self, Mail.self, ContactsCommand.self, Doctor.self,
             Dispatch.self, Dispatches.self, Log.self,
             Whereami.self, NotifyCommand.self, Triage.self, Digest.self,
         ]
