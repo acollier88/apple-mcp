@@ -270,6 +270,9 @@ struct Dispatch: AsyncParsableCommand {
                 prompt += "\nYou are in a dedicated git worktree on your own branch. " +
                     "Commit your work to the current branch; do not switch branches."
             }
+            if lowerTags.contains("pr") {
+                prompt += "\nThis task requires a Pull Request. When finished, push your branch to origin with 'git push -u origin HEAD' and open a PR with 'gh pr create' (title + a body describing the change and how you verified). Run these commands to associate it: apple-tasks update \(taskId) --url \"<PR url>\""
+            }
             let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
 
             if dryRun {
