@@ -664,3 +664,19 @@ Event protocol→struct migration is expected to be a small mechanical diff
 (factory methods look unchanged). Add to the §32 drill: dyld-run a trivial
 FoundationModels binary, not just compile one — compile-clean is no longer
 proof on this framework.
+
+## 34. Fold notes-scan into triage (salvage from closed PR #3)
+
+PR #3 (antigravity dispatch #21) bundled two things: auto-triage on dispatch
+(merged, reworked — a6eeed7) and a notes-scan step where the triage agent also
+called `notes_scan()` and created events/tasks from note action items. The
+notes half was dropped because it had the agent mutating via MCP tools,
+violating the "agent judges, CLI applies" rule.
+
+The salvageable shape: extend `apple-tasks triage` (or a sibling
+`triage --notes`) to feed `notes scan` output to the classifier alongside
+untagged reminders, get back proposed `{event|task, title, date, source}`
+JSON, and have the CLI create the items (audited, dry-run by default,
+source-note name in the notes field, dedupe against prior runs). That gives
+the notes→tasks loop (README §Notes-to-tasks) a no-loop on-demand path, same
+as inbox triage got.
