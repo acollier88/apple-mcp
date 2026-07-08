@@ -76,9 +76,80 @@ enum LocalClassifier {
         throw AppleTasksError.saveFailed("local triage not compiled in (SDK lacks FoundationModels)")
         #endif
     }
+
+    /// IDEAS #34: extract action items from notes, one note per generation.
+    static func classifyNotes(notes: [[String: String]], agents: [String], workdirs: [String],
+                              planLists: [String]) async throws -> [Triage.NoteClassification] {
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *) else {
+            throw AppleTasksError.saveFailed("local triage needs macOS 26+ (FoundationModels)")
+        }
+        guard case .available = SystemLanguageModel.default.availability else {
+            throw AppleTasksError.saveFailed(
+                "on-device model \(status()) — check Apple Intelligence in System Settings")
+        }
+        let session = LanguageModelSession(model: SystemLanguageModel.default, instructions: """
+        You extract action items from Apple Notes for a task queue. For each note emit \
+        zero or more actions: kind "event" for date/time-bound items (with a due date), \
+        "task" for actionable work, "noise" for journal-style content. For software/repo \
+        tasks choose an agent from [\(agents.joined(separator: ", "))], a repo from \
+        [\(workdirs.joined(separator: ", "))] only if one clearly applies, and a plan \
+        list from [\(planLists.joined(separator: ", "))]. When unsure, emit nothing \
+        rather than duplicates or noise.
+        """)
+
+        var out: [Triage.NoteClassification] = []
+        for note in notes {
+            let name = note["name"] ?? "note"
+            let prompt = "Note \"\(name)\":\n\(note["body"] ?? "")"
+            let decisions = try await session.respond(to: prompt, generating: NoteDecisionList.self).content
+            for d in decisions.items {
+                var tags: [String] = []
+                if let a = d.agent,
+                   let match = agents.first(where: { $0.caseInsensitiveCompare(a) == .orderedSame }) {
+                    tags.append(match)
+                }
+                if let r = d.repo,
+                   let match = workdirs.first(where: { $0.caseInsensitiveCompare(r) == .orderedSame }) {
+                    tags.append(match)
+                }
+                out.append(.init(source: name, kind: d.kind, title: d.title,
+                                 due: d.due, tags: tags, list: d.list))
+            }
+        }
+        return out
+        #else
+        throw AppleTasksError.saveFailed("local triage not compiled in (SDK lacks FoundationModels)")
+        #endif
+    }
 }
 
 #if canImport(FoundationModels)
+@available(macOS 26.0, *)
+@Generable
+private struct NoteDecisionList {
+    @Guide(description: "Action items found in the note; empty when the note has none")
+    var items: [NoteDecision]
+}
+
+@available(macOS 26.0, *)
+@Generable
+private struct NoteDecision {
+    @Guide(description: "\"event\" for date/time-bound items, \"task\" for actionable work, \"noise\" otherwise",
+           .anyOf(["task", "event", "noise"]))
+    var kind: String
+    @Guide(description: "Short imperative title for the task or event")
+    var title: String
+    @Guide(description: "Due/start as \"yyyy-MM-dd\" or \"yyyy-MM-dd HH:mm\"; omit when not date-bound")
+    var due: String?
+    @Guide(description: "For software/repo tasks: which agent, from the allowed list")
+    var agent: String?
+    @Guide(description: "For software/repo tasks: the repo tag, only if one clearly applies")
+    var repo: String?
+    @Guide(description: "Target plan list, only if one fits")
+    var list: String?
+}
+
 @available(macOS 26.0, *)
 @Generable
 private struct Decision {

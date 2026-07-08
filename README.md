@@ -335,7 +335,16 @@ apple-tasks triage                 # report proposed routing, change nothing
 apple-tasks triage --apply         # apply tags + move agent work to its plan list
 apple-tasks triage --inbox Inbox --apply
 apple-tasks triage --agent local --apply   # on-device Apple model, no subprocess
+apple-tasks triage --notes --apply         # + notes → tasks/events (see below)
 ```
+
+`--notes` extends the same judge-then-apply pipeline to Apple Notes: the
+classifier extracts action items from notes modified since the last scan —
+date-bound items become calendar events, actionable work becomes (tagged)
+tasks — and the CLI creates them with `from note: <name>` in the item's notes
+for provenance. Dedupe is the shared notes-scan watermark, which only
+advances on `--apply`, so dry runs are repeatable. MCP: `include_notes: true`
+on `triage_inbox`.
 
 `--agent local` classifies with Apple's on-device `SystemLanguageModel`
 (FoundationModels, macOS 26+, Apple Intelligence enabled): zero API cost,

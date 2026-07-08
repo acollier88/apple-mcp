@@ -71,22 +71,25 @@ struct NotesScan: AsyncParsableCommand {
     }
     """
 
-    func run() async throws {
-        let scanStart = Date()
-        var state = ScanState.load()
-
-        let sinceDate: Date
-        if let since {
-            sinceDate = try Dates.parseDateTime(since).date
-        } else if let watermark = state.notesScanWatermark,
-                  let parsed = ISO8601DateFormatter().date(from: watermark) {
-            sinceDate = parsed
-        } else {
-            sinceDate = scanStart.addingTimeInterval(-86_400)
+    /// The stored watermark, or a 24h look-back when none exists.
+    static func watermarkDate(asOf now: Date = Date()) -> Date {
+        if let watermark = ScanState.load().notesScanWatermark,
+           let parsed = ISO8601DateFormatter().date(from: watermark) {
+            return parsed
         }
+        return now.addingTimeInterval(-86_400)
+    }
 
+    static func advanceWatermark(to scanStart: Date) throws {
+        var state = ScanState.load()
+        state.notesScanWatermark = ISO8601DateFormatter().string(from: scanStart)
+        try state.save()
+    }
+
+    /// One scan pass (no watermark side effects — callers decide).
+    static func scan(folder: String?, since sinceDate: Date, maxChars: Int) throws -> [NoteOut] {
         let sinceMs = String(Int(sinceDate.timeIntervalSince1970 * 1000))
-        let raw = try OSA.runJXA(Self.script, args: [sinceMs, folder ?? ""])
+        let raw = try OSA.runJXA(script, args: [sinceMs, folder ?? ""])
 
         struct RawNote: Codable {
             let id: String
@@ -96,7 +99,7 @@ struct NotesScan: AsyncParsableCommand {
             let modified: String
         }
         let rawNotes = try JSONDecoder().decode([RawNote].self, from: Data(raw.utf8))
-        let notes = rawNotes.map { note in
+        return rawNotes.map { note in
             NoteOut(
                 id: note.id,
                 name: note.name,
@@ -106,10 +109,15 @@ struct NotesScan: AsyncParsableCommand {
                 modified: note.modified
             )
         }
+    }
 
+    func run() async throws {
+        let scanStart = Date()
+        let sinceDate = try since.map { try Dates.parseDateTime($0).date }
+            ?? Self.watermarkDate(asOf: scanStart)
+        let notes = try Self.scan(folder: folder, since: sinceDate, maxChars: maxChars)
         if since == nil {
-            state.notesScanWatermark = ISO8601DateFormatter().string(from: scanStart)
-            try state.save()
+            try Self.advanceWatermark(to: scanStart)
         }
         emit(notes)
     }

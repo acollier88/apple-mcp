@@ -683,7 +683,7 @@ Event protocol→struct migration is expected to be a small mechanical diff
 FoundationModels binary, not just compile one — compile-clean is no longer
 proof on this framework.
 
-## 34. Fold notes-scan into triage (salvage from closed PR #3)
+## 34. Fold notes-scan into triage — ✅ DONE 2026-07-08 (`triage --notes`)
 
 PR #3 (antigravity dispatch #21) bundled two things: auto-triage on dispatch
 (merged, reworked — a6eeed7) and a notes-scan step where the triage agent also
