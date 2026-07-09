@@ -629,7 +629,7 @@ just a session in the AgentTasksApp or a `apple-tasks agent` subcommand.
 Auth via ANTHROPIC_API_KEY env. Beta caveat: APIs may change before GA;
 pin the package version.
 
-## 29. Adopt more App Intents schema domains (calendar, notes, mail, files)
+## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped; files not started
 
 Verified in the local SDK's AppIntents.swiftinterface: schema domains now
 cover **assistant, audio, books, browser, calendar, camera, clock, files,
@@ -644,6 +644,86 @@ Next for AgentTasksApp:
 - Investigate the **assistant** and **system** intent schemas (assistant is
   likely the public face of the `_ModelDelegationIntent` SPI found earlier —
   if it went public, the Siri-delegation hook may now be buildable).
+
+### Notes domain — shipped (2026-07-08)
+
+`spikes/AgentTasksApp/Sources/NotesSchemaIntents.swift`: `NoteEntity`,
+`NoteFolderEntity`, `NoteAccountEntity`, `CreateNoteIntent` (schemas
+`.notes.note`/`.notes.folder`/`.notes.account`/`.notes.createNote`).
+`CreateNoteIntent.perform()` shells to the existing `apple-tasks notes
+create` command (built for the digest feature). Compiles clean through the
+full `appintentsmetadataprocessor` pass; verified live that the exact CLI
+invocation the intent uses creates and is readable back via `notes scan`.
+
+Schema shape, discovered by iterative bisection against the beta 3 macro
+plugin (useful reference — none of this is documented anywhere public):
+- `CreateNoteIntent`'s body param must be named **`content`**
+  (`AttributedString?`), not `title`/`body` — a note's title is a
+  **separate, required, non-optional** `name: String` param.
+- `NoteEntity.content` must be **optional** even though conceptually
+  always present — the macro insists.
+- `CreateNoteIntent`'s `isPinned`/`attachments` must be **non-optional**
+  (`Bool`, `[IntentFile]`) even when callers won't set them — pass
+  `false`/`[]` as the effective default.
+- `NoteFolderEntity` requires `account`/`parentFolder` properties. A
+  **stored** `parentFolder: NoteFolderEntity?` gives the struct infinite
+  size (no `indirect` for structs, unlike enums) — both are **computed**
+  properties returning `nil` (nested folders/accounts aren't modeled).
+
+Not done: `UpdateNoteIntent` (schema exposes it; same pattern should
+apply — deferred for time). Verified: compiler/metadata-processor
+conformance + the underlying CLI path. Not verified: an actual spoken
+Siri invocation end-to-end (no Shortcuts-CLI way to trigger a specific
+App Intent by name without first building a Shortcut in the GUI).
+
+### Calendar domain — descoped, not shipped
+
+Attempted `CalendarSchemaIntents.swift` (Create/Update/DeleteEvent(s)
+Intent, EventEntity, CalendarEntity). Findings from bisection against the
+beta 3 macro plugin, kept here so a future attempt doesn't have to
+rediscover them:
+- `.calendar.updateEvent` requires the target property named **`event`**
+  (not `target`, unlike `reminders.updateReminder`).
+- `.calendar.deleteEvents` requires an explicit **`@Parameter`** wrapper
+  on the `entities: [EventEntity]` array — implicit inference (which
+  works for `reminders.deleteReminders`) fails to synthesize conformance
+  here. Both errors surface only as a generic "does not conform to
+  protocol 'AppIntent' / missing init()" at the swiftc level — the real
+  cause only shows up by bisection, not by reading the diagnostic.
+- `EventEntity`'s required property set is much larger than `TaskEntity`'s:
+  `startDate`/`endDate` as **non-optional `Date`** (not `DateComponents?`),
+  `isAllDay: Bool` non-optional, `calendar: CalendarEntity` non-optional,
+  plus **required** `alarms`, `attendees: [AttendeeEntity]`,
+  `organizers: [IntentPerson]`, `note`, `recurrence`, `status`,
+  `travelTime`, `virtualLocation`. `location` wants a custom
+  `AppUnionValue`-conforming union type (`SystemEntity<GeoToolbox
+  .PlaceDescriptorEntity> | String`) — its own associated-`Cases`-enum
+  protocol implementation, not a simple property.
+- This is the entity's OWN required shape, so there's no "read-only,
+  skip the mutating intents" shortcut — even just letting Siri look up an
+  event needs the full property set satisfied.
+- None of attendees/alarms/recurrence/travel-time/virtual-location/status
+  are modeled by `apple-tasks events` / `EventOut` today, and several
+  (attendees especially) may not even be writable via public EventKit on
+  local (non-server) calendars. Full compliance means designing and
+  building that CLI surface first — a materially bigger project than
+  "adopt the schema," not a natural continuation of it.
+- **Call made**: don't chase full compliance in the same pass as notes.
+  Revisit calendar as its own scoped task once/if `apple-tasks events`
+  grows attendee/alarm/recurrence support for its own sake.
+
+### Mail domain — skipped, scope mismatch
+
+`.mail` schema only exposes `Forward/Reply/Archive/Delete/UpdateMailIntent`
+— all act-on-an-existing-message intents needing Mail.app WRITE access.
+Our mail surface (`mail_scan`/`mail_show`) is deliberately read-only; there
+is no schema intent for "list mail" or "show new items," so there's no
+natural mapping without first building Mail-write support (a distinct,
+separately-scoped feature). Not attempted.
+
+### Files domain — not started
+
+Queued (pairs with #23's drop-folder), not reached this session.
 
 ## 30. Siri Extensions status — WATCH, don't build (beta 2/3 reality check)
 

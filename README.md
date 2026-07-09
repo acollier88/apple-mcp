@@ -112,6 +112,11 @@ Bodies come back as plain text (HTML stripped). Password-protected notes are
 invisible to scripting. `mail scan` returns `[]` unless Mail.app is actually
 syncing the account.
 
+AgentTasks also adopts the Notes App Intents domain (macOS 27,
+`NotesSchemaIntents.swift`): *"Hey Siri, create a note in AgentTasks"*
+shells to `notes create` under the hood. Calendar/mail domain adoption was
+attempted and descoped — see IDEAS #29 for the (substantial) reasons why.
+
 ### Contacts (read-only, always)
 
 CNContactStore is public API — no JXA needed, but it's a separate Contacts
