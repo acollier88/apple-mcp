@@ -369,11 +369,4 @@ enum SpotlightDonation {
         try? await CSSearchableIndex.default().indexAppEntities(tasks, priority: 0)
     }
 
-    static func updateTask(_ task: TaskEntity) async {
-        try? await CSSearchableIndex.default().indexAppEntities([task], priority: 0)
-    }
-
-    static func removeTask(id: String) async {
-        try? await CSSearchableIndex.default().deleteAppEntities(withIdentifiers: [id])
-    }
 }

@@ -6,6 +6,12 @@ import Combine
 
 @main
 struct AgentTasksApp: App {
+    // EventKit only delivers .EKEventStoreChanged to processes that hold an
+    // initialized event store (with access granted), so keep one for the
+    // app's lifetime -- without this the observer below never fires.
+    private let eventStore = EKEventStore()
+    @State private var reindexTask: Task<Void, Never>?
+
     init() {
         // Headless helper mode: bare CLI executables can't get a Location
         // Services grant on recent macOS, but this app bundle can — so
@@ -21,13 +27,18 @@ struct AgentTasksApp: App {
                 .frame(minWidth: 520, maxWidth: .infinity, minHeight: 450, maxHeight: .infinity)
                 .task {
                     AgentTasksShortcuts.updateAppShortcutParameters()
+                    _ = try? await eventStore.requestFullAccessToReminders()
                     if #available(macOS 27.0, *) {
                         await SpotlightDonation.donateOpenTasks()
                     }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged, object: nil)) { _ in
                     if #available(macOS 27.0, *) {
-                        Task {
+                        // Mutations arrive in bursts; debounce before re-donating.
+                        reindexTask?.cancel()
+                        reindexTask = Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            guard !Task.isCancelled else { return }
                             await SpotlightDonation.donateAllOpenTasks()
                         }
                     }

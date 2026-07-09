@@ -739,11 +739,14 @@ the backend on. Re-check each beta.
 
 Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
 ground its answers. Our `IndexedEntity` donation runs on app launch, but goes stale.
-We upgraded it to:
-- Adopt `IndexedEntityQuery` on `TaskEntityQuery` for system-initiated reindexing callbacks.
-- Expanded `SpotlightDonation` with incremental single-task indexing and removal helpers.
-- Added a `.EKEventStoreChanged` observer in `AgentTasksApp` to trigger continuous re-indexing on every mutation.
-- Verified compilation and setup.
+Upgraded:
+- `TaskEntityQuery` adopts `IndexedEntityQuery` for system-initiated reindex callbacks.
+- The app holds a long-lived `EKEventStore` (and requests Reminders access) --
+  required for `.EKEventStoreChanged` to be delivered at all -- and re-donates
+  all open tasks on every mutation, debounced 2s.
+- Verified: compiles through the full appintentsmetadataprocessor. NOT yet
+  verified live: that tasks surface in Spotlight ask on beta 3 (needs the app
+  running + a mutation while watching Spotlight).
 
 
 ## 32. Beta-upgrade regression drill (✅ SCRIPTED as `make betacheck` 2026-07-07; run after EVERY beta)
