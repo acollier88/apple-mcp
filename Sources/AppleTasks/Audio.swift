@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import Speech
+import os
 
 // IDEAS #21: Voice-note transcription scan. Watermarks an inbox folder (e.g. iCloud
 // AgentInbox) for new audio recordings, transcribes them on-device via Speech recognition,
@@ -11,8 +12,9 @@ import Speech
 struct AudioOut: Codable {
     let file: String
     let modified: String
-    let transcript: String
+    var transcript: String?
     var archivedTo: String?
+    var error: String?
 }
 
 struct Audio: AsyncParsableCommand {
@@ -76,6 +78,7 @@ struct AudioScan: AsyncParsableCommand {
 
         let isoOut = ISO8601DateFormatter()
         var results: [AudioOut] = []
+        var oldestFailure: Date?
         for url in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             guard Self.audioExtensions.contains(url.pathExtension.lowercased()) else { continue }
             let values = try? url.resourceValues(forKeys: Set(keys))
@@ -86,75 +89,128 @@ struct AudioScan: AsyncParsableCommand {
             // Ensure iCloud file is materialized locally
             try? FileManager.default.startDownloadingUbiquitousItem(at: url)
 
-            let transcript = await Self.transcribe(url: url).prefix(maxChars)
-            
             var out = AudioOut(file: url.path, modified: isoOut.string(from: modified),
-                               transcript: String(transcript), archivedTo: nil)
-            if archive {
-                out.archivedTo = try Self.archiveFile(url, in: folderURL)
+                               transcript: nil, archivedTo: nil, error: nil)
+            switch await Self.transcribe(url: url) {
+            case .success(let text):
+                out.transcript = String(text.prefix(maxChars))
+                // Only archive files that actually transcribed; failures stay
+                // in place so the next scan retries them.
+                if archive {
+                    out.archivedTo = try Self.archiveFile(url, in: folderURL)
+                }
+            case .failure(let err):
+                out.error = err.message
+                oldestFailure = min(oldestFailure ?? modified, modified)
             }
             results.append(out)
         }
 
         if advanceWatermark {
             var state = ScanState.load()
-            state.audioScanWatermark = isoOut.string(from: scanStart)
+            // A failed file must fall after the watermark so it is retried;
+            // park the watermark just before the oldest failure.
+            let mark = oldestFailure.map { $0.addingTimeInterval(-1) } ?? scanStart
+            state.audioScanWatermark = isoOut.string(from: mark)
             try state.save()
         }
         emit(results)
     }
 
-    /// On-device transcription using Speech framework.
-    static func transcribe(url: URL) async -> String {
+    struct TranscribeError: Error {
+        let message: String
+    }
+
+    /// On-device transcription using Speech framework. Failure (unavailable
+    /// recognizer, recognition error, timeout) is distinct from an empty
+    /// transcript so callers can retry instead of silently losing the memo.
+    static func transcribe(url: URL) async -> Result<String, TranscribeError> {
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) else {
-            return ""
+            return .failure(TranscribeError(message: "speech recognizer unavailable for locale"))
         }
         guard recognizer.isAvailable else {
-            return ""
+            return .failure(TranscribeError(message: "speech recognizer not available (on-device model missing?)"))
         }
 
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = false
 
-        return await withCheckedContinuation { continuation in
-            var resumed = false
-            let task = recognizer.recognitionTask(with: request) { result, error in
-                if resumed { return }
+        // The recognition callback and the timeout fire on different queues;
+        // the lock guarantees the continuation resumes exactly once.
+        let resumed = OSAllocatedUnfairLock(initialState: false)
+        func resumeOnce(_ body: () -> Void) {
+            let first = resumed.withLock { done in
+                if done { return false }
+                done = true
+                return true
+            }
+            if first { body() }
+        }
 
-                if error != nil {
-                    resumed = true
-                    continuation.resume(returning: "")
+        return await withCheckedContinuation { continuation in
+            let task = recognizer.recognitionTask(with: request) { result, error in
+                if let error {
+                    resumeOnce { continuation.resume(returning: .failure(
+                        TranscribeError(message: error.localizedDescription))) }
                     return
                 }
-
-                if let result = result {
-                    if result.isFinal {
-                        resumed = true
-                        continuation.resume(returning: result.bestTranscription.formattedString)
-                    }
+                if let result, result.isFinal {
+                    resumeOnce { continuation.resume(returning: .success(
+                        result.bestTranscription.formattedString)) }
                 }
             }
 
             // Fallback timeout after 30 seconds
             DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
-                if !resumed {
-                    resumed = true
+                resumeOnce {
                     task.cancel()
-                    continuation.resume(returning: "")
+                    continuation.resume(returning: .failure(TranscribeError(message: "transcription timed out (30s)")))
                 }
             }
         }
     }
 
     private func requestSpeechAuthorization() async throws {
-        let status = SFSpeechRecognizer.authorizationStatus()
+        var status = SFSpeechRecognizer.authorizationStatus()
         if status == .notDetermined {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                SFSpeechRecognizer.requestAuthorization { _ in
-                    continuation.resume()
+            // In non-app hosts the authorization callback may never fire
+            // (no UI to attach the TCC prompt to) -- don't hang the scan.
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+            status = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { result in
+                    let first = resumed.withLock { done in
+                        if done { return false }
+                        done = true
+                        return true
+                    }
+                    if first { continuation.resume(returning: result) }
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+                    let first = resumed.withLock { done in
+                        if done { return false }
+                        done = true
+                        return true
+                    }
+                    if first { continuation.resume(returning: SFSpeechRecognizer.authorizationStatus()) }
                 }
             }
+        }
+        guard status == .authorized else {
+            throw AppleTasksError.automationFailed(
+                "Speech recognition not authorized (status: \(Self.describe(status))). " +
+                "Run once from Terminal to get the TCC prompt, or grant it in " +
+                "System Settings > Privacy & Security > Speech Recognition.")
+        }
+    }
+
+    private static func describe(_ status: SFSpeechRecognizerAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "notDetermined"
+        case .restricted: return "restricted"
+        case .denied: return "denied"
+        case .authorized: return "authorized"
+        @unknown default: return "unknown(\(status.rawValue))"
         }
     }
 

@@ -514,6 +514,8 @@ folder sidesteps that). Speech adds its own TCC prompt; doctor line.
 - Subcommand `audio scan` implemented in `Sources/AppleTasks/Audio.swift`.
 - Integrates with `ScanState` watermark persistence.
 - Adds speech recognition TCC check to the `doctor` command.
+- MCP tool `audio_scan`. Failed transcriptions are reported per-file, are
+  never archived, and hold the watermark back so the next scan retries them.
 
 
 ## 22. Context-gated dispatch — ✅ DONE 2026-07-08 (location/power/maxLoad; focus deferred)
