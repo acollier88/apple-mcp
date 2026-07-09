@@ -629,7 +629,7 @@ just a session in the AgentTasksApp or a `apple-tasks agent` subcommand.
 Auth via ANTHROPIC_API_KEY env. Beta caveat: APIs may change before GA;
 pin the package version.
 
-## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped; files not started
+## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES + FILES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped
 
 Verified in the local SDK's AppIntents.swiftinterface: schema domains now
 cover **assistant, audio, books, browser, calendar, camera, clock, files,
@@ -721,9 +721,12 @@ is no schema intent for "list mail" or "show new items," so there's no
 natural mapping without first building Mail-write support (a distinct,
 separately-scoped feature). Not attempted.
 
-### Files domain — not started
+### Files domain — shipped (2026-07-08)
 
-Queued (pairs with #23's drop-folder), not reached this session.
+`spikes/AgentTasksApp/Sources/FilesSchemaIntents.swift`: `FileEntity`, `FolderEntity`, `OpenFileIntent` (schemas `.files.file`/`.files.folder`/`.files.openFile`).
+`OpenFileIntent.perform()` opens target files via `NSWorkspace.shared.open()` on the MainActor. `FileEntityQuery` matches files by running the existing `apple-tasks files scan` command.
+Like calendar/notes, schema shape is speculative and requires validation against the beta macro plugin.
+
 
 ## 30. Siri Extensions status — WATCH, don't build (beta 2/3 reality check)
 
