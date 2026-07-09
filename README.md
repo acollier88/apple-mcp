@@ -46,6 +46,17 @@ best-effort:
 First run prompts for Reminders access (macOS 14+ "full access"), attributed to the
 terminal/app that launched it. Grant in System Settings > Privacy & Security > Reminders.
 
+The same helper also nests reminders as **native subtasks**: `apple-tasks
+update <child> --parent <parent>` (and MCP `task_update` `parent`) makes one
+task a subtask of another — so a plan list can show agent work as parent +
+steps instead of a flat pile. `"subtask": true|false` appears in the output;
+`doctor`'s private-helper `--check` reports `"subtasks": true` when the API is
+present. Note: a subtask op changes the reminder's *local* id (the sync-stable
+`externalId` is unaffected — prefer it for follow-up calls). Detaching a
+subtask is intentionally not exposed: ReminderKit's `removeFromParentReminder`
+leaves the reminder un-filed and thus invisible to EventKit (IDEAS #26).
+Sections aren't mirrored yet (the reminder→section reference is unproven).
+
 ## CLI
 
 ```bash
@@ -58,6 +69,7 @@ apple-tasks list --status all                      # everything, everywhere
 apple-tasks list --overdue                         # due date has passed
 apple-tasks list --due-before 2026-07-12           # due before then (whole day incl.)
 apple-tasks update <id> --add-tag backend --remove-tag repo2 --title "New title"
+apple-tasks update <child-id> --parent <parent-id>   # native subtask (private helper)
 apple-tasks complete <id>
 apple-tasks uncomplete <id>
 apple-tasks delete <id>

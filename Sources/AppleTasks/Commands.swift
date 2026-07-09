@@ -203,6 +203,15 @@ struct Update: AsyncParsableCommand {
     @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring added tags to native Reminders tags.")
     var noNativeTags = false
 
+    @Option(name: .customLong("parent"), help: "Make this task a subtask of the given task id (private ReminderKit helper).")
+    var parent: String?
+
+    // NOTE: no --clear-parent. The helper CAN detach (removeFromParentReminder,
+    // proven at the ReminderKit layer), but a detached reminder is not re-filed
+    // into a list calendar and so becomes invisible to EventKit — effectively
+    // data loss from every EventKit-based surface. Left unexposed until the
+    // re-file step is figured out (IDEAS #26).
+
     func run() async throws {
         for tag in addTags { try Tags.validate(tag) }
         let store = Store()
@@ -234,6 +243,17 @@ struct Update: AsyncParsableCommand {
         var out = TaskOut(reminder)
         if !noNativeTags && !addTags.isEmpty {
             out.nativeTags = NativeTags.mirror(tags: addTags, externalId: reminder.calendarItemExternalIdentifier)
+        }
+        // Subtask relationship (IDEAS #26) via the private helper. Resolve the
+        // parent's sync-stable externalId; save the reminder first so its own
+        // externalId exists before the helper looks it up.
+        if let parent {
+            let parentReminder = try await store.reminder(id: parent)
+            guard let parentExternalId = parentReminder.calendarItemExternalIdentifier, !parentExternalId.isEmpty else {
+                throw AppleTasksError.saveFailed("parent task has no external identifier yet")
+            }
+            out.subtask = NativeTags.setParent(childExternalId: reminder.calendarItemExternalIdentifier,
+                                               parentExternalId: parentExternalId)
         }
         AuditDB.shared.record(command: "update", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)

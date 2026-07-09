@@ -562,7 +562,7 @@ tasks with the URL field (#19), or flags ones relevant to active plans.
 Skip if FDA feels too heavy — this is the only idea in this round that
 needs it, so it ships last and stays optional.
 
-## 26. Sections & subtasks via the private helper (remctl round 2)
+## 26. Sections & subtasks via the private helper — ✅ SUBTASKS DONE 2026-07-08 (`update --parent`); sections + detach still open
 
 The remctl spike proved ReminderKit can write more than tags: subtasks,
 sections, smart lists. Extend apple-tasks-private with `--set-section` and
@@ -572,6 +572,19 @@ stable source of truth, private API is enhancement-only, doctor's --check
 probe is the regression canary). Payoff: a plan list becomes visually
 phased in Reminders (sections = phases, subtasks = steps) — the human's
 view of agent work stops being a flat pile.
+
+Shipped (2026-07-08): `update --parent <id>` + MCP `task_update` parent, via
+the helper's REMReminderSubtaskContextChangeItem.addReminderChangeItem: (probed
+live; `--check` now reports "subtasks":true). Subtasks stay EventKit-visible
+and list normally. Two findings from live testing:
+- A subtask/detach op changes the reminder's LOCAL calendarItemIdentifier;
+  externalId is stable — callers should use it.
+- Detach (removeFromParentReminder) works at the ReminderKit layer but leaves
+  the reminder un-filed into any list calendar, so EventKit can no longer see
+  it (effective data loss). --clear-parent is therefore NOT exposed until the
+  re-file-into-list step is found. Sections are also still open: section
+  CREATE selectors exist (addListSectionWithDisplayName:...) but the
+  reminder->section reference needed to ASSIGN a task to a section is unproven.
 
 ## macOS 27 beta 2/3 research (2026-07-06) — what the upgrade unlocks
 

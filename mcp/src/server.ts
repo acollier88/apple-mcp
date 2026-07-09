@@ -123,9 +123,13 @@ server.registerTool(
       list: z.string().optional().describe("Move the task to this list."),
       url: z.string().optional().describe("Set the task URL (PR/artifact links)."),
       clear_url: z.boolean().optional(),
+      parent: z
+        .string()
+        .optional()
+        .describe("Make this task a subtask of the given task id (native Reminders subtask, via the private helper)."),
     },
   },
-  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url }) => {
+  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent }) => {
     const args = ["update", id];
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
@@ -138,6 +142,7 @@ server.registerTool(
     if (due) args.push("--due", due);
     if (priority) args.push("--priority", priority);
     if (list) args.push("--list", list);
+    if (parent) args.push("--parent", parent);
     try {
       return ok(await cli(args));
     } catch (err) {

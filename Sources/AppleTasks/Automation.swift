@@ -73,13 +73,32 @@ enum NativeTags {
     /// failed mirror never fails the command.
     static func mirror(tags: [String], externalId: String?) -> Bool? {
         guard !tags.isEmpty else { return nil }
+        return run(["externalId": externalId ?? "", "tags": tags], externalId: externalId, what: "native tag mirror")
+    }
+
+    /// IDEAS #26: make `externalId` a subtask of `parentExternalId` via the
+    /// private helper. Best-effort like mirror — a failure warns, never fails
+    /// the command (subtasks are an enhancement over the flat list).
+    static func setParent(childExternalId: String?, parentExternalId: String) -> Bool? {
+        run(["externalId": childExternalId ?? "", "parent": parentExternalId],
+            externalId: childExternalId, what: "subtask")
+    }
+
+    /// Detach `externalId` from its parent reminder.
+    static func clearParent(externalId: String?) -> Bool? {
+        run(["externalId": externalId ?? "", "clearParent": true],
+            externalId: externalId, what: "subtask detach")
+    }
+
+    /// Shared helper invocation: JSON payload on stdin, exit 0 = success.
+    private static func run(_ payload: [String: Any], externalId: String?, what: String) -> Bool? {
         guard let helper = helperURL else { return nil }
         guard let externalId, !externalId.isEmpty else {
-            FileHandle.standardError.write(Data("warning: native tag mirror skipped (no external identifier yet)\n".utf8))
+            FileHandle.standardError.write(Data("warning: \(what) skipped (no external identifier yet)\n".utf8))
             return false
         }
         do {
-            let payload = try JSONSerialization.data(withJSONObject: ["externalId": externalId, "tags": tags])
+            let data = try JSONSerialization.data(withJSONObject: payload)
             let process = Process()
             process.executableURL = helper
             let stdin = Pipe()
@@ -88,16 +107,16 @@ enum NativeTags {
             process.standardOutput = Pipe()
             process.standardError = stderr
             try process.run()
-            stdin.fileHandleForWriting.write(payload)
+            stdin.fileHandleForWriting.write(data)
             stdin.fileHandleForWriting.closeFile()
             process.waitUntilExit()
             if process.terminationStatus == 0 { return true }
             let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            FileHandle.standardError.write(Data("warning: native tag mirror failed: \(detail)\n".utf8))
+            FileHandle.standardError.write(Data("warning: \(what) failed: \(detail)\n".utf8))
             return false
         } catch {
-            FileHandle.standardError.write(Data("warning: native tag mirror failed: \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("warning: \(what) failed: \(error.localizedDescription)\n".utf8))
             return false
         }
     }

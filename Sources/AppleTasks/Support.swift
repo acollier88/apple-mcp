@@ -172,6 +172,9 @@ struct TaskOut: Codable {
     /// Set by add/update only: whether tags were also mirrored to native
     /// Reminders tags via the private helper. Omitted when not attempted.
     var nativeTags: Bool?
+    /// Set by update only: whether a --parent/--clear-parent subtask change
+    /// was applied via the private helper. Omitted when not attempted.
+    var subtask: Bool?
 
     init(_ r: EKReminder) {
         let raw = r.title ?? ""
