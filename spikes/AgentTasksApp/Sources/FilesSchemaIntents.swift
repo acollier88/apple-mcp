@@ -1,71 +1,51 @@
 // iOS 27 / macOS 27 Files domain schema adoption (IDEAS #29).
-// Positions the app as Siri's handle onto our file drop surfaces.
-// Property names/types are speculative (undocumented schemas) and need compilation
-// validation against the beta macro plugin (similar to calendar/notes bisection).
+// Positions the app as Siri's handle onto our file drop surfaces: the
+// entity query surfaces recent AgentInbox drops, and "open <file>" resolves
+// against them. The SDK's files domain exposes only a `file` entity (no
+// folder) and openFile/createFolder/renameFile/moveFiles/deleteFiles
+// intents; we adopt file + openFile. Findings (validated against the beta 3
+// appintentsmetadataprocessor, like reminders/notes):
+// - the schema conforms the type to the SDK's marker protocol, which is
+//   itself named `FileEntity` -- the app type must use a different name
+// - that protocol pins `ID == FileEntityIdentifier` (not String) and
+//   requires `supportedContentTypes: [UTType]`
 import AppIntents
 import Foundation
 import AppKit
-
-@available(macOS 27.0, *)
-@AppEntity(schema: .files.folder)
-struct FolderEntity {
-    var id: String
-    var name: String
-    
-    // Computed, not stored: avoid recursive struct infinite size.
-    var parentFolder: FolderEntity? { nil }
-
-    init(id: String, name: String) {
-        self.id = id
-        self.name = name
-    }
-
-    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
-    static let defaultQuery = FolderEntityQuery()
-}
+import UniformTypeIdentifiers
 
 @available(macOS 27.0, *)
 @AppEntity(schema: .files.file)
-struct FileEntity {
-    var id: String
-    var name: String
-    var content: AttributedString?
-    var folder: FolderEntity?
-    var creationDate: Date?
-    var modificationDate: Date?
+struct InboxFileEntity {
+    static let supportedContentTypes: [UTType] = [.plainText, .text]
 
-    init(id: String, name: String, content: AttributedString?, folder: FolderEntity? = nil,
-         creationDate: Date? = nil, modificationDate: Date? = nil) {
+    var id: FileEntityIdentifier
+    var name: String
+    var creationDate: Date?
+    var fileModificationDate: Date?
+
+    init(id: FileEntityIdentifier, name: String, fileModificationDate: Date? = nil) {
         self.id = id
         self.name = name
-        self.content = content
-        self.folder = folder
-        self.creationDate = creationDate
-        self.modificationDate = modificationDate
+        self.fileModificationDate = fileModificationDate
     }
 
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
-    static let defaultQuery = FileEntityQuery()
+    static let defaultQuery = InboxFileEntityQuery()
 }
 
 @available(macOS 27.0, *)
-struct FolderEntityQuery: EntityStringQuery {
-    func entities(for identifiers: [String]) async throws -> [FolderEntity] { [] }
-    func entities(matching string: String) async throws -> [FolderEntity] { [] }
-}
-
-@available(macOS 27.0, *)
-struct FileEntityQuery: EntityStringQuery {
-    func entities(for identifiers: [String]) async throws -> [FileEntity] {
+struct InboxFileEntityQuery: EntityStringQuery {
+    func entities(for identifiers: [FileEntityIdentifier]) async throws -> [InboxFileEntity] {
         try recentFiles().filter { identifiers.contains($0.id) }
     }
-    func entities(matching string: String) async throws -> [FileEntity] {
+    func entities(matching string: String) async throws -> [InboxFileEntity] {
         try recentFiles().filter { $0.name.localizedCaseInsensitiveContains(string) }
     }
-    func suggestedEntities() async throws -> [FileEntity] { try recentFiles() }
+    func suggestedEntities() async throws -> [InboxFileEntity] { try recentFiles() }
 
     /// Recent files in the inbox drop folder (last 30 days) via 'files scan'.
-    private func recentFiles() throws -> [FileEntity] {
+    private func recentFiles() throws -> [InboxFileEntity] {
         struct FileDrop: Decodable {
             let file: String
             let modified: String
@@ -75,18 +55,11 @@ struct FileEntityQuery: EntityStringQuery {
         let fmt = DateFormatter(); fmt.locale = Locale(identifier: "en_US_POSIX"); fmt.dateFormat = "yyyy-MM-dd"
         let json = try CLI.run(["files", "scan", "--since", fmt.string(from: sinceDate)])
         let files = (try? JSONDecoder().decode([FileDrop].self, from: Data(json.utf8))) ?? []
-        let iso = ISO8601DateFormatter()
-        return files.prefix(20).map { f in
+        return files.prefix(20).compactMap { f in
             let url = URL(fileURLWithPath: f.file)
-            let filename = url.lastPathComponent
-            let modifiedDate = iso.date(from: f.modified)
-            return FileEntity(
-                id: f.file,
-                name: filename,
-                content: AttributedString(f.content),
-                folder: FolderEntity(id: url.deletingLastPathComponent().path, name: url.deletingLastPathComponent().lastPathComponent),
-                modificationDate: modifiedDate
-            )
+            guard let id = try? FileEntityIdentifier.file(url: url) else { return nil }
+            return InboxFileEntity(id: id, name: url.lastPathComponent,
+                                   fileModificationDate: ISO8601DateFormatter().date(from: f.modified))
         }
     }
 }
@@ -94,15 +67,16 @@ struct FileEntityQuery: EntityStringQuery {
 @available(macOS 27.0, *)
 @AppIntent(schema: .files.openFile)
 struct OpenFileIntent {
-    var target: FileEntity
+    @Parameter var target: InboxFileEntity
 
     func perform() async throws -> some IntentResult {
-        let url = URL(fileURLWithPath: target.id)
-        if FileManager.default.fileExists(atPath: url.path) {
-            // Run on main actor since NSWorkspace.open is UI-bound
-            await MainActor.run {
-                NSWorkspace.shared.open(url)
-            }
+        guard let url = try await target.id.fileURL,
+              FileManager.default.fileExists(atPath: url.path) else {
+            return .result()
+        }
+        // NSWorkspace.open is UI-bound
+        await MainActor.run {
+            _ = NSWorkspace.shared.open(url)
         }
         return .result()
     }

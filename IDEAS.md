@@ -721,11 +721,24 @@ is no schema intent for "list mail" or "show new items," so there's no
 natural mapping without first building Mail-write support (a distinct,
 separately-scoped feature). Not attempted.
 
-### Files domain — shipped (2026-07-08)
+### Files domain — shipped (2026-07-08; validated against the beta 3 macro plugin)
 
-`spikes/AgentTasksApp/Sources/FilesSchemaIntents.swift`: `FileEntity`, `FolderEntity`, `OpenFileIntent` (schemas `.files.file`/`.files.folder`/`.files.openFile`).
-`OpenFileIntent.perform()` opens target files via `NSWorkspace.shared.open()` on the MainActor. `FileEntityQuery` matches files by running the existing `apple-tasks files scan` command.
-Like calendar/notes, schema shape is speculative and requires validation against the beta macro plugin.
+`spikes/AgentTasksApp/Sources/FilesSchemaIntents.swift`: `InboxFileEntity` +
+`OpenFileIntent` (schemas `.files.file`/`.files.openFile`). The entity query
+surfaces recent AgentInbox drops via `apple-tasks files scan`;
+`OpenFileIntent.perform()` resolves `FileEntityIdentifier.fileURL` and opens
+it via `NSWorkspace`. Compiles clean through the full
+appintentsmetadataprocessor. Bisection findings:
+- There is NO `.files.folder` schema — the domain's only entity is `file`
+  (intents: openFile, createFolder, renameFile, moveFiles, deleteFiles).
+- The schema macro conforms the type to the SDK's marker protocol, itself
+  named `FileEntity` — so the app struct needs a different name
+  (`InboxFileEntity`) or the generated `extension FileEntity: FileEntity`
+  fails to compile.
+- That protocol pins `ID == FileEntityIdentifier` (not String; build ids via
+  `.file(url:)`) and requires `static supportedContentTypes: [UTType]`.
+- The validator additionally requires `creationDate` and
+  `fileModificationDate` properties on the entity.
 
 
 ## 30. Siri Extensions status — WATCH, don't build (beta 2/3 reality check)
