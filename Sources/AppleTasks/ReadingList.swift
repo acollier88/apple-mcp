@@ -36,10 +36,14 @@ struct ReadingListScan: AsyncParsableCommand {
     @Option(name: .customLong("max-items"), help: "Limit output to this many items (default 50).")
     var maxItems: Int = 50
 
+    @Option(help: "Override the Bookmarks.plist path (for testing).")
+    var path: String?
+
     func run() async throws {
         let scanStart = Date()
-        let bookmarksPath = (FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Safari/Bookmarks.plist").path as NSString).expandingTildeInPath
+        let bookmarksPath = path.map { NSString(string: $0).expandingTildeInPath }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Safari/Bookmarks.plist").path
         let url = URL(fileURLWithPath: bookmarksPath)
 
         let sinceDate: Date
@@ -113,7 +117,11 @@ struct ReadingListScan: AsyncParsableCommand {
 
         if advanceWatermark {
             var state = ScanState.load()
-            state.readingListScanWatermark = isoOut.string(from: scanStart)
+            // If --max-items truncated the batch, only advance to the last
+            // emitted item so the remainder surfaces on the next scan.
+            state.readingListScanWatermark = finalResults.count < results.count
+                ? finalResults.last?.dateAdded ?? isoOut.string(from: scanStart)
+                : isoOut.string(from: scanStart)
             try state.save()
         }
 
