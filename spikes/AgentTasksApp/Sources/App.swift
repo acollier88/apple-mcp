@@ -1,6 +1,8 @@
 import CoreLocation
 import SwiftUI
 import Foundation
+import EventKit
+import Combine
 
 @main
 struct AgentTasksApp: App {
@@ -21,6 +23,13 @@ struct AgentTasksApp: App {
                     AgentTasksShortcuts.updateAppShortcutParameters()
                     if #available(macOS 27.0, *) {
                         await SpotlightDonation.donateOpenTasks()
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged)) { _ in
+                    if #available(macOS 27.0, *) {
+                        Task {
+                            await SpotlightDonation.donateAllOpenTasks()
+                        }
                     }
                 }
         }

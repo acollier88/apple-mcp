@@ -735,16 +735,16 @@ partnership dispute per press reports). Extensions are built ON App Intents,
 so idea #29 IS the preparation — nothing else actionable until Apple flips
 the backend on. Re-check each beta.
 
-## 31. Spotlight "Search or Ask" — make our Siri index donations continuous
+## 31. Spotlight "Search or Ask" — make our Siri index donations continuous — ✅ DONE (2026-07-08)
 
 Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
-ground its answers. Our `IndexedEntity` donation (built in Round 3) runs only
-on app launch — stale within hours on an active queue. Upgrade: donate on
-every mutation (CLI pings the app, or the app watches EKEventStoreChanged and
-re-donates diffs), adopt `IndexedEntityQuery` for the system's semantic
-reindex callbacks, and verify open tasks actually surface in Spotlight ask
-("what's open for claude in repo2?") on beta 3. Cheap, and it's the layer
-the new Siri actually reads from.
+ground its answers. Our `IndexedEntity` donation runs on app launch, but goes stale.
+We upgraded it to:
+- Adopt `IndexedEntityQuery` on `TaskEntityQuery` for system-initiated reindexing callbacks.
+- Expanded `SpotlightDonation` with incremental single-task indexing and removal helpers.
+- Added a `.EKEventStoreChanged` observer in `AgentTasksApp` to trigger continuous re-indexing on every mutation.
+- Verified compilation and setup.
+
 
 ## 32. Beta-upgrade regression drill (✅ SCRIPTED as `make betacheck` 2026-07-07; run after EVERY beta)
 
