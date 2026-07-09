@@ -1,6 +1,7 @@
 import ArgumentParser
 import EventKit
 import Foundation
+import Speech
 
 struct DoctorOut: Codable {
     let binary: String
@@ -15,6 +16,8 @@ struct DoctorOut: Codable {
     let dropFolder: String
     let privateHelper: PrivateHelperStatus
     let notesScanWatermark: String?
+    let speech: String
+    let fullDiskAccess: String
     let automationNote: String
 
     struct PrivateHelperStatus: Codable {
@@ -93,6 +96,27 @@ struct Doctor: AsyncParsableCommand {
         return "session \(session ? "present" : "MISSING"), \(accessories) accessories"
     }
 
+    private static func speechStatus() -> String {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        switch status {
+        case .notDetermined: return "notDetermined (will prompt on first use)"
+        case .restricted: return "restricted"
+        case .denied: return "denied"
+        case .authorized: return "authorized"
+        @unknown default: return "unknown(\(status.rawValue))"
+        }
+    }
+
+    private static func fdaStatus() -> String {
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Safari/Bookmarks.plist").path
+        if FileManager.default.isReadableFile(atPath: path) {
+            return "granted (Safari bookmarks accessible)"
+        } else {
+            return "denied or not determined (required for Safari Reading List scan; grant in Settings > Privacy > Full Disk Access)"
+        }
+    }
+
     func run() async throws {
         emit(DoctorOut(
             binary: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path,
@@ -113,6 +137,8 @@ struct Doctor: AsyncParsableCommand {
                 : "not created yet: \(Files.defaultDir)",
             privateHelper: Self.helperStatus(),
             notesScanWatermark: ScanState.load().notesScanWatermark,
+            speech: Self.speechStatus(),
+            fullDiskAccess: Self.fdaStatus(),
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."
         ))
     }
