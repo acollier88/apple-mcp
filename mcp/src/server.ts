@@ -519,6 +519,37 @@ server.registerTool(
 );
 
 server.registerTool(
+  "audio_scan",
+  {
+    description:
+      "Transcribe audio notes dropped in the iCloud inbox folder since the last scan (watermark " +
+      "auto-advances; first run looks back 24h). On-device Speech recognition; emits {file, modified, " +
+      "transcript, error?}. Failed files are retried next scan. Set archive:true to move transcribed " +
+      "files into a done/ subfolder.",
+    inputSchema: {
+      dir: z.string().optional().describe("Folder to scan (default: iCloud Drive/AgentInbox)."),
+      since: z.string().optional().describe(
+        "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+      ),
+      max_chars: z.number().int().optional().describe("Truncate each transcript (default 4000)."),
+      archive: z.boolean().optional().describe("Move transcribed files into a done/ subfolder."),
+    },
+  },
+  async ({ dir, since, max_chars, archive }) => {
+    const args = ["audio", "scan"];
+    if (dir) args.push("--dir", dir);
+    if (since) args.push("--since", since);
+    if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+    if (archive) args.push("--archive");
+    try {
+      return ok(await cli(args, 300_000)); // transcription of many memos can be slow
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "readinglist_scan",
   {
     description:

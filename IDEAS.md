@@ -502,7 +502,7 @@ with provenance (screenshot filename in notes). Pairs with iCloud Photo
 sync lag caveat — Desktop screenshots first, Photos library NOT in scope
 (separate TCC + heavier API).
 
-## 21. Voice-note transcription scan — Speech framework
+## 21. Voice-note transcription scan — Speech framework — ✅ DONE (2026-07-08)
 
 `apple-tasks audio scan --folder <dir>`: watermark a watched folder for new
 audio files, transcribe on-device via `SFSpeechRecognizer`
@@ -511,6 +511,12 @@ triages like notes_scan. Watch the folder = an iCloud Drive dir so Voice
 Memos/watch recordings can be shared into it from any device (Voice Memos'
 own storage is TCC/FDA-protected — don't touch it; the share-sheet drop
 folder sidesteps that). Speech adds its own TCC prompt; doctor line.
+- Subcommand `audio scan` implemented in `Sources/AppleTasks/Audio.swift`.
+- Integrates with `ScanState` watermark persistence.
+- Adds speech recognition TCC check to the `doctor` command.
+- MCP tool `audio_scan`. Failed transcriptions are reported per-file, are
+  never archived, and hold the watermark back so the next scan retries them.
+
 
 ## 22. Context-gated dispatch — ✅ DONE 2026-07-08 (location/power/maxLoad; focus deferred)
 

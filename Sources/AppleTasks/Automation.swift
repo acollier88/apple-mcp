@@ -128,6 +128,7 @@ struct ScanState: Codable {
     var notesScanWatermark: String?
     var screenshotsScanWatermark: String?
     var filesScanWatermark: String?
+    var audioScanWatermark: String?
     var readingListScanWatermark: String?
 
     static var url: URL {
