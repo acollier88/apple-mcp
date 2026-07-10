@@ -640,7 +640,7 @@ just a session in the AgentTasksApp or a `apple-tasks agent` subcommand.
 Auth via ANTHROPIC_API_KEY env. Beta caveat: APIs may change before GA;
 pin the package version.
 
-## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped; files not started
+## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES + FILES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped
 
 Verified in the local SDK's AppIntents.swiftinterface: schema domains now
 cover **assistant, audio, books, browser, calendar, camera, clock, files,
@@ -732,9 +732,25 @@ is no schema intent for "list mail" or "show new items," so there's no
 natural mapping without first building Mail-write support (a distinct,
 separately-scoped feature). Not attempted.
 
-### Files domain — not started
+### Files domain — shipped (2026-07-08; validated against the beta 3 macro plugin)
 
-Queued (pairs with #23's drop-folder), not reached this session.
+`spikes/AgentTasksApp/Sources/FilesSchemaIntents.swift`: `InboxFileEntity` +
+`OpenFileIntent` (schemas `.files.file`/`.files.openFile`). The entity query
+surfaces recent AgentInbox drops via `apple-tasks files scan`;
+`OpenFileIntent.perform()` resolves `FileEntityIdentifier.fileURL` and opens
+it via `NSWorkspace`. Compiles clean through the full
+appintentsmetadataprocessor. Bisection findings:
+- There is NO `.files.folder` schema — the domain's only entity is `file`
+  (intents: openFile, createFolder, renameFile, moveFiles, deleteFiles).
+- The schema macro conforms the type to the SDK's marker protocol, itself
+  named `FileEntity` — so the app struct needs a different name
+  (`InboxFileEntity`) or the generated `extension FileEntity: FileEntity`
+  fails to compile.
+- That protocol pins `ID == FileEntityIdentifier` (not String; build ids via
+  `.file(url:)`) and requires `static supportedContentTypes: [UTType]`.
+- The validator additionally requires `creationDate` and
+  `fileModificationDate` properties on the entity.
+
 
 ## 30. Siri Extensions status — WATCH, don't build (beta 2/3 reality check)
 
