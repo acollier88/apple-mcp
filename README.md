@@ -112,10 +112,12 @@ Bodies come back as plain text (HTML stripped). Password-protected notes are
 invisible to scripting. `mail scan` returns `[]` unless Mail.app is actually
 syncing the account.
 
-AgentTasks also adopts the Notes App Intents domain (macOS 27,
-`NotesSchemaIntents.swift`): *"Hey Siri, create a note in AgentTasks"*
-shells to `notes create` under the hood. Calendar/mail domain adoption was
-attempted and descoped — see IDEAS #29 for the (substantial) reasons why.
+AgentTasks also adopts the Notes and Calendar App Intents domains
+(macOS 27, `NotesSchemaIntents.swift` / `CalendarSchemaIntents.swift`):
+*"Hey Siri, create a note in AgentTasks"* shells to `notes create`, and
+*"create an event in AgentTasks"* shells to `events add` (schema fields the
+CLI doesn't model — attendees, recurrence, alarms — are accepted and
+ignored). Mail domain adoption was attempted and descoped — see IDEAS #29.
 
 ### Contacts (read-only, always)
 

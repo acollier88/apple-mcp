@@ -687,7 +687,7 @@ conformance + the underlying CLI path. Not verified: an actual spoken
 Siri invocation end-to-end (no Shortcuts-CLI way to trigger a specific
 App Intent by name without first building a Shortcut in the GUI).
 
-### Calendar domain — descoped, not shipped
+### Calendar domain — ✅ createEvent SHIPPED 2026-07-09 (descope revisited; update/delete still open)
 
 Attempted `CalendarSchemaIntents.swift` (Create/Update/DeleteEvent(s)
 Intent, EventEntity, CalendarEntity). Findings from bisection against the
@@ -713,15 +713,34 @@ rediscover them:
 - This is the entity's OWN required shape, so there's no "read-only,
   skip the mutating intents" shortcut — even just letting Siri look up an
   event needs the full property set satisfied.
-- None of attendees/alarms/recurrence/travel-time/virtual-location/status
-  are modeled by `apple-tasks events` / `EventOut` today, and several
-  (attendees especially) may not even be writable via public EventKit on
-  local (non-server) calendars. Full compliance means designing and
-  building that CLI surface first — a materially bigger project than
-  "adopt the schema," not a natural continuation of it.
-- **Call made**: don't chase full compliance in the same pass as notes.
-  Revisit calendar as its own scoped task once/if `apple-tasks events`
-  grows attendee/alarm/recurrence support for its own sake.
+
+**Revisited 2026-07-09** — the original descope rationale ("full compliance
+means building the attendee/alarm/recurrence CLI surface first") turned out
+to be wrong on two counts:
+- The required property set is satisfied by **computed stub properties**
+  (return `nil`/`[]`) — the exact trick that shipped the notes folder
+  hierarchy. The validator checks shape, not storage. No CLI surface needed.
+- The union types (`location: SystemEntity<PlaceDescriptorEntity> | String`,
+  `alarms: [Codable<Duration> | Date]`) don't need a hand-rolled
+  `AppUnionValueCasesProviding` implementation: the **`@UnionValue()` macro**
+  (AppIntents, macOS 15+) generates the whole conformance from a plain enum.
+- Remaining validator requirements found by bisection: calendar/attendee/
+  event entities all name their display property `title` (not `name`);
+  `EventStatus` needs case `cancelled` (not `canceled`); attendee needs
+  `person: IntentPerson` non-optional + `status`/`type` optional +
+  `isAttendanceOptional`; createEvent params `title`/`startDate`/`isAllDay`/
+  `calendar`/`attendees` non-optional, `endDate` optional.
+
+Shipped: `CalendarSchemaIntents.swift` — `CreateEventIntent` (schema
+`.calendar.createEvent`) shelling to `apple-tasks events add` (title, start/
+end or all-day, calendar, string-location, notes; recurrence/attendees
+accepted-but-ignored like notes ignores isPinned), `EventEntity`/
+`CalendarEntity`/`AttendeeEntity`, 3 schema enums, `@UnionValue()` unions,
+`EventEntityQuery` backed by `events list` (next 30 days). Verified: compiles
+through the full appintentsmetadataprocessor; the exact `events add`
+invocation the intent uses creates a real event (verified live, then
+deleted). Still open: `UpdateEventIntent`/`DeleteEventsIntent` (the `event`
+property-name and `@Parameter` findings above apply), Siri-phrase live test.
 
 ### Mail domain — skipped, scope mismatch
 
