@@ -550,6 +550,32 @@ server.registerTool(
 );
 
 server.registerTool(
+  "readinglist_scan",
+  {
+    description:
+      "Read Safari Reading List items added since the last scan (watermark auto-advances; first run looks " +
+      "back 24h). Emits {title, url, dateAdded, previewText}, oldest first. Requires Full Disk Access for " +
+      "the host process; the doctor command reports FDA status. Read-only.",
+    inputSchema: {
+      since: z.string().optional().describe(
+        "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+      ),
+      max_items: z.number().int().optional().describe("Limit output to this many items (default 50)."),
+    },
+  },
+  async ({ since, max_items }) => {
+    const args = ["reading-list", "scan"];
+    if (since) args.push("--since", since);
+    if (max_items !== undefined) args.push("--max-items", String(max_items));
+    try {
+      return ok(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "mail_scan",
   {
     description:

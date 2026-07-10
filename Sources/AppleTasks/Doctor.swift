@@ -17,6 +17,7 @@ struct DoctorOut: Codable {
     let privateHelper: PrivateHelperStatus
     let notesScanWatermark: String?
     let speech: String
+    let fullDiskAccess: String
     let automationNote: String
 
     struct PrivateHelperStatus: Codable {
@@ -106,6 +107,16 @@ struct Doctor: AsyncParsableCommand {
         }
     }
 
+    private static func fdaStatus() -> String {
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Safari/Bookmarks.plist").path
+        if FileManager.default.isReadableFile(atPath: path) {
+            return "granted (Safari bookmarks accessible)"
+        } else {
+            return "denied or not determined (required for Safari Reading List scan; grant in Settings > Privacy > Full Disk Access)"
+        }
+    }
+
     func run() async throws {
         emit(DoctorOut(
             binary: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path,
@@ -127,6 +138,7 @@ struct Doctor: AsyncParsableCommand {
             privateHelper: Self.helperStatus(),
             notesScanWatermark: ScanState.load().notesScanWatermark,
             speech: Self.speechStatus(),
+            fullDiskAccess: Self.fdaStatus(),
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."
         ))
     }

@@ -558,15 +558,20 @@ half of the voice-to-PR loop: you spoke the task from the car; the "PR ready"
 ping should reach the car too, not a Mac banner nobody sees. ntfy first
 (free, no account, plain HTTP POST — curl from Swift or the MCP server).
 
-## 25. Safari Reading List scan
+## 25. Safari Reading List scan — ✅ DONE (2026-07-08)
 
 `~/Library/Safari/Bookmarks.plist` holds the Reading List (needs Full Disk
 Access for the host process — doctor should detect and say so). Read-only
-`apple-tasks readinglist scan` with the usual watermark → {title, url,
+`apple-tasks reading-list scan` with the usual watermark → {title, url,
 dateAdded, previewText}. Triage agent turns saved articles into [read]
 tasks with the URL field (#19), or flags ones relevant to active plans.
 Skip if FDA feels too heavy — this is the only idea in this round that
 needs it, so it ships last and stays optional.
+- Subcommand `reading-list scan` implemented in `Sources/AppleTasks/ReadingList.swift`.
+- Integrates with `ScanState` watermark persistence.
+- Adds Full Disk Access probe to the `doctor` command.
+- MCP tool `readinglist_scan`; `--path` override for testing without FDA.
+
 
 ## 26. Sections & subtasks via the private helper — ✅ SUBTASKS DONE 2026-07-08 (`update --parent`); sections + detach still open
 
