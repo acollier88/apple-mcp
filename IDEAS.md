@@ -676,7 +676,7 @@ conformance + the underlying CLI path. Not verified: an actual spoken
 Siri invocation end-to-end (no Shortcuts-CLI way to trigger a specific
 App Intent by name without first building a Shortcut in the GUI).
 
-### Calendar domain — ✅ createEvent SHIPPED 2026-07-09 (descope revisited; update/delete still open)
+### Calendar domain — ✅ ALL THREE INTENTS SHIPPED 2026-07-09 (descope revisited)
 
 Attempted `CalendarSchemaIntents.swift` (Create/Update/DeleteEvent(s)
 Intent, EventEntity, CalendarEntity). Findings from bisection against the
@@ -720,16 +720,24 @@ to be wrong on two counts:
   `isAttendanceOptional`; createEvent params `title`/`startDate`/`isAllDay`/
   `calendar`/`attendees` non-optional, `endDate` optional.
 
-Shipped: `CalendarSchemaIntents.swift` — `CreateEventIntent` (schema
-`.calendar.createEvent`) shelling to `apple-tasks events add` (title, start/
-end or all-day, calendar, string-location, notes; recurrence/attendees
-accepted-but-ignored like notes ignores isPinned), `EventEntity`/
-`CalendarEntity`/`AttendeeEntity`, 3 schema enums, `@UnionValue()` unions,
-`EventEntityQuery` backed by `events list` (next 30 days). Verified: compiles
-through the full appintentsmetadataprocessor; the exact `events add`
-invocation the intent uses creates a real event (verified live, then
-deleted). Still open: `UpdateEventIntent`/`DeleteEventsIntent` (the `event`
-property-name and `@Parameter` findings above apply), Siri-phrase live test.
+Shipped: `CalendarSchemaIntents.swift` — Create/Update/DeleteEvent(s)Intent
+(schemas `.calendar.createEvent`/`.updateEvent`/`.deleteEvents`) shelling to
+`apple-tasks events add`/`update`/`delete` (title, start/end or all-day,
+calendar, string-location, notes; recurrence/attendees accepted-but-ignored
+like notes ignores isPinned), `EventEntity`/`CalendarEntity`/`AttendeeEntity`,
+4 schema enums, `@UnionValue()` unions. `EventEntityQuery` is backed by
+`events list` (next 30 days, real location/notes), `CalendarEntityQuery` by
+`calendars`. Additional update/delete bisection findings:
+- both intents require a `span: EventSpan?` param; the schema enum's cases
+  are `this`/`future`/`all` (the CLI always applies EKSpan .thisEvent)
+- `deleteEvents` names its param `entity` and takes a SINGULAR EventEntity,
+  unlike `reminders.deleteReminders` (`entities: [TaskEntity]`)
+
+Verified: all three intents compile through the full
+appintentsmetadataprocessor and appear in extract.actionsdata; the exact
+CLI invocations the intents use were run live (create → update title+
+location → delete, then confirmed gone). Still open: Siri-phrase live test
+through the installed app.
 
 ### Mail domain — skipped, scope mismatch
 

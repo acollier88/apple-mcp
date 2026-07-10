@@ -41,6 +41,18 @@ enum EventStatus: String {
 }
 
 @available(macOS 27.0, *)
+@AppEnum(schema: .calendar.eventSpan)
+enum EventSpan: String {
+    case this
+    case future
+    case all
+
+    static let caseDisplayRepresentations: [EventSpan: DisplayRepresentation] = [
+        .this: "This Event", .future: "Future Events", .all: "All Events",
+    ]
+}
+
+@available(macOS 27.0, *)
 @AppEnum(schema: .calendar.attendeeType)
 enum AttendeeType: String {
     case person
@@ -109,8 +121,23 @@ struct CalendarEntity {
 
 @available(macOS 27.0, *)
 struct CalendarEntityQuery: EntityStringQuery {
-    func entities(for identifiers: [String]) async throws -> [CalendarEntity] { [] }
-    func entities(matching string: String) async throws -> [CalendarEntity] { [] }
+    func entities(for identifiers: [String]) async throws -> [CalendarEntity] {
+        try allCalendars().filter { identifiers.contains($0.id) }
+    }
+    func entities(matching string: String) async throws -> [CalendarEntity] {
+        try allCalendars().filter { $0.title.localizedCaseInsensitiveContains(string) }
+    }
+    func suggestedEntities() async throws -> [CalendarEntity] { try allCalendars() }
+
+    private func allCalendars() throws -> [CalendarEntity] {
+        struct Cal: Decodable {
+            let id: String
+            let name: String
+        }
+        let json = try CLI.run(["calendars"])
+        let cals = (try? JSONDecoder().decode([Cal].self, from: Data(json.utf8))) ?? []
+        return cals.map { CalendarEntity(id: $0.id, title: $0.name) }
+    }
 }
 
 @available(macOS 27.0, *)
@@ -123,24 +150,28 @@ struct EventEntity {
     var isAllDay: Bool
     var calendar: CalendarEntity
 
+    var location: EventLocation?
+    var note: String?
+
     // Stubs: not modeled by apple-tasks events today.
     var alarms: [EventAlarm] { [] }
     var attendees: [AttendeeEntity] { [] }
-    var location: EventLocation? { nil }
-    var note: String? { nil }
     var organizers: [IntentPerson] { [] }
     var recurrence: Foundation.Calendar.RecurrenceRule? { nil }
     var status: EventStatus? { nil }
     var travelTime: Duration? { nil }
     var virtualLocation: URL? { nil }
 
-    init(id: String, title: String, startDate: Date, endDate: Date, isAllDay: Bool, calendar: CalendarEntity) {
+    init(id: String, title: String, startDate: Date, endDate: Date, isAllDay: Bool,
+         calendar: CalendarEntity, location: EventLocation? = nil, note: String? = nil) {
         self.id = id
         self.title = title
         self.startDate = startDate
         self.endDate = endDate
         self.isAllDay = isAllDay
         self.calendar = calendar
+        self.location = location
+        self.note = note
     }
 
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(title)") }
@@ -166,6 +197,8 @@ struct EventEntityQuery: EntityStringQuery {
             let start: String?
             let end: String?
             let allDay: Bool
+            let location: String?
+            let notes: String?
         }
         let json = try CLI.run(["events", "list", "--to",
                                 CalendarDates.dayFormatter.string(from: Date().addingTimeInterval(30 * 86_400))])
@@ -175,7 +208,9 @@ struct EventEntityQuery: EntityStringQuery {
             let end = e.end.flatMap(CalendarDates.parse) ?? start
             return EventEntity(id: e.id, title: e.title, startDate: start, endDate: end,
                                isAllDay: e.allDay,
-                               calendar: CalendarEntity(id: e.calendar, title: e.calendar))
+                               calendar: CalendarEntity(id: e.calendar, title: e.calendar),
+                               location: e.location.map { .string($0) },
+                               note: e.notes)
         }
     }
 }
@@ -245,5 +280,72 @@ struct CreateEventIntent {
             id: created.id, title: created.title, startDate: startDate,
             endDate: endDate ?? startDate, isAllDay: created.allDay,
             calendar: CalendarEntity(id: created.calendar, title: created.calendar)))
+    }
+}
+
+@available(macOS 27.0, *)
+@AppIntent(schema: .calendar.updateEvent)
+struct UpdateEventIntent {
+    // Schema requires this property to be named `event` (not `target`).
+    @Parameter var event: EventEntity
+    @Parameter var title: String?
+    @Parameter var startDate: Date?
+    @Parameter var endDate: Date?
+    @Parameter var isAllDay: Bool?
+    @Parameter var calendar: CalendarEntity?
+    @Parameter var location: EventLocation?
+    @Parameter var note: String?
+    @Parameter var recurrence: Foundation.Calendar.RecurrenceRule?
+    @Parameter var attendees: [AttendeeEntity]?
+    // Maps to EKSpan; the CLI's events update always applies .thisEvent.
+    @Parameter var span: EventSpan?
+
+    func perform() async throws -> some IntentResult & ReturnsValue<EventEntity> {
+        var args = ["events", "update", event.id]
+        if let title { args += ["--title", title] }
+        if let startDate {
+            // A date-only --start flips the event to all-day CLI-side.
+            let fmt = (isAllDay ?? event.isAllDay) ? CalendarDates.dayFormatter : CalendarDates.minuteFormatter
+            args += ["--start", fmt.string(from: startDate)]
+        }
+        if let endDate { args += ["--end", CalendarDates.minuteFormatter.string(from: endDate)] }
+        if let calendar { args += ["--calendar", calendar.title] }
+        if case .string(let address) = location { args += ["--location", address] }
+        if let note { args += ["--notes", note] }
+        // recurrence/attendees accepted but not modeled by the CLI -- ignored.
+        let json = try CLI.run(args)
+
+        struct Updated: Decodable {
+            let id: String
+            let title: String
+            let calendar: String
+            let start: String?
+            let end: String?
+            let allDay: Bool
+            let location: String?
+            let notes: String?
+        }
+        let u = try JSONDecoder().decode(Updated.self, from: Data(json.utf8))
+        let start = u.start.flatMap(CalendarDates.parse) ?? event.startDate
+        return .result(value: EventEntity(
+            id: u.id, title: u.title, startDate: start,
+            endDate: u.end.flatMap(CalendarDates.parse) ?? start, isAllDay: u.allDay,
+            calendar: CalendarEntity(id: u.calendar, title: u.calendar),
+            location: u.location.map { .string($0) }, note: u.notes))
+    }
+}
+
+@available(macOS 27.0, *)
+@AppIntent(schema: .calendar.deleteEvents)
+struct DeleteEventsIntent {
+    // Schema requires an explicit @Parameter, the name `entity` (not
+    // `entities` as reminders.deleteReminders uses), and a SINGULAR
+    // EventEntity despite the plural intent name.
+    @Parameter var entity: EventEntity
+    @Parameter var span: EventSpan?
+
+    func perform() async throws -> some IntentResult {
+        _ = try CLI.run(["events", "delete", entity.id])
+        return .result()
     }
 }
