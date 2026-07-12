@@ -29,6 +29,20 @@ function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
 
+/**
+ * ok() plus structuredContent parsed from the CLI's JSON stdout. The MCP spec
+ * requires structuredContent to be an object, so tools whose CLI output is a
+ * top-level JSON array pass `wrap` to fold it into a single named key;
+ * content[0].text always carries the raw CLI JSON unchanged.
+ */
+function okJson(text: string, wrap?: string) {
+  const parsed = JSON.parse(text) as Record<string, unknown> | unknown[];
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: (wrap ? { [wrap]: parsed } : parsed) as Record<string, unknown>,
+  };
+}
+
 function fail(err: unknown) {
   return {
     content: [{ type: "text" as const, text: String(err instanceof Error ? err.message : err) }],
@@ -40,6 +54,53 @@ const tagsField = z
   .array(z.string())
   .optional()
   .describe("Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title.");
+
+// ---- Output shapes. These mirror the JSON the Swift CLI emits (see the
+// output structs in Sources/AppleTasks/*.swift); the MCP server adds no
+// fields of its own. Swift's encodeIfPresent omits nil keys, hence .optional().
+
+// TaskOut (Sources/AppleTasks/Support.swift)
+const taskShape = {
+  id: z.string(),
+  externalId: z.string().optional().describe("Sync-stable identifier; also accepted wherever a task id is."),
+  title: z.string().describe("Title with [tag] prefixes stripped."),
+  rawTitle: z.string(),
+  tags: z.array(z.string()),
+  list: z.string(),
+  notes: z.string().optional(),
+  due: z.string().optional(),
+  priority: z.enum(["none", "low", "medium", "high"]),
+  completed: z.boolean(),
+  completedAt: z.string().optional(),
+  createdAt: z.string().optional(),
+  url: z.string().optional(),
+  nativeTags: z.boolean().optional().describe("add/update only: whether tags were mirrored to native Reminders tags."),
+  subtask: z.boolean().optional().describe("update only: whether a --parent subtask change was applied."),
+};
+const taskSchema = z.object(taskShape);
+
+// EventOut (Sources/AppleTasks/Support.swift)
+const eventShape = {
+  id: z.string(),
+  title: z.string().describe("Title with [tag] prefixes stripped."),
+  rawTitle: z.string(),
+  tags: z.array(z.string()),
+  calendar: z.string(),
+  start: z.string().optional().describe("yyyy-MM-dd for all-day events, ISO8601 otherwise."),
+  end: z.string().optional(),
+  allDay: z.boolean(),
+  location: z.string().optional(),
+  notes: z.string().optional(),
+  url: z.string().optional(),
+};
+const eventSchema = z.object(eventShape);
+
+// ListOut / CalendarOut (Sources/AppleTasks/Support.swift)
+const listShape = { id: z.string(), name: z.string() };
+const calendarShape = { id: z.string(), name: z.string(), writable: z.boolean() };
+
+// `delete` / `events delete` emit {"deleted": <id>}.
+const deletedShape = { deleted: z.string().describe("Id of the deleted item.") };
 
 const server = new McpServer({ name: "apple-tasks", version: "0.1.0" });
 
@@ -58,6 +119,7 @@ server.registerTool(
         .describe("Only tasks due before this date (yyyy-MM-dd inclusive of that day, 'yyyy-MM-dd HH:mm', or ISO8601). Undated tasks are excluded."),
       overdue: z.boolean().optional().describe("Only tasks whose due date has passed (excludes undated tasks)."),
     },
+    outputSchema: { tasks: z.array(taskSchema) },
   },
   async ({ list, tags, status, due_before, overdue }) => {
     const args = ["list"];
@@ -67,7 +129,7 @@ server.registerTool(
     if (due_before) args.push("--due-before", due_before);
     if (overdue) args.push("--overdue");
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "tasks");
     } catch (err) {
       return fail(err);
     }
@@ -88,6 +150,7 @@ server.registerTool(
       priority: z.enum(["none", "low", "medium", "high"]).optional(),
       url: z.string().optional().describe("URL to attach (PR/artifact links)."),
     },
+    outputSchema: taskShape,
   },
   async ({ list, title, tags, notes, due, priority, url }) => {
     const args = ["add", "--list", list];
@@ -98,7 +161,7 @@ server.registerTool(
     if (url) args.push("--url", url);
     args.push(title);
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -128,6 +191,7 @@ server.registerTool(
         .optional()
         .describe("Make this task a subtask of the given task id (native Reminders subtask, via the private helper)."),
     },
+    outputSchema: taskShape,
   },
   async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent }) => {
     const args = ["update", id];
@@ -144,7 +208,7 @@ server.registerTool(
     if (list) args.push("--list", list);
     if (parent) args.push("--parent", parent);
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -156,10 +220,11 @@ server.registerTool(
   {
     description: "Mark a task completed.",
     inputSchema: { id: z.string() },
+    outputSchema: taskShape,
   },
   async ({ id }) => {
     try {
-      return ok(await cli(["complete", id]));
+      return okJson(await cli(["complete", id]));
     } catch (err) {
       return fail(err);
     }
@@ -171,10 +236,11 @@ server.registerTool(
   {
     description: "Delete a task permanently.",
     inputSchema: { id: z.string() },
+    outputSchema: deletedShape,
   },
   async ({ id }) => {
     try {
-      return ok(await cli(["delete", id]));
+      return okJson(await cli(["delete", id]));
     } catch (err) {
       return fail(err);
     }
@@ -186,10 +252,11 @@ server.registerTool(
   {
     description: "List Reminders lists. Each list is a plan; its reminders are the plan's tasks.",
     inputSchema: {},
+    outputSchema: { plans: z.array(z.object(listShape)) },
   },
   async () => {
     try {
-      return ok(await cli(["lists"]));
+      return okJson(await cli(["lists"]), "plans");
     } catch (err) {
       return fail(err);
     }
@@ -201,10 +268,11 @@ server.registerTool(
   {
     description: "Create a new Reminders list to serve as a plan.",
     inputSchema: { name: z.string().describe("Name for the new list/plan.") },
+    outputSchema: listShape,
   },
   async ({ name }) => {
     try {
-      return ok(await cli(["lists", "add", name]));
+      return okJson(await cli(["lists", "add", name]));
     } catch (err) {
       return fail(err);
     }
@@ -222,6 +290,7 @@ server.registerTool(
       from: z.string().optional().describe("Range start: yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601. Default: start of today."),
       to: z.string().optional().describe("Range end, same formats. Default: from + 7 days."),
     },
+    outputSchema: { events: z.array(eventSchema) },
   },
   async ({ calendar, tags, from, to }) => {
     const args = ["events", "list"];
@@ -230,7 +299,7 @@ server.registerTool(
     if (from) args.push("--from", from);
     if (to) args.push("--to", to);
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "events");
     } catch (err) {
       return fail(err);
     }
@@ -253,6 +322,7 @@ server.registerTool(
       notes: z.string().optional(),
       url: z.string().optional().describe("URL to attach (PR/artifact links)."),
     },
+    outputSchema: eventShape,
   },
   async ({ calendar, title, tags, start, end, duration, location, notes, url }) => {
     const args = ["events", "add", "--start", start];
@@ -265,7 +335,7 @@ server.registerTool(
     if (url) args.push("--url", url);
     args.push(title);
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -289,6 +359,7 @@ server.registerTool(
       url: z.string().optional().describe("Set the event URL (PR/artifact links)."),
       clear_url: z.boolean().optional(),
     },
+    outputSchema: eventShape,
   },
   async ({ id, title, add_tags, remove_tags, start, end, location, notes, calendar, url, clear_url }) => {
     const args = ["events", "update", id];
@@ -303,7 +374,7 @@ server.registerTool(
     if (notes !== undefined) args.push("--notes", notes);
     if (calendar) args.push("--calendar", calendar);
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -315,10 +386,11 @@ server.registerTool(
   {
     description: "Delete a Calendar event permanently.",
     inputSchema: { id: z.string() },
+    outputSchema: deletedShape,
   },
   async ({ id }) => {
     try {
-      return ok(await cli(["events", "delete", id]));
+      return okJson(await cli(["events", "delete", id]));
     } catch (err) {
       return fail(err);
     }
@@ -330,10 +402,11 @@ server.registerTool(
   {
     description: "List Calendar calendars with writability.",
     inputSchema: {},
+    outputSchema: { calendars: z.array(z.object(calendarShape)) },
   },
   async () => {
     try {
-      return ok(await cli(["calendars"]));
+      return okJson(await cli(["calendars"]), "calendars");
     } catch (err) {
       return fail(err);
     }
@@ -354,6 +427,17 @@ server.registerTool(
       ),
       max_chars: z.number().int().optional().describe("Truncate each note body (default 4000)."),
     },
+    // NoteOut (Sources/AppleTasks/Notes.swift)
+    outputSchema: {
+      notes: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        folder: z.string().optional().describe("Present only when the scan was folder-filtered."),
+        body: z.string().describe("Plain text (HTML stripped), truncated to max_chars."),
+        created: z.string(),
+        modified: z.string(),
+      })),
+    },
   },
   async ({ folder, since, max_chars }) => {
     const args = ["notes", "scan"];
@@ -361,12 +445,24 @@ server.registerTool(
     if (since) args.push("--since", since);
     if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "notes");
     } catch (err) {
       return fail(err);
     }
   }
 );
+
+// ContactOut (Sources/AppleTasks/Contacts.swift)
+const contactShape = {
+  id: z.string(),
+  name: z.string(),
+  nickname: z.string().optional(),
+  organization: z.string().optional(),
+  emails: z.array(z.string()),
+  phones: z.array(z.string()),
+  birthday: z.string().optional().describe("yyyy-MM-dd, or MM-dd when the year is unknown."),
+  postalAddresses: z.array(z.string()),
+};
 
 server.registerTool(
   "contact_search",
@@ -379,12 +475,13 @@ server.registerTool(
       query: z.string().describe("Name fragment (e.g. 'sarah') or an email address."),
       limit: z.number().int().optional().describe("Max results (default 10)."),
     },
+    outputSchema: { contacts: z.array(z.object(contactShape)) },
   },
   async ({ query, limit }) => {
     const args = ["contacts", "search", query];
     if (limit !== undefined) args.push("--limit", String(limit));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "contacts");
     } catch (err) {
       return fail(err);
     }
@@ -398,10 +495,11 @@ server.registerTool(
     inputSchema: {
       id: z.string().describe("Contact identifier."),
     },
+    outputSchema: contactShape,
   },
   async ({ id }) => {
     try {
-      return ok(await cli(["contacts", "show", id]));
+      return okJson(await cli(["contacts", "show", id]));
     } catch (err) {
       return fail(err);
     }
@@ -419,13 +517,15 @@ server.registerTool(
       body_html: z.string().describe("Note body as HTML."),
       folder: z.string().optional().describe("Notes folder (default: the default folder)."),
     },
+    // NotesCreate (Sources/AppleTasks/Digest.swift) prints {id, name} from JXA.
+    outputSchema: { id: z.string(), name: z.string() },
   },
   async ({ title, body_html, folder }) => {
     const args = ["notes", "create", "--title", title];
     if (folder) args.push("--folder", folder);
     args.push(body_html);
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -445,6 +545,24 @@ server.registerTool(
       note_folder: z.string().optional().describe("Notes folder for the digest note."),
       push: z.boolean().optional().describe("Send a short summary to the configured ntfy topic."),
     },
+    // DigestOut (Sources/AppleTasks/Digest.swift)
+    outputSchema: {
+      since: z.string(),
+      generatedAt: z.string(),
+      dispatches: z.array(z.object({
+        id: z.number().int(),
+        agent: z.string(),
+        status: z.string(),
+        summary: z.string().optional(),
+        taskId: z.string(),
+      })),
+      auditActions: z.number().int(),
+      auditByCommand: z.record(z.number().int()),
+      dueToday: z.array(taskSchema),
+      events: z.array(eventSchema),
+      noteCreated: z.string().optional().describe("Created note id when note: true."),
+      pushed: z.boolean().optional().describe("Whether the ntfy push succeeded when push: true."),
+    },
   },
   async ({ since, note, note_folder, push }) => {
     const args = ["digest"];
@@ -453,7 +571,7 @@ server.registerTool(
     if (note_folder) args.push("--note-folder", note_folder);
     if (push) args.push("--push");
     try {
-      return ok(await cli(args, 60_000));
+      return okJson(await cli(args, 60_000));
     } catch (err) {
       return fail(err);
     }
@@ -474,6 +592,14 @@ server.registerTool(
       ),
       max_chars: z.number().int().optional().describe("Truncate each image's text (default 4000)."),
     },
+    // ScreenshotOut (Sources/AppleTasks/Screenshots.swift)
+    outputSchema: {
+      screenshots: z.array(z.object({
+        file: z.string(),
+        modified: z.string(),
+        text: z.string().describe("Recognized text; empty when the image has none."),
+      })),
+    },
   },
   async ({ dir, since, max_chars }) => {
     const args = ["screenshots", "scan"];
@@ -481,7 +607,7 @@ server.registerTool(
     if (since) args.push("--since", since);
     if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
     try {
-      return ok(await cli(args, 120_000)); // OCR of many images can be slow
+      return okJson(await cli(args, 120_000), "screenshots"); // OCR of many images can be slow
     } catch (err) {
       return fail(err);
     }
@@ -503,6 +629,15 @@ server.registerTool(
       max_chars: z.number().int().optional().describe("Truncate each file's content (default 8000)."),
       archive: z.boolean().optional().describe("Move processed files into a done/ subfolder."),
     },
+    // FileDropOut (Sources/AppleTasks/Files.swift)
+    outputSchema: {
+      files: z.array(z.object({
+        file: z.string(),
+        modified: z.string(),
+        content: z.string(),
+        archivedTo: z.string().optional().describe("Destination path when archive: true."),
+      })),
+    },
   },
   async ({ dir, since, max_chars, archive }) => {
     const args = ["files", "scan"];
@@ -511,7 +646,7 @@ server.registerTool(
     if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
     if (archive) args.push("--archive");
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "files");
     } catch (err) {
       return fail(err);
     }
@@ -534,6 +669,16 @@ server.registerTool(
       max_chars: z.number().int().optional().describe("Truncate each transcript (default 4000)."),
       archive: z.boolean().optional().describe("Move transcribed files into a done/ subfolder."),
     },
+    // AudioOut (Sources/AppleTasks/Audio.swift)
+    outputSchema: {
+      recordings: z.array(z.object({
+        file: z.string(),
+        modified: z.string(),
+        transcript: z.string().optional().describe("Absent when transcription failed (see error)."),
+        archivedTo: z.string().optional().describe("Destination path when archive: true."),
+        error: z.string().optional(),
+      })),
+    },
   },
   async ({ dir, since, max_chars, archive }) => {
     const args = ["audio", "scan"];
@@ -542,7 +687,7 @@ server.registerTool(
     if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
     if (archive) args.push("--archive");
     try {
-      return ok(await cli(args, 300_000)); // transcription of many memos can be slow
+      return okJson(await cli(args, 300_000), "recordings"); // transcription of many memos can be slow
     } catch (err) {
       return fail(err);
     }
@@ -562,18 +707,36 @@ server.registerTool(
       ),
       max_items: z.number().int().optional().describe("Limit output to this many items (default 50)."),
     },
+    // ReadingListItemOut (Sources/AppleTasks/ReadingList.swift)
+    outputSchema: {
+      items: z.array(z.object({
+        title: z.string(),
+        url: z.string(),
+        dateAdded: z.string(),
+        previewText: z.string().optional(),
+      })),
+    },
   },
   async ({ since, max_items }) => {
     const args = ["reading-list", "scan"];
     if (since) args.push("--since", since);
     if (max_items !== undefined) args.push("--max-items", String(max_items));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "items");
     } catch (err) {
       return fail(err);
     }
   }
 );
+
+// MailHeaderOut / MailMessageOut (Sources/AppleTasks/Mail.swift)
+const mailHeaderShape = {
+  id: z.string(),
+  subject: z.string(),
+  from: z.string(),
+  received: z.string(),
+  read: z.boolean(),
+};
 
 server.registerTool(
   "mail_scan",
@@ -585,13 +748,14 @@ server.registerTool(
       since: z.string().optional().describe("yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601 (default: 24h ago)."),
       limit: z.number().int().optional().describe("Max messages (default 50)."),
     },
+    outputSchema: { messages: z.array(z.object(mailHeaderShape)) },
   },
   async ({ since, limit }) => {
     const args = ["mail", "scan"];
     if (since) args.push("--since", since);
     if (limit !== undefined) args.push("--limit", String(limit));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "messages");
     } catch (err) {
       return fail(err);
     }
@@ -606,12 +770,13 @@ server.registerTool(
       id: z.string().describe("Message id from mail_scan."),
       max_chars: z.number().int().optional().describe("Truncate the body (default 4000)."),
     },
+    outputSchema: { ...mailHeaderShape, body: z.string() },
   },
   async ({ id, max_chars }) => {
     const args = ["mail", "show", id];
     if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -621,6 +786,8 @@ server.registerTool(
 server.registerTool(
   "shortcut_list",
   {
+    // Plain text from the macOS 'shortcuts' CLI (one name per line) — no
+    // structured output to declare.
     description: "List the names of all Shortcuts available on this Mac (via the macOS 'shortcuts' CLI).",
     inputSchema: {},
   },
@@ -637,6 +804,8 @@ server.registerTool(
 server.registerTool(
   "shortcut_run",
   {
+    // Output is whatever the shortcut prints — genuinely free-form text, so
+    // no outputSchema.
     description:
       "Run a macOS Shortcut by name, optionally passing text input, and return its text output. " +
       "Escape hatch to anything Shortcuts can do: HomeKit, Focus modes, notifications, etc.",
@@ -671,6 +840,8 @@ server.registerTool(
 server.registerTool(
   "notify",
   {
+    // No outputSchema: the local-banner path returns a plain-text ack (it
+    // never touches the CLI), so the output isn't uniformly structured.
     description:
       "Show a local macOS notification banner (e.g. to report a finished task). " +
       "push: true also sends it via ntfy so it reaches the user's phone off-Mac " +
@@ -715,6 +886,19 @@ server.registerTool(
       caller: z.string().optional().describe("Caller substring filter (mcp, agent:claude, ...)."),
       limit: z.number().int().optional().describe("Max rows, newest first (default 50)."),
     },
+    // AuditDB.AuditRow (Sources/AppleTasks/Audit.swift)
+    outputSchema: {
+      entries: z.array(z.object({
+        ts: z.string(),
+        caller: z.string(),
+        command: z.string(),
+        taskId: z.string().optional(),
+        list: z.string().optional(),
+        detail: z.string().optional(),
+        result: z.string(),
+        error: z.string().optional(),
+      })),
+    },
   },
   async ({ since, task, caller, limit }) => {
     const args = ["log"];
@@ -723,7 +907,7 @@ server.registerTool(
     if (caller) args.push("--caller", caller);
     if (limit !== undefined) args.push("--limit", String(limit));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "entries");
     } catch (err) {
       return fail(err);
     }
@@ -735,10 +919,11 @@ server.registerTool(
   {
     description: "Show a single task by id: full JSON including notes (with dispatch trailers) and tags.",
     inputSchema: { id: z.string().describe("Task id from task_list/dispatch_list.") },
+    outputSchema: taskShape,
   },
   async ({ id }) => {
     try {
-      return ok(await cli(["show", id]));
+      return okJson(await cli(["show", id]));
     } catch (err) {
       return fail(err);
     }
@@ -750,10 +935,11 @@ server.registerTool(
   {
     description: "Mark a completed task open again.",
     inputSchema: { id: z.string().describe("Task id.") },
+    outputSchema: taskShape,
   },
   async ({ id }) => {
     try {
-      return ok(await cli(["uncomplete", id]));
+      return okJson(await cli(["uncomplete", id]));
     } catch (err) {
       return fail(err);
     }
@@ -774,6 +960,19 @@ server.registerTool(
       list: z.string().optional().describe("Only scan this Reminders list."),
       reap_only: z.boolean().optional().describe("Only reap stale ledger rows and GC worktrees."),
     },
+    // Dispatch.DispatchReport (Sources/AppleTasks/Dispatch.swift)
+    outputSchema: {
+      reports: z.array(z.object({
+        taskId: z.string(),
+        title: z.string(),
+        agent: z.string(),
+        cwd: z.string().optional(),
+        action: z.string().describe("What happened (dispatched/would dispatch/reaped/gc/skipped...)."),
+        exitCode: z.number().int().optional(),
+        runLog: z.string().optional(),
+        worktree: z.string().optional(),
+      })),
+    },
   },
   async ({ dry_run, agent, list, reap_only }) => {
     // Dispatched agents may not re-dispatch: an agent whose MCP session was
@@ -788,7 +987,7 @@ server.registerTool(
     if (reap_only) args.push("--reap-only");
     try {
       // Real runs execute agents inline; give them 2h, not the 30s default.
-      return ok(await cli(args, dry_run !== false && !reap_only ? 30_000 : 7_200_000));
+      return okJson(await cli(args, dry_run !== false && !reap_only ? 30_000 : 7_200_000), "reports");
     } catch (err) {
       return fail(err);
     }
@@ -804,13 +1003,30 @@ server.registerTool(
       status: z.enum(["running", "succeeded", "failed", "timeout", "aborted"]).optional(),
       limit: z.number().int().optional().describe("Max rows (default 50, newest first)."),
     },
+    // AuditDB.DispatchRow (Sources/AppleTasks/Audit.swift)
+    outputSchema: {
+      dispatches: z.array(z.object({
+        id: z.number().int(),
+        taskId: z.string(),
+        agent: z.string(),
+        command: z.string(),
+        cwd: z.string().optional(),
+        startedAt: z.string(),
+        finishedAt: z.string().optional(),
+        status: z.string(),
+        exitCode: z.number().int().optional(),
+        runLogPath: z.string().optional(),
+        worktree: z.string().optional(),
+        summary: z.string().optional(),
+      })),
+    },
   },
   async ({ status, limit }) => {
     const args = ["dispatches"];
     if (status) args.push("--status", status);
     if (limit) args.push("--limit", String(limit));
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args), "dispatches");
     } catch (err) {
       return fail(err);
     }
@@ -820,6 +1036,7 @@ server.registerTool(
 server.registerTool(
   "run_log",
   {
+    // Raw agent output (arbitrary text lines) — no outputSchema.
     description:
       "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). " +
       "Returns the last `tail` lines (reads at most the final 256 KB).",
@@ -870,6 +1087,29 @@ server.registerTool(
         ),
       dry_run: z.boolean().optional().describe("Default true. Set false to apply tags/list moves."),
     },
+    // Triage.TriageResult (Sources/AppleTasks/Triage.swift)
+    outputSchema: {
+      inbox: z.string(),
+      untaggedCount: z.number().int(),
+      applied: z.boolean(),
+      actions: z.array(z.object({
+        id: z.string(),
+        title: z.string(),
+        kind: z.string().describe('"agent" or "personal".'),
+        addedTags: z.array(z.string()),
+        movedTo: z.string().optional(),
+        note: z.string().optional(),
+      })),
+      noteActions: z.array(z.object({
+        source: z.string().describe("Source note name."),
+        kind: z.string().describe('"task" or "event".'),
+        title: z.string(),
+        due: z.string().optional(),
+        tags: z.array(z.string()),
+        list: z.string().optional(),
+        note: z.string().optional().describe("Skip/downgrade reason."),
+      })).optional().describe("Present only when include_notes: true."),
+    },
   },
   async ({ inbox, agent, include_notes, dry_run }) => {
     const args = ["triage"];
@@ -878,7 +1118,7 @@ server.registerTool(
     if (include_notes) args.push("--notes");
     if (dry_run === false) args.push("--apply");
     try {
-      return ok(await cli(args, 360_000)); // classifier spawn can take a minute
+      return okJson(await cli(args, 360_000)); // classifier spawn can take a minute
     } catch (err) {
       return fail(err);
     }
@@ -896,13 +1136,27 @@ server.registerTool(
       timeout: z.number().int().optional().describe("Seconds to wait for a fix (default 15)."),
       no_geocode: z.boolean().optional().describe("Skip reverse geocoding (coordinates only)."),
     },
+    // WhereamiOut (Sources/AppleTasks/Location.swift)
+    outputSchema: {
+      latitude: z.number(),
+      longitude: z.number(),
+      accuracyMeters: z.number(),
+      timestamp: z.string(),
+      place: z.object({
+        name: z.string().optional(),
+        locality: z.string().optional(),
+        administrativeArea: z.string().optional(),
+        postalCode: z.string().optional(),
+        country: z.string().optional(),
+      }).optional().describe("Absent with no_geocode or when reverse geocoding fails."),
+    },
   },
   async ({ timeout, no_geocode }) => {
     const args = ["whereami"];
     if (timeout !== undefined) args.push("--timeout", String(timeout));
     if (no_geocode) args.push("--no-geocode");
     try {
-      return ok(await cli(args));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }
@@ -939,10 +1193,21 @@ server.registerTool(
       "pairing files are in ~/.config/apple-tasks/findmy/accessories/). Requires one-time interactive " +
       "setup: 'python3 sidecar/findmy-sidecar.py login'. Returns {error, hint} JSON when unconfigured.",
     inputSchema: {},
+    // cmd_devices (sidecar/findmy-sidecar.py)
+    outputSchema: {
+      devices: z.array(z.object({
+        name: z.string(),
+        file: z.string(),
+        identifier: z.string().nullable().optional(),
+        serialNumber: z.string().nullable().optional(),
+        model: z.string().nullable().optional(),
+        error: z.string().optional().describe("Present when this accessory's pairing file failed to load."),
+      })),
+    },
   },
   async () => {
     try {
-      return ok(await findmy(["devices"]));
+      return okJson(await findmy(["devices"]), "devices");
     } catch (err) {
       return fail(err);
     }
@@ -958,10 +1223,19 @@ server.registerTool(
     inputSchema: {
       name: z.string().describe("Accessory name (file stem or pairing name)."),
     },
+    // cmd_locate (sidecar/findmy-sidecar.py)
+    outputSchema: {
+      name: z.string(),
+      latitude: z.number().nullable(),
+      longitude: z.number().nullable(),
+      timestamp: z.string().nullable(),
+      confidence: z.number().nullable(),
+      status: z.number().nullable(),
+    },
   },
   async ({ name }) => {
     try {
-      return ok(await findmy(["locate", name]));
+      return okJson(await findmy(["locate", name]));
     } catch (err) {
       return fail(err);
     }
@@ -976,10 +1250,32 @@ server.registerTool(
       "private native-tags helper availability, notes-scan watermark. TCC grants are per-host-process, " +
       "so run this when tools fail unexpectedly.",
     inputSchema: {},
+    // DoctorOut (Sources/AppleTasks/Doctor.swift)
+    outputSchema: {
+      binary: z.string(),
+      hostProcess: z.string(),
+      reminders: z.string(),
+      calendars: z.string(),
+      location: z.string(),
+      contacts: z.string(),
+      foundationModels: z.string(),
+      findmySidecar: z.string(),
+      mailRule: z.string(),
+      dropFolder: z.string(),
+      privateHelper: z.object({
+        present: z.boolean(),
+        path: z.string().optional(),
+        check: z.string().optional(),
+      }),
+      notesScanWatermark: z.string().optional(),
+      speech: z.string(),
+      fullDiskAccess: z.string(),
+      automationNote: z.string(),
+    },
   },
   async () => {
     try {
-      return ok(await cli(["doctor"]));
+      return okJson(await cli(["doctor"]));
     } catch (err) {
       return fail(err);
     }
