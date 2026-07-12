@@ -68,6 +68,10 @@ struct AgentsConfig: Codable {
         let power: String?
         /// Skip dispatch while the 1-minute load average exceeds this.
         let maxLoad: Double?
+        /// Quiet hours (IDEAS #43): stay queued while local time is inside
+        /// `{"notBetween": ["22:00", "07:00"]}` (wraps midnight when
+        /// start > end). Same shape as notify's `quietHours`.
+        let time: TimeWindow?
     }
 
     struct Place: Codable {

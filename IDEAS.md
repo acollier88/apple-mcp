@@ -850,3 +850,18 @@ JSON, and have the CLI create the items (audited, dry-run by default,
 source-note name in the notes field, dedupe against prior runs). That gives
 the notes→tasks loop (README §Notes-to-tasks) a no-loop on-demand path, same
 as inbox triage got.
+
+## 43. Quiet hours as a ContextGate time condition — ✅ DONE 2026-07-12 (qwen #5, reshaped)
+
+qwen suggested quiet-hours config on notify. Better home: a `time` condition
+in the existing #22 ContextGate (`"conditions": {"time": {"notBetween":
+["22:00","07:00"]}}`) — gates dispatch AND notify from one abstraction
+("don't run heavy agents at 2am" falls out of the same change). notify
+reads the same config; digest-priority pings can carry an override flag.
+
+Shipped: shared `TimeWindow` (ContextGate.swift) parses the notBetween pair
+(HH:mm local; start > end wraps midnight). Dispatch gains `conditions.time`
+— gated tasks stay queued ("gated: quiet hours 22:00–07:00"), malformed
+windows gate with a fix-it reason. notify gains `quietHours` in notify.json
+plus `--force` for priority pings; suppression still exits 0 and is audited,
+and an invalid window fails open (a typo must not mute pings).

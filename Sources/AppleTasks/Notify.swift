@@ -10,6 +10,11 @@ struct NotifyConfig: Codable {
         let server: String?
     }
     let ntfy: Ntfy?
+    /// Quiet hours (IDEAS #43): `{"notBetween": ["22:00", "07:00"]}` — same
+    /// shape as the dispatch `time` gate (TimeWindow, ContextGate.swift).
+    /// Inside the window `notify` suppresses banner + push (still exits 0);
+    /// `--force` overrides for priority pings.
+    let quietHours: TimeWindow?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -69,12 +74,28 @@ struct NotifyCommand: AsyncParsableCommand {
     @Flag(help: "Also push via ntfy (config: ~/.config/apple-tasks/notify.json).")
     var push = false
 
+    @Flag(help: "Priority ping: send even during quietHours (notify.json).")
+    var force = false
+
     struct Out: Codable {
         let banner: Bool
         let pushed: Bool
+        /// The quiet-hours window ("22:00–07:00") when it suppressed this
+        /// notification; absent otherwise.
+        let suppressedQuietHours: String?
     }
 
     func run() async throws {
+        // Quiet hours (IDEAS #43): inside the window nothing fires but the
+        // command still succeeds — audited so the silence is traceable.
+        // Invalid windows fail open: a config typo must not mute pings.
+        if !force, let quiet = NotifyConfig.load()?.quietHours,
+           case .inside(let window) = quiet.check() {
+            AuditDB.shared.record(command: "notify", detail: title,
+                                  result: "suppressed (quiet hours \(window))")
+            emit(Out(banner: false, pushed: false, suppressedQuietHours: window))
+            return
+        }
         Notifier.banner(title: title, body: message)
         var pushed = false
         if push {
@@ -84,6 +105,6 @@ struct NotifyCommand: AsyncParsableCommand {
                     "push failed or unconfigured; expected {\"ntfy\": {\"topic\": \"...\"}} at \(NotifyConfig.url.path)")
             }
         }
-        emit(Out(banner: true, pushed: pushed))
+        emit(Out(banner: true, pushed: pushed, suppressedQuietHours: nil))
     }
 }
