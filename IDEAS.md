@@ -1033,3 +1033,34 @@ for text. Caveats: noisy channel — require opt-in run (no launchd by
 default), redact obvious secrets (password-manager pasteboard types mark
 themselves via org.nspasteboard.ConcealedType — skip those), never audit-log
 clipboard bodies.
+
+## 46. Reminders attachments support — TODO (Agent Vision/File Context)
+
+Extend `apple-tasks` to support reading and writing attachments (`EKAttachment`) on reminders and calendar events.
+- **Why**: Currently, agents only get text. If the user attaches an image (e.g. a screenshot of a bug) or a PDF/text file to a reminder, the agent should be able to download and parse it.
+- **Implementation**: Parse the attachment data in `apple-tasks` and save it to a temporary directory in the agent's workdir during dispatch, passing the file path in the agent prompt.
+
+## 47. Subtask dependency modeling in the dispatcher — TODO (Checklist Swarms)
+
+Model complex task workflows natively using parent-child reminder relationships in [Dispatch.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift).
+- **Why**: If a parent task contains subtasks, the dispatcher shouldn't execute the parent task until all subtasks (which may be assigned to different agents) are completed.
+- **Implementation**: Before claiming/dispatching a task, check the status of its children in EventKit. Run children in sequence or in parallel according to their agent tags, and block the parent task until all subtasks resolve.
+
+## 48. User-activity and app-focus gating — TODO (Polite background execution)
+
+Extend the context-gated dispatch system in [ContextGate.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/ContextGate.swift) to respect user activity and focus.
+- **Why**: Running heavy tasks (like local LLM classification or multi-dependency builds) while the user is actively coding or in a meeting can cause CPU lag and locking conflicts.
+- **Implementation**: Add conditions like `idleMinutes` or `blockingApps` to `conditions` in `agents.json`. Swift can check system idle time via `CGEventSource.secondsSinceLastEventType(.combinedSessionState)` and check if heavy apps are running or focused via `NSWorkspace.shared.runningApplications`.
+
+## 49. Raycast extension & menubar integration — TODO (Fast control plane)
+
+Provide a Raycast extension or a lightweight macOS menu bar app for managing `apple-tasks`.
+- **Why**: Reminders.app is a great task view, but developer workflows benefit from a keyboard-driven search and command interface.
+- **Implementation**: Since the Swift CLI communicates strictly in structured JSON, build a Raycast extension in TypeScript that queries open tasks, displays run logs, handles human-in-the-loop approvals, and allows triggering manual dispatches.
+
+## 50. Two-way GitHub/Linear issue sync — TODO (Team tool integration)
+
+A command to sync external tracker issues directly to a dedicated Plan list.
+- **Why**: Many developer tasks originate in team tools rather than personal Siri captures.
+- **Implementation**: Add `apple-tasks sync-github --repo owner/repo` or a background worker. It fetches issues assigned to you, creates them in Reminders with appropriate agent/repo tags, links the URL property, and synchronizes status (completing the reminder closes the issue on GitHub, and vice versa).
+
