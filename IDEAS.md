@@ -842,15 +842,24 @@ report-back); the gaps are interface, proactivity, and the open web. Also
 folded in the keepers from qwen-feedback.md. Suggested order: #35 → #36 →
 #37 → #38 → #39; the rest as they get pulled by real use.
 
-## 35. Structured MCP output schemas — TODO (qwen #7; cheapest win, do first)
+## 35. Structured MCP output schemas — ✅ DONE 2026-07-12 (qwen #7; CRUD parity split out below)
 
 Every tool returns JSON as a bare text blob (`content[0].text`); agents parse
 untyped. The MCP SDK supports `outputSchema` + `structuredContent` per tool.
 The CLI already emits stable typed JSON, so this is near-mechanical: declare
 the schema in each `registerTool` call. Big agent-UX gain, zero Swift work.
-While in there, batch the small CRUD parity items (qwen #2/#3/#4):
-`event_show`, `task_create_batch` (every triage run pays the N-round-trips
-tax today), and `task_list --search <q>` (NSPredicate over title+notes).
+
+Shipped: `outputSchema` on every JSON-emitting tool (~30), derived from the
+Swift output structs; new `okJson()` returns structuredContent alongside the
+unchanged text content. Top-level-array outputs nest under a named key
+(tasks/events/...) since structuredContent must be an object. Free-form
+tools (shortcut_run, notify, run_log, ...) deliberately stay text-only.
+Verified via stdio smoke test against real CLI output.
+
+Remaining (split out, was "while in there"): the small CRUD parity items
+(qwen #2/#3/#4): `event_show`, `task_create_batch` (every triage run pays
+the N-round-trips tax today), and `task_list --search <q>` (NSPredicate over
+title+notes). Swift work, unlike the schemas — do as its own pass.
 
 ## 36. Recurrence — TODO (qwen #1; motivating case = recurring AGENT work)
 
