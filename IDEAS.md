@@ -831,3 +831,139 @@ JSON, and have the CLI create the items (audited, dry-run by default,
 source-note name in the notes field, dedupe against prior runs). That gives
 the notes→tasks loop (README §Notes-to-tasks) a no-loop on-demand path, same
 as inbox triage got.
+
+## Round 5 ideas (2026-07-12) — Spark parity + qwen-feedback triage
+
+Context: Google shipped Gemini Spark (I/O 2026; Mac app 2026-07-01) — a 24/7
+cloud-VM agent with a dedicated Gmail address as its interface, Chrome web
+actions, topic monitoring, and Workspace/third-party connectors. Comparing
+against it, this project already has the core (capture → triage → dispatch →
+report-back); the gaps are interface, proactivity, and the open web. Also
+folded in the keepers from qwen-feedback.md. Suggested order: #35 → #36 →
+#37 → #38 → #39; the rest as they get pulled by real use.
+
+## 35. Structured MCP output schemas — TODO (qwen #7; cheapest win, do first)
+
+Every tool returns JSON as a bare text blob (`content[0].text`); agents parse
+untyped. The MCP SDK supports `outputSchema` + `structuredContent` per tool.
+The CLI already emits stable typed JSON, so this is near-mechanical: declare
+the schema in each `registerTool` call. Big agent-UX gain, zero Swift work.
+While in there, batch the small CRUD parity items (qwen #2/#3/#4):
+`event_show`, `task_create_batch` (every triage run pays the N-round-trips
+tax today), and `task_list --search <q>` (NSPredicate over title+notes).
+
+## 36. Recurrence — TODO (qwen #1; motivating case = recurring AGENT work)
+
+Long-standing gap, but the real payoff isn't chore-repeat CRUD: a recurring
+`[claude][auto]` reminder that regenerates on completion IS Spark's
+"scheduled routines" using the existing dispatcher unchanged — "every Monday
+7am, run the weekly-review agent." EventKit supports recurrence rules
+natively on both reminders and events. Design decision needed: expose the
+EKRecurrenceRule directly (`--recurrence "FREQ=WEEKLY;BYDAY=MO"`) vs. a
+simplified flag set. Watch the dispatcher dedupe: each generated occurrence
+must present as a fresh dispatchable task (externalId behavior across
+recurrence needs a spike first).
+
+## 37. Two-way email interface — TODO (Spark's killer feature, we're 70% there)
+
+Spark's dedicated Gmail address is its most-loved surface. Our half exists:
+the #12 Mail rule already turns matching inbound mail into [mail]-tagged
+reminders. Missing half is the REPLY: mail draft creation (AppleScript can
+`make new outgoing message`; NEVER auto-send — draft only, human hits send).
+Shape: `apple-tasks mail draft --to X --subject Y --body-file Z --reply-to
+<message-id>`; dispatcher prompt template gains "write your report as a
+reply draft." Then: email `you+agent@...` from any device → rule routes to
+dispatcher → result appears as a reply draft + ntfy push. Full assistant
+reachability with zero new UI and zero ToS risk (unlike iMessage).
+
+## 38. Topic watches / standing monitors — TODO (Spark "stay up to date")
+
+`~/.config/apple-tasks/watches.json`: [{name, kind: search|rss|url, query,
+cadence}]. `apple-tasks watch scan` fetches each due watch, diffs against
+the usual watermark/state, emits {watch, ts, newItems} JSON; triage decides
+digest-worthy vs. noise; hits land in the morning digest (#8) with URLs via
+the url field (#19). Covers qwen #6 (web context) with the same primitive:
+a `web_fetch`/`web_search` CLI subcommand — note the gap is narrower than
+qwen implies (dispatched `claude -p` agents already have web access; the
+starved lanes are local Foundation Models triage and any future in-process
+#28 agent). Price watches, beta-release watches, "did X ship" watches.
+
+## 39. ntfy approvals — actionable human-in-the-loop — TODO
+
+ntfy supports action buttons (view/http POST) on notifications. Upgrade the
+#24 push path: dispatcher (or an agent mid-run) posts "Agent wants to do X
+[Approve] [Reject]" with buttons hitting a tiny local endpoint (or an ntfy
+subscribe loop in `dispatch --watch`); the answer flips a tag / writes an
+approvals table row the agent polls. Turns [auto] from a binary pre-grant
+into a real approval protocol — the unlock for widening what unattended
+agents may do (send that draft, run that web action). Works from the watch.
+
+## 40. Web-action dispatcher lane — TODO (Spark acts through Chrome)
+
+A browser-capable agent template in agents.json for `[web]`-tagged tasks:
+same claim/timeout/run-log machinery, but the agent's MCP config includes a
+browser (claude-in-chrome / Playwright). Use cases: "check if the refund
+posted," "book the usual table." Safety posture: NEVER requireAutoTag-
+exempt; pair with #39 approvals for anything transactional. Zero Swift work
+— it's an agents.json entry + prompt template + a decision about what web
+tasks are allowed unattended (initial answer: none).
+
+## 41. Proactive suggestions pass — TODO (Spark proposes, we only react)
+
+`apple-tasks suggest`: feed calendar (next 7d), contacts birthdays, mail-scan
+headers, stale [read]/[dispatched] tasks, and audit-log activity to the local
+Foundation Models classifier (same harness as #27); emit PROPOSED tasks into
+a "Suggestions" section of the morning digest — never auto-create. Examples:
+"flight Thu, no calendar block for the drive," "Sarah's birthday in 3 days,"
+"this [read] task is 6 weeks stale — drop it?" Judgment in the model,
+application dry-run by default: same architecture rule as triage.
+
+## 42. Google Workspace via official MCP servers — TODO (don't build google-mcp)
+
+Google ships managed remote MCP servers (GA rollout from 2026-05-01) for
+Gmail, Calendar, Drive, Chat, People — auth inherits the user's own
+permissions. (History note: the unofficial `gws` Workspace CLI got its
+author, Justin Poehnelt, fired in June 2026 — Google is territorial here;
+anything we do stays personal-use, unbranded.) So DON'T build a google-mcp
+sibling; wire the official servers in:
+- **Dispatcher lane**: agent template for `[google]`-tagged tasks whose MCP
+  config loads Google's Gmail/Calendar servers (the `[gemini][calendar]`
+  example from #7 becomes real with zero code).
+- **Worth building ourselves**: the CAPTURE side only — official MCPs are
+  pull-tools for agents, not watermarked feeds. A `gmail scan` (Gmail API +
+  usual watermark/provenance, mirroring mail_scan's JSON shape) fixes the
+  known "Mail.app not syncing → mail_scan returns []" hole and makes Gmail
+  a first-class triage feed.
+- Cross-ecosystem loop for free: Gmail message → triage → tagged Reminder →
+  dispatched agent replies via official Gmail draft tool (pairs with #37).
+- Fallback if official servers are too locked down: taylorwilsdon/
+  google_workspace_mcp (most complete unofficial one).
+
+## 43. Quiet hours as a ContextGate time condition — TODO (qwen #5, reshaped)
+
+qwen suggested quiet-hours config on notify. Better home: a `time` condition
+in the existing #22 ContextGate (`"conditions": {"time": {"notBetween":
+["22:00","07:00"]}}`) — gates dispatch AND notify from one abstraction
+("don't run heavy agents at 2am" falls out of the same change). notify
+reads the same config; digest-priority pings can carry an override flag.
+
+## 44. Consolidate watermark state into the audit DB — TODO (qwen #8, low-risk)
+
+state.json (scan watermarks) and apple-tasks.db (audit/ledger) don't know
+about each other. Fold watermarks into a KV table in the SQLite DB so doctor
+reads one source of truth and JSON-vs-DB drift is impossible. Keep the
+ScanState API surface; swap the backing store. Migration: read state.json
+once, write rows, leave the file as a dead artifact (or delete after one
+verified run). Explicitly NOT doing qwen #9 (persistent Swift process to
+avoid execFile spawns) — spawn-per-call has no stale-daemon failure mode
+and current latency doesn't hurt.
+
+## 45. Clipboard watcher capture — TODO (cheap channel, phone-parity habit)
+
+`apple-tasks clipboard scan`: poll NSPasteboard changeCount on a timer (or
+per dispatch pass), emit new text clippings {ts, content} through the same
+triage path as #23 files. "Copy it to deal with later" beats screenshotting
+for text. Caveats: noisy channel — require opt-in run (no launchd by
+default), redact obvious secrets (password-manager pasteboard types mark
+themselves via org.nspasteboard.ConcealedType — skip those), never audit-log
+clipboard bodies.
