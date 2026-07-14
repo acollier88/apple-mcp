@@ -306,6 +306,23 @@ struct Dispatch: AsyncParsableCommand {
             if requireAuto && !lowerTags.contains("auto") { continue }
             if lowerTags.contains("dispatched") { continue }
 
+            // Not due yet: stays queued until its due time. This is what
+            // makes recurrence useful for agent work (IDEAS #36) — completing
+            // a recurring task rolls it to the next occurrence, and without
+            // this check the fresh occurrence would re-dispatch immediately
+            // instead of at its scheduled time. Undated tasks dispatch as
+            // always; a due date on an agent task means "run at", not "by".
+            if let comps = reminder.dueDateComponents,
+               let dueDate = Calendar.current.date(from: comps),
+               dueDate > Date() {
+                if dryRun {
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                                  cwd: nil, action: "scheduled: not due until \(Dates.formatDue(reminder.dueDateComponents) ?? "?") — stays queued",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                }
+                continue
+            }
+
             var retryAttempt: Int?
             if lowerTags.contains("failed") {
                 let maxRetries = config.maxRetries ?? 0

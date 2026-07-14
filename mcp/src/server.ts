@@ -76,6 +76,11 @@ const taskShape = {
   url: z.string().optional(),
   nativeTags: z.boolean().optional().describe("add/update only: whether tags were mirrored to native Reminders tags."),
   subtask: z.boolean().optional().describe("update only: whether a --parent subtask change was applied."),
+  recurrence: z.string().optional().describe("RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."),
+  recurred: z
+    .boolean()
+    .optional()
+    .describe("complete only: completing this recurring task rolled it to the next occurrence (shown still open)."),
 };
 const taskSchema = z.object(taskShape);
 
@@ -92,6 +97,7 @@ const eventShape = {
   location: z.string().optional(),
   notes: z.string().optional(),
   url: z.string().optional(),
+  recurrence: z.string().optional().describe("RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."),
 };
 const eventSchema = z.object(eventShape);
 
@@ -149,16 +155,22 @@ server.registerTool(
       due: z.string().optional().describe("yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."),
       priority: z.enum(["none", "low", "medium", "high"]).optional(),
       url: z.string().optional().describe("URL to attach (PR/artifact links)."),
+      recurrence: z
+        .string()
+        .optional()
+        .describe(
+          "Repeat rule, requires due. RRULE subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n. Completing an occurrence rolls the task to the next one."),
     },
     outputSchema: taskShape,
   },
-  async ({ list, title, tags, notes, due, priority, url }) => {
+  async ({ list, title, tags, notes, due, priority, url, recurrence }) => {
     const args = ["add", "--list", list];
     for (const t of tags ?? []) args.push("--tag", t);
     if (notes) args.push("--notes", notes);
     if (due) args.push("--due", due);
     if (priority) args.push("--priority", priority);
     if (url) args.push("--url", url);
+    if (recurrence) args.push("--recurrence", recurrence);
     args.push(title);
     try {
       return okJson(await cli(args));
@@ -190,10 +202,15 @@ server.registerTool(
         .string()
         .optional()
         .describe("Make this task a subtask of the given task id (native Reminders subtask, via the private helper)."),
+      recurrence: z
+        .string()
+        .optional()
+        .describe("Set/replace the repeat rule (task must have a due date). Same RRULE subset as task_create."),
+      clear_recurrence: z.boolean().optional().describe("Remove the repeat rule (series stops recurring)."),
     },
     outputSchema: taskShape,
   },
-  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent }) => {
+  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent, recurrence, clear_recurrence }) => {
     const args = ["update", id];
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
@@ -207,6 +224,8 @@ server.registerTool(
     if (priority) args.push("--priority", priority);
     if (list) args.push("--list", list);
     if (parent) args.push("--parent", parent);
+    if (recurrence) args.push("--recurrence", recurrence);
+    if (clear_recurrence) args.push("--clear-recurrence");
     try {
       return okJson(await cli(args));
     } catch (err) {
@@ -218,7 +237,8 @@ server.registerTool(
 server.registerTool(
   "task_complete",
   {
-    description: "Mark a task completed.",
+    description:
+      "Mark a task completed. Recurring tasks roll to their next occurrence instead (response has recurred=true, completed=false, and the next due date).",
     inputSchema: { id: z.string() },
     outputSchema: taskShape,
   },
@@ -321,10 +341,15 @@ server.registerTool(
       location: z.string().optional(),
       notes: z.string().optional(),
       url: z.string().optional().describe("URL to attach (PR/artifact links)."),
+      recurrence: z
+        .string()
+        .optional()
+        .describe(
+          "Repeat rule. RRULE subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n."),
     },
     outputSchema: eventShape,
   },
-  async ({ calendar, title, tags, start, end, duration, location, notes, url }) => {
+  async ({ calendar, title, tags, start, end, duration, location, notes, url, recurrence }) => {
     const args = ["events", "add", "--start", start];
     if (calendar) args.push("--calendar", calendar);
     for (const t of tags ?? []) args.push("--tag", t);
@@ -333,6 +358,7 @@ server.registerTool(
     if (location) args.push("--location", location);
     if (notes) args.push("--notes", notes);
     if (url) args.push("--url", url);
+    if (recurrence) args.push("--recurrence", recurrence);
     args.push(title);
     try {
       return okJson(await cli(args));

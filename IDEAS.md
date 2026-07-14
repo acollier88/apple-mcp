@@ -861,7 +861,7 @@ Remaining (split out, was "while in there"): the small CRUD parity items
 the N-round-trips tax today), and `task_list --search <q>` (NSPredicate over
 title+notes). Swift work, unlike the schemas — do as its own pass.
 
-## 36. Recurrence — TODO (qwen #1; motivating case = recurring AGENT work)
+## 36. Recurrence — ✅ DONE 2026-07-13 (qwen #1; motivating case = recurring AGENT work)
 
 Long-standing gap, but the real payoff isn't chore-repeat CRUD: a recurring
 `[claude][auto]` reminder that regenerates on completion IS Spark's
@@ -872,6 +872,26 @@ EKRecurrenceRule directly (`--recurrence "FREQ=WEEKLY;BYDAY=MO"`) vs. a
 simplified flag set. Watch the dispatcher dedupe: each generated occurrence
 must present as a fresh dispatchable task (externalId behavior across
 recurrence needs a spike first).
+
+Shipped: raw RRULE subset won the design call (`--recurrence
+"FREQ=WEEKLY;BYDAY=MO"`; FREQ/INTERVAL/BYDAY/BYMONTHDAY/UNTIL|COUNT —
+Recurrence.swift parses to EKRecurrenceRule and formats back, so TaskOut/
+EventOut `recurrence` round-trips). On `task add` (requires --due), `task
+update` (+ --clear-recurrence), `events add`, and the MCP tools/schemas.
+
+Spike findings (verified live 2026-07-13): completing a recurring reminder
+REUSES the object — same id/externalId, same title, completed flips back to
+false with due advanced to the next occurrence after now; the done
+occurrence is archived as a separate item with its own externalId. Two
+dispatcher landmines found and fixed: (1) the surviving [dispatched] tag
+would block every future occurrence — `complete` now sheds
+[dispatched]/[failed] when a series rolls over and reports `recurred:true`;
+(2) dispatch had NO due-date filter, so a rolled occurrence would re-run
+immediately in a loop — dispatch now skips tasks not yet due (dry-run shows
+"scheduled: not due until ..."; a due date on an agent task means "run at",
+not "by"). Together these make "every Monday 7am, run the weekly-review
+agent" work with zero dispatcher config. Not done: recurrence on `events
+update`/`delete` (needs EKSpan .futureEvents plumbing; .thisEvent today).
 
 ## 37. Two-way email interface — TODO (Spark's killer feature, we're 70% there)
 

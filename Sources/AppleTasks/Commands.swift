@@ -129,6 +129,9 @@ struct Add: AsyncParsableCommand {
     @Option(help: "URL to attach (shows natively in Reminders; use for PR/artifact links).")
     var url: String?
 
+    @Option(help: "Repeat rule (requires --due). \(Recurrence.helpText)")
+    var recurrence: String?
+
     @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring tags to native Reminders tags.")
     var noNativeTags = false
 
@@ -146,6 +149,12 @@ struct Add: AsyncParsableCommand {
         reminder.notes = notes
         if let url { reminder.url = URL(string: url) }
         if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
+        if let recurrence {
+            guard due != nil else {
+                throw AppleTasksError.saveFailed("--recurrence requires --due (the first occurrence anchors the series)")
+            }
+            reminder.addRecurrenceRule(try Recurrence.parse(recurrence))
+        }
         if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
 
         try store.save(reminder)
@@ -200,6 +209,12 @@ struct Update: AsyncParsableCommand {
     @Flag(name: .customLong("clear-url"), help: "Remove the task URL.")
     var clearUrl = false
 
+    @Option(help: "Set/replace the repeat rule. \(Recurrence.helpText)")
+    var recurrence: String?
+
+    @Flag(name: .customLong("clear-recurrence"), help: "Remove the repeat rule (series stops recurring).")
+    var clearRecurrence = false
+
     @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring added tags to native Reminders tags.")
     var noNativeTags = false
 
@@ -236,6 +251,15 @@ struct Update: AsyncParsableCommand {
         if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
         if clearUrl { reminder.url = nil }
         if let url { reminder.url = URL(string: url) }
+        if clearRecurrence || recurrence != nil {
+            for rule in reminder.recurrenceRules ?? [] { reminder.removeRecurrenceRule(rule) }
+        }
+        if let recurrence {
+            guard reminder.dueDateComponents != nil || due != nil else {
+                throw AppleTasksError.saveFailed("--recurrence requires a due date (set one with --due)")
+            }
+            reminder.addRecurrenceRule(try Recurrence.parse(recurrence))
+        }
         if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
         if let listName { reminder.calendar = try store.calendar(named: listName) }
 
@@ -274,7 +298,26 @@ struct Complete: AsyncParsableCommand {
         let reminder = try await store.reminder(id: id)
         reminder.isCompleted = true
         try store.save(reminder)
-        let out = TaskOut(reminder)
+
+        // Recurring reminder: EventKit archives the done occurrence as a new
+        // item and reuses THIS object (same externalId, same title) as the
+        // next occurrence — verified empirically 2026-07-13. The regenerated
+        // occurrence must present as fresh dispatchable work, so shed the
+        // lifecycle tags the finished run left behind (IDEAS #36).
+        var out: TaskOut
+        if !reminder.isCompleted, reminder.hasRecurrenceRules {
+            let parsed = Tags.parse(reminder.title ?? "")
+            let lifecycle = Set(["dispatched", "failed"])
+            if parsed.tags.contains(where: { lifecycle.contains($0.lowercased()) }) {
+                let tags = parsed.tags.filter { !lifecycle.contains($0.lowercased()) }
+                reminder.title = Tags.compose(tags: tags, title: parsed.title)
+                try store.save(reminder)
+            }
+            out = TaskOut(reminder)
+            out.recurred = true
+        } else {
+            out = TaskOut(reminder)
+        }
         AuditDB.shared.record(command: "complete", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)
     }

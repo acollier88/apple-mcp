@@ -169,12 +169,17 @@ struct TaskOut: Codable {
     let completedAt: String?
     let createdAt: String?
     let url: String?
+    /// RRULE-subset string (same shape --recurrence accepts); nil = one-shot.
+    let recurrence: String?
     /// Set by add/update only: whether tags were also mirrored to native
     /// Reminders tags via the private helper. Omitted when not attempted.
     var nativeTags: Bool?
     /// Set by update only: whether a --parent/--clear-parent subtask change
     /// was applied via the private helper. Omitted when not attempted.
     var subtask: Bool?
+    /// Set by complete only: true when completing a recurring task rolled it
+    /// to the next occurrence (the JSON shows the NEW occurrence, still open).
+    var recurred: Bool?
 
     init(_ r: EKReminder) {
         let raw = r.title ?? ""
@@ -192,6 +197,7 @@ struct TaskOut: Codable {
         completedAt = Dates.formatTimestamp(r.completionDate)
         createdAt = Dates.formatTimestamp(r.creationDate)
         url = r.url?.absoluteString
+        recurrence = (r.recurrenceRules?.first).map(Recurrence.format)
     }
 }
 
@@ -212,6 +218,8 @@ struct EventOut: Codable {
     let location: String?
     let notes: String?
     let url: String?
+    /// RRULE-subset string (same shape --recurrence accepts); nil = one-shot.
+    let recurrence: String?
 
     init(_ e: EKEvent) {
         let raw = e.title ?? ""
@@ -228,6 +236,7 @@ struct EventOut: Codable {
         location = e.location
         notes = e.notes
         url = e.url?.absoluteString
+        recurrence = (e.recurrenceRules?.first).map(Recurrence.format)
     }
 }
 

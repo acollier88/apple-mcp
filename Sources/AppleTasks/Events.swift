@@ -80,6 +80,9 @@ struct EventsAdd: AsyncParsableCommand {
     @Option(help: "URL to attach (use for PR/artifact links).")
     var url: String?
 
+    @Option(help: "Repeat rule. \(Recurrence.helpText)")
+    var recurrence: String?
+
     @Argument(help: "Event title (without tag prefix).")
     var title: String
 
@@ -112,6 +115,7 @@ struct EventsAdd: AsyncParsableCommand {
         } else {
             event.endDate = startDate.addingTimeInterval(TimeInterval((duration ?? 60) * 60))
         }
+        if let recurrence { event.addRecurrenceRule(try Recurrence.parse(recurrence)) }
 
         try store.save(event)
         let out = EventOut(event)
