@@ -939,13 +939,20 @@ sibling; wire the official servers in:
 - Fallback if official servers are too locked down: taylorwilsdon/
   google_workspace_mcp (most complete unofficial one).
 
-## 43. Quiet hours as a ContextGate time condition — TODO (qwen #5, reshaped)
+## 43. Quiet hours as a ContextGate time condition — ✅ DONE 2026-07-12 (qwen #5, reshaped)
 
 qwen suggested quiet-hours config on notify. Better home: a `time` condition
 in the existing #22 ContextGate (`"conditions": {"time": {"notBetween":
 ["22:00","07:00"]}}`) — gates dispatch AND notify from one abstraction
 ("don't run heavy agents at 2am" falls out of the same change). notify
 reads the same config; digest-priority pings can carry an override flag.
+
+Shipped: shared `TimeWindow` (ContextGate.swift) parses the notBetween pair
+(HH:mm local; start > end wraps midnight). Dispatch gains `conditions.time`
+— gated tasks stay queued ("gated: quiet hours 22:00–07:00"), malformed
+windows gate with a fix-it reason. notify gains `quietHours` in notify.json
+plus `--force` for priority pings; suppression still exits 0 and is audited,
+and an invalid window fails open (a typo must not mute pings).
 
 ## 44. Consolidate watermark state into the audit DB — TODO (qwen #8, low-risk)
 
