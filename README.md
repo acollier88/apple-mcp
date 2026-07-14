@@ -79,6 +79,26 @@ apple-tasks show <id>
 All output is compact JSON. Errors go to stderr with exit code ≠ 0.
 Task ids accept either the local or sync-stable external identifier.
 
+### Recurrence
+
+`--recurrence` takes an RRULE subset —
+`FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n`
+— and requires a due date (the first occurrence anchors the series):
+
+```bash
+apple-tasks add --list "Code Tasks" -t claude -t auto \
+    --due "2026-07-20 07:00" --recurrence "FREQ=WEEKLY;BYDAY=MO" "Weekly review"
+apple-tasks update <id> --recurrence "FREQ=DAILY;INTERVAL=2"   # set/replace
+apple-tasks update <id> --clear-recurrence                     # series stops
+```
+
+Completing a recurring task rolls it to the next occurrence — same id and
+externalId, `recurred: true` in the output, due date advanced — and sheds
+the dispatcher lifecycle tags (`[dispatched]`/`[failed]`) so the fresh
+occurrence is dispatchable again. Combined with the dispatcher's due-date
+gate, a recurring `[claude][auto]` reminder IS a scheduled agent routine:
+"every Monday 7am, run the weekly review" with zero dispatcher config.
+
 ### Calendar events
 
 Calendar access is a separate macOS permission from Reminders (granted the same way).
@@ -90,9 +110,14 @@ apple-tasks events list --from 2026-06-11 --to 2026-06-12 -t claude
 apple-tasks events add --calendar Home -t claude -t repo2 \
     --start "2026-06-11 09:00" --duration 90 "Deep work: MFA implementation"
 apple-tasks events add --start 2026-06-12 "Release day"   # date-only start = all-day
+apple-tasks events add --start "2026-07-01 09:00" --duration 30 \
+    --recurrence "FREQ=MONTHLY;BYMONTHDAY=1" "Pay rent"   # same RRULE subset as tasks
 apple-tasks events update <id> --start "2026-06-11 13:00" --end "2026-06-11 14:30"
 apple-tasks events delete <id>
 ```
+
+`events update`/`delete` operate on single occurrences (`.thisEvent`);
+editing a whole series from the CLI is not wired up yet.
 
 ### Notes & Mail (read-only, via Apple Events)
 
@@ -115,9 +140,11 @@ syncing the account.
 AgentTasks also adopts the Notes and Calendar App Intents domains
 (macOS 27, `NotesSchemaIntents.swift` / `CalendarSchemaIntents.swift`):
 *"Hey Siri, create a note in AgentTasks"* shells to `notes create`, and
-*"create an event in AgentTasks"* shells to `events add` (schema fields the
-CLI doesn't model — attendees, recurrence, alarms — are accepted and
-ignored). Mail domain adoption was attempted and descoped — see IDEAS #29.
+*"create an event in AgentTasks"* shells to `events add` (schema fields
+not wired through — attendees, alarms, and intent-supplied recurrence —
+are accepted and ignored; the CLI itself models recurrence via
+`--recurrence`). Mail domain adoption was attempted and descoped — see
+IDEAS #29.
 
 ### Contacts (read-only, always)
 
@@ -134,55 +161,17 @@ Agents never edit the address book — there is deliberately no write path.
 
 ## MCP server
 
+The MCP server is a thin shell over the CLI — every tool maps to a CLI
+invocation, with declared output schemas (`structuredContent`) mirroring
+the CLI's JSON. Setup, environment variables, and the full 43-tool catalog
+live in **[mcp/README.md](mcp/README.md)**. Quick start:
+
 ```bash
 cd mcp && bun install
-```
-
-Register with Claude Code:
-
-```bash
 claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
 ```
 
-Tools (35):
-
-- Tasks: `task_list`, `task_show`, `task_create`, `task_update`,
-  `task_complete`, `task_uncomplete`, `task_delete`
-- Plans: `plan_list`, `plan_create`
-- Events: `event_list`, `event_create`, `event_update`, `event_delete`, `calendar_list`
-- Notes/Mail: `notes_scan`, `mail_scan`, `mail_show` (read-only),
-  `note_create` (NEW notes only — existing notes are never edited)
-- Capture channels: `screenshots_scan` (on-device Vision OCR of an image
-  folder), `files_scan` (text/markdown dropped in an iCloud inbox folder,
-  optional archive), `readinglist_scan` (Safari Reading List items, read-only,
-  needs Full Disk Access) — all watermarked; feed the text to triage
-- Contacts (read-only, always): `contact_search` (by name, or by email when
-  the query contains `@`), `contact_show` — resolve WHICH Sarah a task means,
-  rank known senders in mail triage; separate Contacts TCC prompt, `doctor`
-  reports the grant
-- Bridges: `shortcut_list`, `shortcut_run` (escape hatch to HomeKit/Focus/anything
-  Shortcuts can do), `notify` (banner; `push: true` also sends via ntfy so it
-  reaches your phone — config `~/.config/apple-tasks/notify.json`:
-  `{"ntfy": {"topic": "your-topic"}}`, optional `"server"`; never commit it)
-- Dispatcher ops: `dispatch_run` (dry-run by default; refuses recursive
-  dispatch from agent-spawned sessions), `dispatch_list`, `run_log` — a
-  supervisor agent can reap, retry, and read failure logs over MCP
-- Location: `whereami` (this Mac), `findmy_devices` / `findmy_locate` (AirTags
-  via the FindMy.py sidecar — see below)
-- Triage: `triage_inbox` (one-shot classify + route untagged inbox items; dry-run by default)
-- Digest: `digest` (agent activity + dispatch outcomes + due today + today's
-  calendar as one JSON blob; `note: true` writes it as an Apple Note,
-  `push: true` sends a one-line ntfy summary)
-- Introspection: `audit_log`, `doctor`
-
-The CLI mirrors the push path as `apple-tasks notify <title> <message>
-[--push]`; the dispatcher pushes failures/timeouts automatically when
-notify.json is configured (banners follow `notifyOn`).
-
-The server shells out to the Swift binary at `.build/release/apple-tasks`;
-override with the `APPLE_TASKS_BIN` env var.
-
-### Location: whereami & Find My sidecar
+## Location: whereami & Find My sidecar
 
 `apple-tasks whereami` (+ MCP `whereami`) returns a one-shot CoreLocation fix
 for this Mac with a reverse-geocoded place name. First use triggers a Location
@@ -211,7 +200,7 @@ may break with Apple changes. Use a dedicated Apple ID if you're uncomfortable
 attaching your main one. The `login` step is interactive by design and is
 refused when invoked non-interactively (e.g. by an agent).
 
-### Notes-to-tasks triage loop
+## Notes-to-tasks triage loop
 
 > /loop 1h Call notes_scan() (the watermark advances automatically). For each
 > returned note, extract action items: things with a date/time become calendar
@@ -249,7 +238,8 @@ containing the task details and self-complete instructions. Config at
       "worktree": true,
       "timeoutMinutes": 60,
       "maxConcurrent": 1,
-      "conditions": { "location": "home", "power": "ac", "maxLoad": 8 }
+      "conditions": { "location": "home", "power": "ac", "maxLoad": 8,
+                      "time": { "notBetween": ["22:00", "07:00"] } }
     }
   },
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
@@ -266,8 +256,12 @@ containing the task details and self-complete instructions. Config at
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Dedupe is enforced by both the dispatch ledger and the
-`[dispatched]`/`[failed]` tags. Always test routing with
-`apple-tasks dispatch --dry-run` first.
+`[dispatched]`/`[failed]` tags. Tasks with a **future due date stay queued
+until due** (dry-run reports them as "scheduled") — on an agent task, a due
+date means "run at", not "by". That plus recurrence is the scheduled-routine
+pattern: a `[claude][auto]` reminder due Monday 7am with
+`--recurrence "FREQ=WEEKLY;BYDAY=MO"` runs weekly, forever. Always test
+routing with `apple-tasks dispatch --dry-run` first.
 `--watch`/launchd mode is on the roadmap (IDEAS.md #7).
 
 The optional `triage` block runs the [on-demand inbox
@@ -283,10 +277,12 @@ the design):
 
 - **Context gates** (per-agent `conditions`: `location` — a named entry in
   `places`, checked against a whereami fix; `power` — `"ac"`/`"battery"` via
-  pmset; `maxLoad` — 1-min load average cap) — a task failing a gate stays
-  queued untouched (no claim, no `[failed]`) and is reconsidered next pass.
-  All reads, no new permissions. Use cases: heavy agents only on AC, personal
-  repos only at home, nothing heavy while the machine is busy.
+  pmset; `maxLoad` — 1-min load average cap; `time` — a quiet-hours window
+  `{"notBetween": ["22:00", "07:00"]}`, local time, wrapping midnight) — a
+  task failing a gate stays queued untouched (no claim, no `[failed]`) and is
+  reconsidered next pass. All reads, no new permissions. Use cases: heavy
+  agents only on AC, personal repos only at home, nothing heavy while the
+  machine is busy or at 2am.
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is
@@ -339,6 +335,53 @@ the design):
 > different: it requires API-key auth — subscription OAuth only covers the
 > first-party CLI. Terms change; this isn't legal advice — check Anthropic's
 > current Consumer Terms before relying on it.
+
+## Notifications & quiet hours
+
+`apple-tasks notify <title> <message> [--push]` shows a macOS banner;
+`--push` also sends it via [ntfy](https://ntfy.sh) so it reaches your
+phone/watch. The dispatcher pushes failures/timeouts automatically when
+configured (banners follow `notifyOn`). Config at
+`~/.config/apple-tasks/notify.json` (never commit it — topic names are the
+secret):
+
+```json
+{
+  "ntfy": { "topic": "your-unguessable-topic", "server": "https://ntfy.sh" },
+  "quietHours": { "notBetween": ["22:00", "07:00"] },
+  "approvalsReplyTopic": "your-unguessable-topic-approvals"
+}
+```
+
+`quietHours` (times are local; start > end wraps midnight) suppresses
+banner + push inside the window — the command still exits 0 and the
+suppression is audited; `--force` overrides for priority pings. An invalid
+window fails open, so a config typo can't mute notifications. The same
+window shape works as a dispatch `time` condition (see context gates).
+
+## Approvals (human-in-the-loop)
+
+`approve` turns `[auto]` from a binary pre-grant into a real approval
+protocol: an agent mid-run can ask before doing something consequential,
+and you answer from your phone or watch.
+
+```bash
+apple-tasks approve request "Send the reply draft to Sarah?" --task <id>
+# → pushes an ntfy notification with [Approve] [Deny] buttons, emits a token
+apple-tasks approve check <token> --wait-seconds 600   # block until answered
+apple-tasks approve answer <token> approve|deny        # answer from the Mac
+apple-tasks approve list --status pending
+```
+
+The buttons POST `approve <token>` / `deny <token>` to a **reply topic**
+(default `<topic>-approvals`) and `check` polls it — no local endpoint,
+nothing exposed on the Mac. Requests expire (default 240 min); the first
+answer wins (late taps and double answers are rejected); every request and
+answer is audited with its caller. Request pushes respect `quietHours`
+unless `--force` — a suppressed request still exists and is answerable via
+`approve answer` or visible in `approve list`. The MCP server exposes
+request/check/list but deliberately **not** answer: an agent approving its
+own request would defeat the protocol.
 
 ## Siri inbox triage
 
@@ -433,9 +476,9 @@ line. Smoke-test without waiting for mail:
 osascript "$HOME/Library/Application Scripts/com.apple.mail/apple-tasks-capture.scpt"
 ```
 
-## Capture channels (screenshots, drop-folder)
+## Capture channels (screenshots, drop-folder, voice notes, Reading List)
 
-Two more front doors into the inbox, both watermarked like `notes scan` (the
+More front doors into the inbox, all watermarked like `notes scan` (the
 stored watermark auto-advances; `--since` overrides statelessly):
 
 ```bash
@@ -443,6 +486,7 @@ apple-tasks screenshots scan                 # OCR new images in ~/Desktop
 apple-tasks screenshots scan --dir ~/Shots --since 2026-07-01
 apple-tasks files scan                       # .txt/.md in iCloud Drive/AgentInbox
 apple-tasks files scan --archive             # + move processed files to done/
+apple-tasks audio scan                       # transcribe voice notes in the inbox folder
 apple-tasks reading-list scan                # new Safari Reading List saves
 ```
 
@@ -458,14 +502,50 @@ apple-tasks reading-list scan                # new Safari Reading List saves
   Siri. `--archive` moves processed files into `done/` so they aren't
   re-read (belt-and-suspenders with the watermark); iCloud placeholders are
   materialized before reading.
+- **`audio scan`** transcribes voice memos dropped in the same inbox folder
+  with on-device Speech recognition, emitting `{file, modified, transcript}`.
+  Failed files are retried next scan; `--archive` moves transcribed files to
+  `done/`.
+- **`reading-list scan`** surfaces new Safari Reading List saves as
+  `{title, url, dateAdded, previewText}` so triage can turn saved articles
+  into `[read]` tasks. Read-only over `Bookmarks.plist`; the host process
+  needs Full Disk Access (`doctor` reports the grant, `--path` overrides for
+  testing).
 
-Feed either output to triage: the agent decides task/event/noise and files it
+Feed any of it to triage: the agent decides task/event/noise and files it
 with the source path as provenance. `doctor` reports the drop-folder path.
-- **`reading-list scan`** surfaces new Safari Reading List
-  saves as `{title, url, dateAdded, previewText}` so triage can turn saved
-  articles into `[read]` tasks. Read-only over `Bookmarks.plist`; the host
-  process needs Full Disk Access (`doctor` reports the grant, `--path`
-  overrides for testing).
+
+## Topic watches & web fetch
+
+Standing monitors over the open web — the same watermarked-scan primitive
+as the capture channels, pointed outward. Config at
+`~/.config/apple-tasks/watches.json`:
+
+```json
+{
+  "watches": [
+    { "name": "swift-blog", "kind": "rss", "url": "https://www.swift.org/atom.xml", "cadenceMinutes": 360 },
+    { "name": "pricing-page", "kind": "url", "url": "https://example.com/pricing" }
+  ]
+}
+```
+
+```bash
+apple-tasks watch scan            # fetch due watches, emit only NEW items
+apple-tasks watch scan --watch swift-blog --force
+apple-tasks watch list            # config + last fetch + due now?
+apple-tasks web fetch https://example.com --max-chars 4000
+```
+
+`rss` watches dedupe by feed entry id (first run seeds the seen-set and
+surfaces only the last 24h); `url` watches hash the page body and emit a
+"content changed" item (first run records a baseline). Each watch runs on
+its own `cadenceMinutes` (default 60); a failed fetch is reported per-watch
+and never fatal. Feed the items to triage like any other capture — hits
+become `[read]` tasks with the URL in the url field and land in the
+morning digest. `web fetch` reduces a page to readable text (scripts and
+styles stripped) so web-less lanes — the on-device triage model, in-process
+agents — get page context without a browser.
 
 ## Morning digest
 

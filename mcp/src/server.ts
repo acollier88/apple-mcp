@@ -966,34 +966,34 @@ server.registerTool(
 server.registerTool(
   "notify",
   {
-    // No outputSchema: the local-banner path returns a plain-text ack (it
-    // never touches the CLI), so the output isn't uniformly structured.
     description:
       "Show a local macOS notification banner (e.g. to report a finished task). " +
       "push: true also sends it via ntfy so it reaches the user's phone off-Mac " +
-      "(requires ~/.config/apple-tasks/notify.json).",
+      "(requires ~/.config/apple-tasks/notify.json). Respects the config's quietHours " +
+      "window (suppressed but still succeeds); force: true overrides for priority pings.",
     inputSchema: {
       title: z.string(),
       message: z.string(),
       sound: z.boolean().optional().describe("Play the default notification sound."),
       push: z.boolean().optional().describe("Also push via ntfy."),
+      force: z.boolean().optional().describe("Send even during quiet hours."),
+    },
+    // NotifyCommand.Out (Sources/AppleTasks/Notify.swift). Everything goes
+    // through the CLI so quiet hours apply uniformly (an earlier version
+    // showed banners via osascript directly, bypassing them).
+    outputSchema: {
+      banner: z.boolean(),
+      pushed: z.boolean(),
+      suppressedQuietHours: z.string().optional().describe("Window that suppressed this notification, when it did."),
     },
   },
-  async ({ title, message, sound, push }) => {
-    if (push) {
-      try {
-        return ok(await cli(["notify", title, message, "--push"]));
-      } catch (err) {
-        return fail(err);
-      }
-    }
-    const body = sound
-      ? "display notification (item 2 of argv) with title (item 1 of argv) sound name \"default\""
-      : "display notification (item 2 of argv) with title (item 1 of argv)";
-    const script = `on run argv\n${body}\nend run`;
+  async ({ title, message, sound, push, force }) => {
+    const args = ["notify", title, message];
+    if (sound) args.push("--sound");
+    if (push) args.push("--push");
+    if (force) args.push("--force");
     try {
-      await execFileAsync("osascript", ["-e", script, title, message], { timeout: 15_000 });
-      return ok("notification shown");
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }

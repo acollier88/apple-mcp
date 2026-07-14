@@ -33,12 +33,15 @@ struct NotifyConfig: Codable {
 
 enum Notifier {
     /// Local banner via JXA; args passed as argv, never interpolated.
-    static func banner(title: String, body: String) {
+    static func banner(title: String, body: String, sound: Bool = false) {
+        let options = sound
+            ? "{ withTitle: argv[0], soundName: \"default\" }"
+            : "{ withTitle: argv[0] }"
         let script = """
         function run(argv) {
             const app = Application.currentApplication();
             app.includeStandardAdditions = true;
-            app.displayNotification(argv[1], { withTitle: argv[0] });
+            app.displayNotification(argv[1], \(options));
         }
         """
         _ = try? OSA.runJXA(script, args: [title, body])
@@ -78,6 +81,9 @@ struct NotifyCommand: AsyncParsableCommand {
     @Flag(help: "Also push via ntfy (config: ~/.config/apple-tasks/notify.json).")
     var push = false
 
+    @Flag(help: "Play the default notification sound with the banner.")
+    var sound = false
+
     @Flag(help: "Priority ping: send even during quietHours (notify.json).")
     var force = false
 
@@ -100,7 +106,7 @@ struct NotifyCommand: AsyncParsableCommand {
             emit(Out(banner: false, pushed: false, suppressedQuietHours: window))
             return
         }
-        Notifier.banner(title: title, body: message)
+        Notifier.banner(title: title, body: message, sound: sound)
         var pushed = false
         if push {
             pushed = await Notifier.push(title: title, body: message)
