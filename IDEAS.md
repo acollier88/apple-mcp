@@ -905,7 +905,7 @@ reply draft." Then: email `you+agent@...` from any device → rule routes to
 dispatcher → result appears as a reply draft + ntfy push. Full assistant
 reachability with zero new UI and zero ToS risk (unlike iMessage).
 
-## 38. Topic watches / standing monitors — TODO (Spark "stay up to date")
+## 38. Topic watches / standing monitors — ✅ DONE 2026-07-13 (Spark "stay up to date")
 
 `~/.config/apple-tasks/watches.json`: [{name, kind: search|rss|url, query,
 cadence}]. `apple-tasks watch scan` fetches each due watch, diffs against
@@ -916,6 +916,20 @@ a `web_fetch`/`web_search` CLI subcommand — note the gap is narrower than
 qwen implies (dispatched `claude -p` agents already have web access; the
 starved lanes are local Foundation Models triage and any future in-process
 #28 agent). Price watches, beta-release watches, "did X ship" watches.
+
+Shipped: `watch scan` / `watch list` (Watches.swift) with kinds `rss`
+(XMLParser, RSS 2.0 + Atom, seen-id dedupe capped at 500, first run seeds
+the set and surfaces only the last 24h) and `url` (SHA-256 body hash,
+"content changed" items, first run records a baseline). Per-watch
+cadenceMinutes (default 60) with lastFetch anchor in state.json watchState;
+--force overrides; a failed fetch reports per-watch and still advances
+cadence so a dead feed can't spam retries. Plus `web fetch <url>`
+(qwen #6): HTML → readable text with script/style/head stripped, {url,
+status, title, text, truncated}. MCP tools watch_scan / watch_list /
+web_fetch with full schemas. Descoped: `search` kind (no keyless search
+API worth shipping; a watch on a search-results URL covers some of it).
+Verified live: swift.org + ntfy release feeds baseline/dedupe/cadence,
+httpbin uuid change detection, MCP stdio smoke test.
 
 ## 39. ntfy approvals — actionable human-in-the-loop — TODO
 

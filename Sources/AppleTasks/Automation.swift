@@ -130,6 +130,8 @@ struct ScanState: Codable {
     var filesScanWatermark: String?
     var audioScanWatermark: String?
     var readingListScanWatermark: String?
+    /// Per-watch scan state (IDEAS #38), keyed by watch name.
+    var watchState: [String: WatchRecord]?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser

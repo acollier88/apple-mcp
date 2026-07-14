@@ -755,6 +755,106 @@ server.registerTool(
   }
 );
 
+// WatchItemOut / WatchScan.Out (Sources/AppleTasks/Watches.swift)
+const watchItemShape = {
+  watch: z.string().describe("Name of the watch that produced this item."),
+  kind: z.enum(["rss", "url"]),
+  ts: z.string().describe("Item timestamp (feed pubDate when parseable, else scan time), ISO8601."),
+  title: z.string().optional(),
+  url: z.string(),
+  note: z.string().optional().describe("'content changed' for url watches; feed summary for rss."),
+};
+
+server.registerTool(
+  "watch_scan",
+  {
+    description:
+      "Fetch each due topic watch (RSS feeds / web pages from ~/.config/apple-tasks/watches.json) and emit " +
+      "items new since the last scan. Per-watch cadence and seen-state; first run records a baseline. " +
+      "Failed watches are reported per-watch, never fatal.",
+    inputSchema: {
+      watch: z.string().optional().describe("Only scan this watch (by name)."),
+      force: z.boolean().optional().describe("Fetch every watch now, ignoring cadence."),
+      max_items: z.number().int().optional().describe("Per-watch cap on emitted items (default 20)."),
+    },
+    outputSchema: {
+      scannedAt: z.string(),
+      items: z.array(z.object(watchItemShape)),
+      watches: z.array(z.object({
+        name: z.string(),
+        status: z.string().describe("'ok', 'skipped: not due', 'baseline recorded', or 'error: ...'."),
+        newItems: z.number().int(),
+      })),
+    },
+  },
+  async ({ watch, force, max_items }) => {
+    const args = ["watch", "scan"];
+    if (watch) args.push("--watch", watch);
+    if (force) args.push("--force");
+    if (max_items !== undefined) args.push("--max-items", String(max_items));
+    try {
+      return okJson(await cli(args, 120_000)); // N sequential fetches
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "watch_list",
+  {
+    description: "Show configured topic watches and their scan state (last fetch, due now?).",
+    inputSchema: {},
+    outputSchema: {
+      watches: z.array(z.object({
+        name: z.string(),
+        kind: z.enum(["rss", "url"]),
+        url: z.string(),
+        cadenceMinutes: z.number().int(),
+        lastFetch: z.string().optional(),
+        due: z.boolean(),
+      })),
+    },
+  },
+  async () => {
+    try {
+      return okJson(await cli(["watch", "list"]), "watches");
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "web_fetch",
+  {
+    description:
+      "Fetch a URL and return {url, status, title, text} with HTML reduced to readable text. Minimal web " +
+      "primitive for agents without their own web access; prefer your native web tools if you have them.",
+    inputSchema: {
+      url: z.string().describe("http(s) URL to fetch."),
+      max_chars: z.number().int().optional().describe("Truncate extracted text (default 4000)."),
+    },
+    outputSchema: {
+      url: z.string(),
+      status: z.number().int(),
+      contentType: z.string().optional(),
+      title: z.string().optional(),
+      text: z.string(),
+      truncated: z.boolean(),
+    },
+  },
+  async ({ url, max_chars }) => {
+    const args = ["web", "fetch", url];
+    if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+    try {
+      return okJson(await cli(args, 60_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
 // MailHeaderOut / MailMessageOut (Sources/AppleTasks/Mail.swift)
 const mailHeaderShape = {
   id: z.string(),
