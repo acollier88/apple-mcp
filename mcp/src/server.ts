@@ -1000,6 +1000,95 @@ server.registerTool(
   }
 );
 
+// ApprovalOut (Sources/AppleTasks/Approvals.swift)
+const approvalShape = {
+  token: z.string(),
+  question: z.string(),
+  taskId: z.string().optional(),
+  status: z.enum(["pending", "approved", "denied", "expired"]),
+  requestedAt: z.string(),
+  expiresAt: z.string().optional(),
+  answeredAt: z.string().optional(),
+  answeredVia: z.string().optional().describe("'ntfy' (phone button), 'cli' (answered on the Mac), or 'timeout'."),
+  pushSuppressed: z.string().optional().describe(
+    "request only: quiet-hours window that held the push. The request still exists and is answerable."),
+};
+
+server.registerTool(
+  "approval_request",
+  {
+    description:
+      "Ask the human for approval via an ntfy push with [Approve] [Deny] buttons; returns a token to poll " +
+      "with approval_check. Use before doing anything consequential you were not explicitly asked to do " +
+      "(sending, buying, deleting). Requires ntfy in ~/.config/apple-tasks/notify.json.",
+    inputSchema: {
+      question: z.string().describe("What is being asked, e.g. 'Send the reply draft to Sarah?'"),
+      task: z.string().optional().describe("Task id this approval belongs to (audit trail)."),
+      expires_minutes: z.number().int().optional().describe("Pending requests expire after this long (default 240)."),
+      force: z.boolean().optional().describe("Priority: push even during quiet hours."),
+    },
+    outputSchema: approvalShape,
+  },
+  async ({ question, task, expires_minutes, force }) => {
+    const args = ["approve", "request", question];
+    if (task) args.push("--task", task);
+    if (expires_minutes !== undefined) args.push("--expires-minutes", String(expires_minutes));
+    if (force) args.push("--force");
+    try {
+      return okJson(await cli(args, 30_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "approval_check",
+  {
+    description:
+      "Check an approval request's status, polling ntfy for a button answer. wait_seconds blocks until " +
+      "answered/expired or the wait elapses (poll every 3s). Act only on status 'approved'; treat 'denied' " +
+      "and 'expired' as no. There is deliberately no MCP tool to ANSWER an approval — answering your own " +
+      "request defeats the protocol.",
+    inputSchema: {
+      token: z.string().describe("Token from approval_request."),
+      wait_seconds: z.number().int().optional().describe("Keep polling this long (default: one poll, no wait)."),
+    },
+    outputSchema: approvalShape,
+  },
+  async ({ token, wait_seconds }) => {
+    const args = ["approve", "check", token];
+    if (wait_seconds !== undefined) args.push("--wait-seconds", String(wait_seconds));
+    try {
+      return okJson(await cli(args, (wait_seconds ?? 0) * 1000 + 30_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "approval_list",
+  {
+    description: "List approval requests, newest first. Filter by status to see what's pending.",
+    inputSchema: {
+      status: z.enum(["pending", "approved", "denied", "expired"]).optional(),
+      limit: z.number().int().optional().describe("Max rows (default 50)."),
+    },
+    outputSchema: { approvals: z.array(z.object(approvalShape)) },
+  },
+  async ({ status, limit }) => {
+    const args = ["approve", "list"];
+    if (status) args.push("--status", status);
+    if (limit !== undefined) args.push("--limit", String(limit));
+    try {
+      return okJson(await cli(args), "approvals");
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
 server.registerTool(
   "audit_log",
   {

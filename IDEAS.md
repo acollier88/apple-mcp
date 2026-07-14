@@ -931,7 +931,7 @@ API worth shipping; a watch on a search-results URL covers some of it).
 Verified live: swift.org + ntfy release feeds baseline/dedupe/cadence,
 httpbin uuid change detection, MCP stdio smoke test.
 
-## 39. ntfy approvals — actionable human-in-the-loop — TODO
+## 39. ntfy approvals — actionable human-in-the-loop — ✅ DONE 2026-07-13
 
 ntfy supports action buttons (view/http POST) on notifications. Upgrade the
 #24 push path: dispatcher (or an agent mid-run) posts "Agent wants to do X
@@ -940,6 +940,22 @@ subscribe loop in `dispatch --watch`); the answer flips a tag / writes an
 approvals table row the agent polls. Turns [auto] from a binary pre-grant
 into a real approval protocol — the unlock for widening what unattended
 agents may do (send that draft, run that web action). Works from the watch.
+
+Shipped: no local endpoint (the phone can't reach the Mac) — buttons POST
+"approve <token>"/"deny <token>" to a REPLY topic (default
+"<topic>-approvals", override approvalsReplyTopic in notify.json) and the
+Mac polls it. `approve request` (ntfy JSON publish, priority 4, respects
+quietHours unless --force — suppressed requests still exist and are
+answerable), `approve check --wait-seconds N` (3s repolls; also expires
+overdue rows, default 240min), `approve answer` (Mac-side/human escape
+hatch), `approve list`. Approvals table in the audit DB; answer is a
+single-statement compare-and-set so first answer wins. MCP:
+approval_request/check/list — deliberately NO approval_answer tool (an
+agent answering itself defeats the protocol; the CLI answer path is
+visible in the audit caller column). Trust model: reply topic name is the
+secret, same as the main topic. Verified live against throwaway ntfy.sh
+topics: approve/deny button simulation, --wait pickup (~7s), double-answer
+rejected, expiry, quiet-hours suppression + --force, MCP smoke (43 tools).
 
 ## 40. Web-action dispatcher lane — TODO (Spark acts through Chrome)
 

@@ -15,6 +15,10 @@ struct NotifyConfig: Codable {
     /// Inside the window `notify` suppresses banner + push (still exits 0);
     /// `--force` overrides for priority pings.
     let quietHours: TimeWindow?
+    /// Approvals (IDEAS #39): reply topic the Approve/Deny buttons publish
+    /// to. Defaults to "<topic>-approvals". Topics are the secret — keep it
+    /// as unguessable as the main topic.
+    let approvalsReplyTopic: String?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
