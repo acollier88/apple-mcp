@@ -991,7 +991,7 @@ secret, same as the main topic. Verified live against throwaway ntfy.sh
 topics: approve/deny button simulation, --wait pickup (~7s), double-answer
 rejected, expiry, quiet-hours suppression + --force, MCP smoke (43 tools).
 
-## 40. Web-action dispatcher lane — TODO (Spark acts through Chrome)
+## 40. Web-action dispatcher lane — ✅ DONE 2026-07-15 (Spark acts through Chrome)
 
 A browser-capable agent template in agents.json for `[web]`-tagged tasks:
 same claim/timeout/run-log machinery, but the agent's MCP config includes a
@@ -1000,6 +1000,15 @@ posted," "book the usual table." Safety posture: NEVER requireAutoTag-
 exempt; pair with #39 approvals for anything transactional. Zero Swift work
 — it's an agents.json entry + prompt template + a decision about what web
 tasks are allowed unattended (initial answer: none).
+
+Shipped as documentation (README "Dispatcher lanes: web actions"): a
+complete `[web]` agents.json entry (claude + Playwright MCP via inline
+--mcp-config, 20-min timeout, maxConcurrent 1) whose promptTemplate wires
+the #39 approval protocol into every transactional step (approve request →
+approve check --wait → proceed only on approved) and uses the #13
+{claimTag} placeholder. Decision recorded: unattended web WRITES allowance
+is none — read-only by default, approval button for everything else. No
+Swift/TS changes by design.
 
 ## 41. Proactive suggestions pass — TODO (Spark proposes, we only react)
 

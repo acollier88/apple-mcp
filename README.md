@@ -375,6 +375,36 @@ the design):
 > first-party CLI. Terms change; this isn't legal advice — check Anthropic's
 > current Consumer Terms before relying on it.
 
+### Dispatcher lanes: web actions
+
+A lane is just an agents.json entry whose agent carries extra capability —
+no dispatcher code involved. The `[web]` lane gives a task a
+browser-capable agent (Playwright MCP, or any browser MCP you trust):
+
+```json
+"web": {
+  "command": ["claude", "-p", "{prompt}",
+              "--permission-mode", "acceptEdits",
+              "--mcp-config", "{\"mcpServers\":{\"playwright\":{\"command\":\"npx\",\"args\":[\"@playwright/mcp@latest\"]}}}"],
+  "timeoutMinutes": 20,
+  "maxConcurrent": 1,
+  "promptTemplate": "You have been dispatched a web task from AgentTasks.\nTask id: {id}\nTitle: {title}\nNotes: {notes}\nUse your browser tools to do the task, READ-ONLY by default. Before ANY transactional step (purchase, booking, sending a message, submitting a form that changes state), you MUST request human approval: apple-tasks approve request \"<what you want to do>\" --task {id}, then poll apple-tasks approve check <token> --wait-seconds 240 and proceed only on approved. When finished: apple-tasks update {id} --append-notes \"<outcome>\" then apple-tasks complete {id} and apple-tasks update {id} --remove-tag {claimTag}"
+}
+```
+
+Then `[web][auto] Check if the refund from Acme posted` dispatches a
+browser agent on the next pass. Safety posture, deliberately conservative:
+
+- **Never** exempt the web lane from `requireAutoTag` — a `[web]` task runs
+  only because you also said `[auto]`.
+- **Nothing transactional runs unattended.** The prompt template routes
+  every state-changing step through the [ntfy approval
+  protocol](#approvals-human-in-the-loop) — you get an
+  Approve/Reject button on your phone; the agent proceeds only on approve.
+  The initial allowance for unattended web writes is: none.
+- Timeouts matter more here (pages hang); keep `timeoutMinutes` short and
+  `maxConcurrent` at 1.
+
 ## Notifications & quiet hours
 
 `apple-tasks notify <title> <message> [--push]` shows a macOS banner;
