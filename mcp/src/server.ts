@@ -900,6 +900,51 @@ server.registerTool(
 );
 
 server.registerTool(
+  "github_sync",
+  {
+    description:
+      "Two-way GitHub issue sync via the gh CLI: assigned open issues become [github]-tagged tasks " +
+      "(issue URL = dedupe key), closed issues complete their reminders, and completed reminders close " +
+      "their issues only when close_issues is true. dry_run defaults TRUE from MCP — pass dry_run: false " +
+      "to apply.",
+    inputSchema: {
+      repo: z.string().describe("GitHub repository, owner/repo."),
+      list: z.string().optional().describe("Reminders list for created tasks (default \"Code Tasks\")."),
+      tags: tagsField,
+      assignee: z.string().optional().describe("Issue assignee filter for gh (default @me; \"all\" disables)."),
+      limit: z.number().int().optional().describe("Max issues fetched (default 50)."),
+      close_issues: z.boolean().optional().describe("Close GitHub issues whose reminders are completed (outbound writes; default false)."),
+      dry_run: z.boolean().optional().describe("Default TRUE from MCP: report without changing anything."),
+    },
+    // GitHubSyncOut (Sources/AppleTasks/GitHubSync.swift)
+    outputSchema: {
+      repo: z.string(),
+      issuesSeen: z.number().int(),
+      created: z.array(taskSchema),
+      completedReminders: z.array(z.string()),
+      closedIssues: z.array(z.string()),
+      wouldCloseIssues: z.array(z.string()).describe("Completed reminders' open issues; rerun with close_issues to close."),
+      unchanged: z.number().int(),
+      dryRun: z.boolean(),
+    },
+  },
+  async ({ repo, list, tags, assignee, limit, close_issues, dry_run }) => {
+    const args = ["sync-github", "--repo", repo];
+    if (list) args.push("--list", list);
+    for (const t of tags ?? []) args.push("--tag", t);
+    if (assignee) args.push("--assignee", assignee);
+    if (limit !== undefined) args.push("--limit", String(limit));
+    if (close_issues) args.push("--close-issues");
+    if (dry_run !== false) args.push("--dry-run");
+    try {
+      return okJson(await cli(args, 120_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "clipboard_scan",
   {
     description:

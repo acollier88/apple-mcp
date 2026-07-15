@@ -1191,9 +1191,25 @@ Provide a Raycast extension or a lightweight macOS menu bar app for managing `ap
 - **Why**: Reminders.app is a great task view, but developer workflows benefit from a keyboard-driven search and command interface.
 - **Implementation**: Since the Swift CLI communicates strictly in structured JSON, build a Raycast extension in TypeScript that queries open tasks, displays run logs, handles human-in-the-loop approvals, and allows triggering manual dispatches.
 
-## 50. Two-way GitHub/Linear issue sync — TODO (Team tool integration)
+## 50. Two-way GitHub/Linear issue sync — ✅ GITHUB DONE 2026-07-15 (Linear not planned)
 
 A command to sync external tracker issues directly to a dedicated Plan list.
 - **Why**: Many developer tasks originate in team tools rather than personal Siri captures.
 - **Implementation**: Add `apple-tasks sync-github --repo owner/repo` or a background worker. It fetches issues assigned to you, creates them in Reminders with appropriate agent/repo tags, links the URL property, and synchronizes status (completing the reminder closes the issue on GitHub, and vice versa).
+
+Shipped (GitHubSync.swift): `sync-github --repo owner/repo [--list]
+[--tag]... [--assignee @me|all] [--limit] [--close-issues] [--dry-run]`,
+shelling to the authenticated `gh` CLI (keyless; auth/pagination are gh's
+problem). Issue URL in the task url field (#19) is the dedupe key; notes
+carry `github:owner/repo#N` + truncated body; created tasks always get
+[github] + any --tag extras. Outbound closes (completed reminder → close
+issue, with a comment) are OPT-IN via --close-issues — mutating a shared
+tracker by side effect shouldn't be a default. MCP `github_sync` (49
+tools; dry_run defaults TRUE from MCP, matching dispatch_run's posture).
+Verified live against acollier88/apple-mcp: inbound create (3 real open
+issues → tagged tasks with url/notes/native tags, then removed — test
+artifacts), closed-issue → reminder-completed transition, dry-run
+read-only pass. Outbound --close-issues path is code-complete but
+deliberately NOT exercised (external write); first real run should be
+human-supervised. Linear: not planned — no Linear account in play.
 

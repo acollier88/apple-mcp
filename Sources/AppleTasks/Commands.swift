@@ -16,7 +16,7 @@ struct AppleTasks: AsyncParsableCommand {
             Dispatch.self, Dispatches.self, Log.self,
             Whereami.self, NotifyCommand.self, Triage.self, Digest.self, Suggest.self,
             Screenshots.self, Files.self, Audio.self, ReadingList.self,
-            Watch.self, Web.self, Approve.self, ClipboardCommand.self,
+            Watch.self, Web.self, Approve.self, ClipboardCommand.self, SyncGitHub.self,
         ]
     )
 }
@@ -127,9 +127,9 @@ struct Show: AsyncParsableCommand {
 
 // MARK: - add
 
-/// Shared by Add and AddBatch: validate, build, save, mirror native tags, and
-/// audit one new task.
-private func createTask(store: Store, listName: String, title: String, tags: [String],
+/// Shared by Add, AddBatch, and sync-github: validate, build, save, mirror
+/// native tags, and audit one new task.
+func createTask(store: Store, listName: String, title: String, tags: [String],
                         notes: String?, due: String?, priority: PriorityArg?, url: String?,
                         recurrence: String?, mirrorNativeTags: Bool, auditCommand: String) throws -> TaskOut {
     for tag in tags { try Tags.validate(tag) }

@@ -42,7 +42,7 @@ top-level array nest it under a named key (`tasks`, `events`, `items`, …)
 because `structuredContent` must be an object. Free-form tools
 (`shortcut_run`, `run_log`) intentionally stay text-only.
 
-## Tools (48)
+## Tools (49)
 
 **Tasks** — `task_list`, `task_show`, `task_create`, `task_create_batch`,
 `task_update`, `task_complete`, `task_uncomplete`, `task_delete`. Tags
@@ -109,6 +109,11 @@ sends a one-line ntfy summary, `suggest: true` appends on-device model
 proposals), `suggest` (proactive proposals from calendar/birthdays/stale
 tasks/agent activity — {kind: task|event|drop, title, reason, due?};
 NOTHING is auto-created, apply accepted proposals via task_create).
+
+**GitHub** — `github_sync` (two-way issue sync via the gh CLI: assigned
+open issues → [github]-tagged tasks with URL dedupe, closed issues
+complete their reminders, `close_issues: true` closes issues for completed
+reminders; `dry_run` defaults TRUE from MCP).
 
 **Introspection** — `audit_log` (who did what, when, as whom), `doctor`
 (permission + config diagnostics).

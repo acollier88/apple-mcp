@@ -632,6 +632,25 @@ apple-tasks clipboard scan                   # clipboard text, if it changed
 Feed any of it to triage: the agent decides task/event/noise and files it
 with the source path as provenance. `doctor` reports the drop-folder path.
 
+## GitHub issue sync
+
+`apple-tasks sync-github --repo owner/repo` pulls issues assigned to you
+into a plan list via the authenticated `gh` CLI (no keys to manage):
+
+```bash
+apple-tasks sync-github --repo you/repo --dry-run          # see what would happen
+apple-tasks sync-github --repo you/repo --list "Code Tasks" -t claude -t auto
+apple-tasks sync-github --repo you/repo --close-issues     # opt-in outbound closes
+```
+
+Created tasks are `[github]`-tagged (plus your `-t` extras — add
+`[claude][auto]` and the dispatcher picks them up), carry the issue URL as
+the native URL field (also the dedupe key — rerunning never duplicates),
+and keep `github:owner/repo#N` + the issue body in notes. Two-way status:
+an issue closed on GitHub completes its reminder; a completed reminder
+closes its issue **only** with `--close-issues` (outbound writes to a
+shared tracker are opt-in). MCP: `github_sync` (dry-run by default).
+
 ## Topic watches & web fetch
 
 Standing monitors over the open web — the same watermarked-scan primitive
