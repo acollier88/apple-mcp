@@ -833,6 +833,36 @@ server.registerTool(
 );
 
 server.registerTool(
+  "clipboard_scan",
+  {
+    description:
+      "Emit the clipboard's text if it changed since the last scan (changeCount watermark). At most one " +
+      "clipping per call — the pasteboard has no history. Password-manager/transient clippings are never " +
+      "surfaced, and the first call only records a baseline. Feed hits to triage like any capture channel.",
+    inputSchema: {
+      max_chars: z.number().int().optional().describe("Truncate the clipping (default 4000)."),
+    },
+    // ClippingOut (Sources/AppleTasks/Clipboard.swift)
+    outputSchema: {
+      clippings: z.array(z.object({
+        ts: z.string(),
+        content: z.string(),
+        truncated: z.boolean(),
+      })),
+    },
+  },
+  async ({ max_chars }) => {
+    const args = ["clipboard", "scan"];
+    if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+    try {
+      return okJson(await cli(args), "clippings");
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
   "mail_draft",
   {
     description:

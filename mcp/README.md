@@ -42,7 +42,7 @@ top-level array nest it under a named key (`tasks`, `events`, `items`, …)
 because `structuredContent` must be an object. Free-form tools
 (`shortcut_run`, `run_log`) intentionally stay text-only.
 
-## Tools (46)
+## Tools (47)
 
 **Tasks** — `task_list`, `task_show`, `task_create`, `task_create_batch`,
 `task_update`, `task_complete`, `task_uncomplete`, `task_delete`. Tags
@@ -67,7 +67,9 @@ exists** — the human reviews and sends).
 **Capture scans** (all watermarked; feed the output to triage) —
 `screenshots_scan` (on-device Vision OCR), `files_scan` (text dropped in
 an iCloud inbox folder), `audio_scan` (on-device Speech transcription),
-`readinglist_scan` (Safari Reading List; needs Full Disk Access).
+`readinglist_scan` (Safari Reading List; needs Full Disk Access),
+`clipboard_scan` (clipboard text if changed since last call; concealed/
+transient clippings never surfaced, first call records a baseline only).
 
 **Topic watches** (IDEAS #38) — `watch_scan` fetches due RSS/page watches
 from `~/.config/apple-tasks/watches.json` and emits only new items;

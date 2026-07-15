@@ -1052,7 +1052,7 @@ watermark. Verified live: migration preserved all keys byte-for-byte
 (watchState included), file mtime untouched, and a subsequent
 `screenshots scan` advanced the DB row while the file stayed frozen.
 
-## 45. Clipboard watcher capture — TODO (cheap channel, phone-parity habit)
+## 45. Clipboard watcher capture — ✅ DONE 2026-07-15 (cheap channel, phone-parity habit)
 
 `apple-tasks clipboard scan`: poll NSPasteboard changeCount on a timer (or
 per dispatch pass), emit new text clippings {ts, content} through the same
@@ -1061,6 +1061,16 @@ for text. Caveats: noisy channel — require opt-in run (no launchd by
 default), redact obvious secrets (password-manager pasteboard types mark
 themselves via org.nspasteboard.ConcealedType — skip those), never audit-log
 clipboard bodies.
+
+Shipped (Clipboard.swift): `clipboard scan [--max-chars]` + MCP
+`clipboard_scan` (47 tools). changeCount watermark in ScanState (now
+DB-backed via #44); at most one clipping per call since NSPasteboard has no
+history. Privacy rails beyond the sketch: the FIRST run only records a
+baseline (whatever was already copied — possibly a secret — never surfaces),
+Concealed AND Transient marker types are skipped, and a skipped clipping
+still advances the watermark so it can't resurface. Verified live: baseline,
+new-clipping emit, unchanged dedupe, concealed skip (JXA-planted
+ConcealedType), --max-chars truncation.
 
 ## 46. Reminders attachments support — TODO (Agent Vision/File Context)
 

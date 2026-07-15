@@ -509,7 +509,7 @@ line. Smoke-test without waiting for mail:
 osascript "$HOME/Library/Application Scripts/com.apple.mail/apple-tasks-capture.scpt"
 ```
 
-## Capture channels (screenshots, drop-folder, voice notes, Reading List)
+## Capture channels (screenshots, drop-folder, voice notes, Reading List, clipboard)
 
 More front doors into the inbox, all watermarked like `notes scan` (the
 stored watermark auto-advances; `--since` overrides statelessly):
@@ -521,6 +521,7 @@ apple-tasks files scan                       # .txt/.md in iCloud Drive/AgentInb
 apple-tasks files scan --archive             # + move processed files to done/
 apple-tasks audio scan                       # transcribe voice notes in the inbox folder
 apple-tasks reading-list scan                # new Safari Reading List saves
+apple-tasks clipboard scan                   # clipboard text, if it changed
 ```
 
 - **`screenshots scan`** turns the "screenshot it to deal with later" habit
@@ -544,6 +545,14 @@ apple-tasks reading-list scan                # new Safari Reading List saves
   into `[read]` tasks. Read-only over `Bookmarks.plist`; the host process
   needs Full Disk Access (`doctor` reports the grant, `--path` overrides for
   testing).
+- **`clipboard scan`** makes "copy it to deal with later" a channel: emits
+  the clipboard's text as `{ts, content, truncated}` if the pasteboard
+  changed since the last scan (at most one clipping per call — there is no
+  clipboard history). Privacy rails: password-manager/transient clippings
+  (`org.nspasteboard.ConcealedType`) are never surfaced, the first run only
+  records a baseline so pre-existing clipboard contents can't leak, and
+  clippings are never audit-logged. Deliberately opt-in per run — call it
+  from a loop you control, no daemon ships.
 
 Feed any of it to triage: the agent decides task/event/noise and files it
 with the source path as provenance. `doctor` reports the drop-folder path.

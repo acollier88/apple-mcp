@@ -137,6 +137,8 @@ struct ScanState: Codable {
     var readingListScanWatermark: String?
     /// Per-watch scan state (IDEAS #38), keyed by watch name.
     var watchState: [String: WatchRecord]?
+    /// NSPasteboard.changeCount at the last clipboard scan (IDEAS #45).
+    var clipboardChangeCount: Int?
 
     static let dbKey = "scan_state"
 
