@@ -140,8 +140,44 @@ struct AgentsConfig: Codable {
     apple-tasks update {id} --url "<link>"
     then mark it done by running:
     apple-tasks complete {id}
-    and remove the dispatched marker: apple-tasks update {id} --remove-tag dispatched
+    and remove the dispatched marker: apple-tasks update {id} --remove-tag {claimTag}
     """
+}
+
+// IDEAS #13: multi-Mac claim protocol. Tasks sync via iCloud but each Mac
+// has its own ledger, so the human-visible claim tags are hostname-scoped
+// ([dispatched:mbp]) and a dispatcher only reaps/retries its OWN claims —
+// another Mac's [dispatched:x]/[failed:x] is respected as theirs. Bare
+// legacy [dispatched]/[failed] tags are treated as this machine's.
+enum ClaimTags {
+    static let host: String = {
+        var buf = [CChar](repeating: 0, count: 256)
+        gethostname(&buf, buf.count)
+        let raw = String(cString: buf)
+        let label = raw.split(separator: ".").first.map(String.init) ?? raw
+        let cleaned = label.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        return cleaned.isEmpty ? "mac" : cleaned
+    }()
+
+    static var dispatched: String { "dispatched:\(host)" }
+    static var failed: String { "failed:\(host)" }
+
+    static func isDispatched(_ tag: String) -> Bool {
+        let l = tag.lowercased()
+        return l == "dispatched" || l.hasPrefix("dispatched:")
+    }
+
+    static func isFailed(_ tag: String) -> Bool {
+        let l = tag.lowercased()
+        return l == "failed" || l.hasPrefix("failed:")
+    }
+
+    /// This machine's claim: hostname-scoped or bare legacy.
+    static func isOwn(_ tag: String) -> Bool {
+        let l = tag.lowercased()
+        return l == "dispatched" || l == "failed"
+            || l == "dispatched:\(host)" || l == "failed:\(host)"
+    }
 }
 
 struct Dispatch: AsyncParsableCommand {
@@ -311,7 +347,8 @@ struct Dispatch: AsyncParsableCommand {
                   let agent = config.agents[agentTag] else { continue }
             if let onlyAgent, agentTag != onlyAgent.lowercased() { continue }
             if requireAuto && !lowerTags.contains("auto") { continue }
-            if lowerTags.contains("dispatched") { continue }
+            // Any Mac's claim blocks re-dispatch (IDEAS #13).
+            if parsed.tags.contains(where: ClaimTags.isDispatched) { continue }
 
             // Not due yet: stays queued until its due time. This is what
             // makes recurrence useful for agent work (IDEAS #36) — completing
@@ -331,7 +368,10 @@ struct Dispatch: AsyncParsableCommand {
             }
 
             var retryAttempt: Int?
-            if lowerTags.contains("failed") {
+            if let failedTag = parsed.tags.first(where: ClaimTags.isFailed) {
+                // Another Mac's failure is its claim to retry (IDEAS #13) —
+                // this ledger has no attempt history for it anyway.
+                guard ClaimTags.isOwn(failedTag) else { continue }
                 let maxRetries = config.maxRetries ?? 0
                 guard maxRetries > 0 else { continue }
                 let (attempts, lastFailure) = AuditDB.shared.failedAttempts(taskId: taskId)
@@ -371,6 +411,7 @@ struct Dispatch: AsyncParsableCommand {
                 .replacingOccurrences(of: "{list}", with: reminder.calendar?.title ?? "")
                 .replacingOccurrences(of: "{title}", with: parsed.title)
                 .replacingOccurrences(of: "{notes}", with: reminder.notes ?? "(none)")
+                .replacingOccurrences(of: "{claimTag}", with: ClaimTags.dispatched)
             if agent.worktree == true {
                 prompt += "\nYou are in a dedicated git worktree on your own branch. " +
                     "Commit your work to the current branch; do not switch branches."
@@ -401,8 +442,8 @@ struct Dispatch: AsyncParsableCommand {
             // Mark dispatched (visible everywhere via tag + native mirror);
             // a retry sheds its [failed] tag here. Written after the claim so
             // a crash between the two can't strand the tag with no ledger row.
-            var tags = parsed.tags.filter { $0.lowercased() != "failed" }
-            tags.append("dispatched")
+            var tags = parsed.tags.filter { !ClaimTags.isFailed($0) }
+            tags.append(ClaimTags.dispatched)
             reminder.title = Tags.compose(tags: tags, title: parsed.title)
             do {
                 try store.save(reminder)
@@ -410,7 +451,7 @@ struct Dispatch: AsyncParsableCommand {
                 AuditDB.shared.finishDispatch(id: ledgerId, status: "aborted", exitCode: -1)
                 throw error
             }
-            _ = NativeTags.mirror(tags: ["dispatched"], externalId: reminder.calendarItemExternalIdentifier)
+            _ = NativeTags.mirror(tags: [ClaimTags.dispatched], externalId: reminder.calendarItemExternalIdentifier)
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
                                   taskId: taskId, list: reminder.calendar?.title,
                                   detail: "\(agentTag): \(parsed.title)"
@@ -607,18 +648,19 @@ struct Dispatch: AsyncParsableCommand {
         try? store.save(current)
     }
 
-    /// Swap [dispatched] for [failed] on the task, re-fetching first because
-    /// the agent may have edited it meanwhile.
+    /// Swap this Mac's [dispatched] claim for its [failed] tag, re-fetching
+    /// first because the agent may have edited it meanwhile. Another Mac's
+    /// claim tags are never touched (IDEAS #13).
     private func markFailed(store: Store, taskId: String) async {
         guard let current = try? await store.reminder(id: taskId) else { return }
         var (tags, title) = Tags.parse(current.title ?? "")
-        tags.removeAll { $0.lowercased() == "dispatched" }
-        if !tags.contains(where: { $0.lowercased() == "failed" }) {
-            tags.append("failed")
+        tags.removeAll { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
+        if !tags.contains(where: { ClaimTags.isFailed($0) && ClaimTags.isOwn($0) }) {
+            tags.append(ClaimTags.failed)
         }
         current.title = Tags.compose(tags: tags, title: title)
         try? store.save(current)
-        _ = NativeTags.mirror(tags: ["failed"], externalId: current.calendarItemExternalIdentifier)
+        _ = NativeTags.mirror(tags: [ClaimTags.failed], externalId: current.calendarItemExternalIdentifier)
     }
 
     private static func gitOutput(_ args: [String], repo: String) -> String? {

@@ -382,13 +382,29 @@ finding: `using terms from application "Mail"` fails to compile on macOS
 event/class codes («event emalcpma», sndr/subj/meid) instead; add to the
 §32 watch list.
 
-## 13. Multi-Mac claim protocol — KNOWN LIMITATION / TODO
+## 13. Multi-Mac claim protocol — ✅ DONE 2026-07-15
 
 The dispatch ledger is per-machine but tasks sync via iCloud: two Macs running
 dispatchers would double-run a task ([dispatched] tag helps but races over
 sync lag). Fix: claim tag includes hostname ([dispatched:mbp]) and dispatchers
 only reap/retry their own claims; or designate one dispatch machine via
 config. Note in README if a second Mac ever runs the dispatcher.
+
+Shipped (ClaimTags in Dispatch.swift): claim tags are hostname-scoped —
+[dispatched:andrews-mac-mini] / [failed:<host>] (gethostname first label,
+lowercased, tag-safe chars only). Any Mac's dispatched-family tag blocks
+re-dispatch; retries and markFailed only touch THIS machine's claims
+(another Mac's [failed:x] is its claim to retry — our ledger has no attempt
+history for it anyway); bare legacy [dispatched]/[failed] tags are treated
+as this machine's. The default prompt template's remove-tag line renders
+the actual claim tag via a {claimTag} placeholder, and recurrence rollover
+(`complete`) sheds ALL hosts' lifecycle tags since the fresh occurrence is
+fresh work. Verified live: scoped claim written + rendered into the prompt,
+foreign dispatched/failed tags skipped, legacy [failed] retried and
+re-claimed under the scoped tag. Note: the sync-lag race window between two
+Macs' EventKit views technically remains (tags ARE the cross-machine
+signal; there is no shared lock) — hostname scoping makes claims attributable
+and reap/retry safe, which is the practical fix short of a shared ledger.
 
 ## 14. CoreLocation "whereami" — ✅ BUILT 2026-06-10
 

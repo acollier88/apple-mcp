@@ -413,9 +413,12 @@ struct Complete: AsyncParsableCommand {
         var out: TaskOut
         if !reminder.isCompleted, reminder.hasRecurrenceRules {
             let parsed = Tags.parse(reminder.title ?? "")
-            let lifecycle = Set(["dispatched", "failed"])
-            if parsed.tags.contains(where: { lifecycle.contains($0.lowercased()) }) {
-                let tags = parsed.tags.filter { !lifecycle.contains($0.lowercased()) }
+            // Any host's claim tags ([dispatched]/[dispatched:mbp]/[failed:x])
+            // are shed — the rolled occurrence is fresh work for whoever
+            // picks it up next (IDEAS #13).
+            let isLifecycle = { ClaimTags.isDispatched($0) || ClaimTags.isFailed($0) }
+            if parsed.tags.contains(where: isLifecycle) {
+                let tags = parsed.tags.filter { !isLifecycle($0) }
                 reminder.title = Tags.compose(tags: tags, title: parsed.title)
                 try store.save(reminder)
             }

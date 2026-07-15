@@ -286,7 +286,13 @@ containing the task details and self-complete instructions. Config at
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Dedupe is enforced by both the dispatch ledger and the
-`[dispatched]`/`[failed]` tags. Tasks with a **future due date stay queued
+claim tags, which are **hostname-scoped** (`[dispatched:mbp]`,
+`[failed:mbp]`) so two Macs syncing the same Reminders can each run a
+dispatcher: any Mac's claim blocks re-dispatch, but a dispatcher only
+reaps/retries its *own* claims (bare legacy `[dispatched]`/`[failed]`
+tags count as its own). The ledger stays per-machine, so iCloud sync lag
+is still the only claim channel between Macs — prefer giving each agent
+tag a single home Mac for truly contested queues. Tasks with a **future due date stay queued
 until due** (dry-run reports them as "scheduled") — on an agent task, a due
 date means "run at", not "by". That plus recurrence is the scheduled-routine
 pattern: a `[claude][auto]` reminder due Monday 7am with
