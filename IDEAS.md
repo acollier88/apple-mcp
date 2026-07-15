@@ -1128,11 +1128,27 @@ Extend `apple-tasks` to support reading and writing attachments (`EKAttachment`)
 - **Why**: Currently, agents only get text. If the user attaches an image (e.g. a screenshot of a bug) or a PDF/text file to a reminder, the agent should be able to download and parse it.
 - **Implementation**: Parse the attachment data in `apple-tasks` and save it to a temporary directory in the agent's workdir during dispatch, passing the file path in the agent prompt.
 
-## 47. Subtask dependency modeling in the dispatcher — TODO (Checklist Swarms)
+## 47. Subtask dependency modeling in the dispatcher — ✅ DONE 2026-07-15 (Checklist Swarms)
 
 Model complex task workflows natively using parent-child reminder relationships in [Dispatch.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift).
 - **Why**: If a parent task contains subtasks, the dispatcher shouldn't execute the parent task until all subtasks (which may be assigned to different agents) are completed.
 - **Implementation**: Before claiming/dispatching a task, check the status of its children in EventKit. Run children in sequence or in parallel according to their agent tags, and block the parent task until all subtasks resolve.
+
+Shipped. EventKit exposes NO parent/child relation, so the read went
+through the private helper: new read-only `{"parentsOf": [extIds]}` op
+returns extId → parent extId|null via `REMReminder.parentReminderID`
+(probed live 2026-07-15; the property is @dynamic, so the `--check` probe
+uses class_getProperty — instancesRespondToSelector is false before runtime
+resolution — and the read goes through KVC; `--check` now reports
+`subtaskRead`). Dispatcher: ONE lazy helper call per pass builds
+open-subtask counts per parent; a parent with open subtasks reports
+"gated: N open subtasks — stays queued" (same never-tagged semantics as
+context gates) while subtasks dispatch on their own agent tags. Helper
+missing/failed = no info, gate doesn't fire (dispatch proceeds as before).
+Verified live: parent gated with open child, child dispatchable, completing
+the child unblocked the parent next pass. Side findings: completing a
+subtask archives it out of EventKit view like recurring occurrences, and
+deleting a parent cascade-deletes its subtasks.
 
 ## 48. User-activity and app-focus gating — ✅ DONE 2026-07-15 (Polite background execution)
 

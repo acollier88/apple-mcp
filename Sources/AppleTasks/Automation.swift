@@ -90,6 +90,37 @@ enum NativeTags {
             externalId: externalId, what: "subtask detach")
     }
 
+    /// IDEAS #47: map each externalId to its parent reminder's externalId
+    /// (nil value = top-level) via the private helper's read-only parentsOf
+    /// op. Returns nil when the helper is missing or fails — dependency
+    /// gating then degrades to "no info" and dispatch proceeds.
+    static func parents(externalIds: [String]) -> [String: String?]? {
+        guard let helper = helperURL, !externalIds.isEmpty else { return nil }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: ["parentsOf": externalIds])
+            let process = Process()
+            process.executableURL = helper
+            let stdin = Pipe()
+            let stdout = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = stdout
+            process.standardError = Pipe()
+            try process.run()
+            stdin.fileHandleForWriting.write(data)
+            stdin.fileHandleForWriting.closeFile()
+            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let obj = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+                  let parents = obj["parents"] as? [String: Any] else { return nil }
+            var result: [String: String?] = [:]
+            for (key, value) in parents { result[key] = value as? String }
+            return result
+        } catch {
+            return nil
+        }
+    }
+
     /// Shared helper invocation: JSON payload on stdin, exit 0 = success.
     private static func run(_ payload: [String: Any], externalId: String?, what: String) -> Bool? {
         guard let helper = helperURL else { return nil }

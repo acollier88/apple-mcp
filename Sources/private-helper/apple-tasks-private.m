@@ -12,6 +12,10 @@
 //   Subtask (IDEAS #26): make externalId a subtask of a parent, or detach it:
 //     {"externalId": "<child>", "parent": "<parent externalId>"}
 //     {"externalId": "<child>", "clearParent": true}
+// Read-only (IDEAS #47) — parent lookup, exclusive of the ops above:
+//     {"parentsOf": ["<ext1>", "<ext2>", ...]}
+//   -> {"ok":true,"parents":{"<ext1>":"<parentExt>"|null, ...}} (null = top-level;
+//      ids that fail to fetch are omitted)
 // Success: {"ok":true,"tagged":N,"parent":"set|cleared"} on stdout (fields
 // present only for operations performed). Failure: {"error":"..."} on stderr, exit 1.
 //
@@ -21,6 +25,7 @@
 // mirrored (the reminder->section reference is unproven); subtasks are.
 
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 #include <dlfcn.h>
 
 @interface REMObjectID : NSObject
@@ -41,6 +46,14 @@
 - (id)hashtagContext;
 - (id)subtaskContext;
 - (void)removeFromParentReminder;
+@end
+
+@interface REMReminder : NSObject
+- (id)parentReminderID; // REMObjectID, readonly (probed 2026-07-15)
+@end
+
+@interface REMObjectIDReadable : NSObject
+- (NSUUID *)uuid;
 @end
 
 @interface REMReminderHashtagContextChangeItem : NSObject
@@ -92,7 +105,14 @@ int main(int argc, const char *argv[]) {
             Class subtaskClass = NSClassFromString(@"REMReminderSubtaskContextChangeItem");
             subtasks = subtasks && subtaskClass
                 && [subtaskClass instancesRespondToSelector:@selector(addReminderChangeItem:)];
-            printf("{\"ok\":true,\"mode\":\"check\",\"subtasks\":%s}\n", subtasks ? "true" : "false");
+            // Read side (IDEAS #47): parent lookup for dependency gating.
+            // parentReminderID is @dynamic, so probe the property table —
+            // instancesRespondToSelector is false before runtime resolution.
+            Class reminderClass = NSClassFromString(@"REMReminder");
+            BOOL subtaskRead = reminderClass
+                && class_getProperty(reminderClass, "parentReminderID") != NULL;
+            printf("{\"ok\":true,\"mode\":\"check\",\"subtasks\":%s,\"subtaskRead\":%s}\n",
+                   subtasks ? "true" : "false", subtaskRead ? "true" : "false");
             return 0;
         }
 
@@ -100,6 +120,46 @@ int main(int argc, const char *argv[]) {
         NSError *error = nil;
         NSDictionary *cmd = [NSJSONSerialization JSONObjectWithData:input options:0 error:&error];
         if (![cmd isKindOfClass:[NSDictionary class]]) failJSON(@"stdin must be a JSON object");
+
+        // Read-only parent lookup (IDEAS #47): exclusive op, exits here.
+        NSArray *parentsOf = cmd[@"parentsOf"];
+        if ([parentsOf isKindOfClass:[NSArray class]]) {
+            Class objectIDClass = requireClass(@"REMObjectID");
+            Class storeClass = requireClass(@"REMStore");
+            if (![objectIDClass respondsToSelector:@selector(objectIDWithURL:)]) failJSON(@"REMObjectID.objectIDWithURL: missing");
+            REMStore *store = (REMStore *)[storeClass new];
+            if (![store respondsToSelector:@selector(fetchReminderWithObjectID:error:)]) failJSON(@"REMStore.fetchReminderWithObjectID:error: missing");
+
+            NSMutableDictionary *parents = [NSMutableDictionary dictionary];
+            for (id ext in parentsOf) {
+                if (![ext isKindOfClass:[NSString class]] || [ext length] == 0) continue;
+                NSString *urlString = [NSString stringWithFormat:@"x-apple-reminderkit://REMCDReminder/%@", ext];
+                id oid = [(Class)objectIDClass objectIDWithURL:[NSURL URLWithString:urlString]];
+                if (!oid) continue;
+                NSError *fetchError = nil;
+                REMReminder *reminder = [store fetchReminderWithObjectID:oid error:&fetchError];
+                if (!reminder) continue; // omitted = unknown to ReminderKit
+                // parentReminderID is @dynamic — go through KVC, which
+                // resolves dynamic accessors; a missing key means the read
+                // API changed on this macOS.
+                id parentID = nil;
+                @try {
+                    parentID = [reminder valueForKey:@"parentReminderID"];
+                } @catch (NSException *e) {
+                    failJSON(@"REMReminder.parentReminderID missing (subtask read API changed)");
+                }
+                if (parentID && [parentID respondsToSelector:@selector(uuid)]) {
+                    parents[ext] = [[(REMObjectIDReadable *)parentID uuid] UUIDString] ?: (id)[NSNull null];
+                } else {
+                    parents[ext] = [NSNull null];
+                }
+            }
+            NSDictionary *result = @{ @"ok": @YES, @"parents": parents };
+            NSData *out = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            fwrite(out.bytes, 1, out.length, stdout);
+            fputc('\n', stdout);
+            return 0;
+        }
 
         NSString *externalId = cmd[@"externalId"];
         NSArray *tags = cmd[@"tags"];

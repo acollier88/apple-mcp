@@ -338,6 +338,24 @@ struct Dispatch: AsyncParsableCommand {
         var specsPerAgent: [String: Int] = [:]
         let gates = GateContext() // probes cached across candidates this pass
 
+        // IDEAS #47: open-subtask counts per parent externalId, via ONE
+        // private-helper call, computed lazily when the first candidate
+        // reaches the dependency gate. nil helper/failure = no info, and
+        // the gate simply doesn't fire.
+        var openChildren: [String: Int]?
+        func openSubtaskCount(_ externalId: String?) -> Int {
+            guard let externalId else { return 0 }
+            if openChildren == nil {
+                var counts: [String: Int] = [:]
+                let openIds = reminders.compactMap { $0.calendarItemExternalIdentifier }
+                if let parents = NativeTags.parents(externalIds: openIds) {
+                    for case let parent?? in parents.values { counts[parent, default: 0] += 1 }
+                }
+                openChildren = counts
+            }
+            return openChildren?[externalId] ?? 0
+        }
+
         for reminder in reminders {
             let parsed = Tags.parse(reminder.title ?? "")
             let lowerTags = Set(parsed.tags.map { $0.lowercased() })
@@ -397,6 +415,18 @@ struct Dispatch: AsyncParsableCommand {
                let reason = await gates.gateReason(conditions, config: config) {
                 reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
                                               cwd: nil, action: "gated: \(reason) — stays queued",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            }
+
+            // Subtask dependency gate (IDEAS #47): a parent stays queued
+            // until every open subtask completes — subtasks dispatch on
+            // their own agent tags like any other task.
+            let subtasksOpen = openSubtaskCount(reminder.calendarItemExternalIdentifier)
+            if subtasksOpen > 0 {
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                              cwd: nil,
+                                              action: "gated: \(subtasksOpen) open subtask\(subtasksOpen == 1 ? "" : "s") — stays queued",
                                               exitCode: nil, runLog: nil, worktree: nil))
                 continue
             }

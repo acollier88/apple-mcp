@@ -322,6 +322,13 @@ the design):
   reconsidered next pass. All reads, no new permissions. Use cases: heavy
   agents only on AC, personal repos only at home, nothing heavy while the
   machine is busy, while you're presenting or on a call, or at 2am.
+- **Subtask dependencies** — a parent task with open native subtasks
+  (`update <child> --parent <parent>`) stays queued until every subtask
+  completes; subtasks dispatch on their own agent tags. Plan shape: parent
+  `[claude][auto] Ship feature X` with per-step subtasks, possibly assigned
+  to different agents — the parent runs last, as the integrator. Read via
+  the private helper (one call per pass); if the helper is unavailable the
+  gate simply doesn't fire.
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is
