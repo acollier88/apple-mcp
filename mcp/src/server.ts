@@ -124,6 +124,14 @@ const calendarShape = { id: z.string(), name: z.string(), writable: z.boolean() 
 // `delete` / `events delete` emit {"deleted": <id>}.
 const deletedShape = { deleted: z.string().describe("Id of the deleted item.") };
 
+// SuggestionOut (Sources/AppleTasks/Suggest.swift)
+const suggestionSchema = z.object({
+  kind: z.enum(["task", "event", "drop"]),
+  title: z.string(),
+  reason: z.string().describe("Why this is worth raising, citing the signal."),
+  due: z.string().optional(),
+});
+
 const server = new McpServer({ name: "apple-tasks", version: "0.1.0" });
 
 server.registerTool(
@@ -647,6 +655,7 @@ server.registerTool(
       note: z.boolean().optional().describe("Write the digest as a new Apple Note."),
       note_folder: z.string().optional().describe("Notes folder for the digest note."),
       push: z.boolean().optional().describe("Send a short summary to the configured ntfy topic."),
+      suggest: z.boolean().optional().describe("Append on-device model proposals (never auto-created)."),
     },
     // DigestOut (Sources/AppleTasks/Digest.swift)
     outputSchema: {
@@ -665,16 +674,59 @@ server.registerTool(
       events: z.array(eventSchema),
       noteCreated: z.string().optional().describe("Created note id when note: true."),
       pushed: z.boolean().optional().describe("Whether the ntfy push succeeded when push: true."),
+      suggestions: z.array(suggestionSchema).optional().describe("suggest: true only — proposals, never applied."),
+      suggestError: z.string().optional().describe("suggest: true only — why proposals were unavailable."),
     },
   },
-  async ({ since, note, note_folder, push }) => {
+  async ({ since, note, note_folder, push, suggest }) => {
     const args = ["digest"];
     if (since) args.push("--since", since);
     if (note) args.push("--note");
     if (note_folder) args.push("--note-folder", note_folder);
     if (push) args.push("--push");
+    if (suggest) args.push("--suggest");
     try {
-      return okJson(await cli(args, 60_000));
+      return okJson(await cli(args, suggest ? 180_000 : 60_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "suggest",
+  {
+    description:
+      "Proactive suggestions from the on-device model: reviews the next week's calendar, upcoming " +
+      "birthdays, stale tasks, and recent agent activity, and PROPOSES tasks/events/drops. Nothing is " +
+      "ever created — apply accepted proposals yourself via task_create/event_create.",
+    inputSchema: {
+      days: z.number().int().optional().describe("Calendar look-ahead in days (default 7)."),
+      stale_weeks: z.number().int().optional().describe("Open [read]/claimed/overdue tasks older than this count as stale (default 4)."),
+      max: z.number().int().optional().describe("Suggestion cap (default 8)."),
+      no_contacts: z.boolean().optional().describe("Skip the birthday feed (no Contacts prompt)."),
+    },
+    // SuggestOut (Sources/AppleTasks/Suggest.swift)
+    outputSchema: {
+      generatedAt: z.string(),
+      inputs: z.object({
+        events: z.number().int(),
+        birthdays: z.number().int(),
+        staleTasks: z.number().int(),
+        auditActions: z.number().int(),
+        contactsNote: z.string().optional(),
+      }),
+      suggestions: z.array(suggestionSchema),
+    },
+  },
+  async ({ days, stale_weeks, max, no_contacts }) => {
+    const args = ["suggest"];
+    if (days !== undefined) args.push("--days", String(days));
+    if (stale_weeks !== undefined) args.push("--stale-weeks", String(stale_weeks));
+    if (max !== undefined) args.push("--max", String(max));
+    if (no_contacts) args.push("--no-contacts");
+    try {
+      return okJson(await cli(args, 180_000));
     } catch (err) {
       return fail(err);
     }

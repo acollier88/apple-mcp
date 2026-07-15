@@ -42,7 +42,7 @@ top-level array nest it under a named key (`tasks`, `events`, `items`, …)
 because `structuredContent` must be an object. Free-form tools
 (`shortcut_run`, `run_log`) intentionally stay text-only.
 
-## Tools (47)
+## Tools (48)
 
 **Tasks** — `task_list`, `task_show`, `task_create`, `task_create_batch`,
 `task_update`, `task_complete`, `task_uncomplete`, `task_delete`. Tags
@@ -101,7 +101,10 @@ repo README).
 **Triage & digest** — `triage_inbox` (classify + route untagged inbox
 items; dry-run by default), `digest` (agent activity + dispatch outcomes +
 due today + calendar; `note: true` writes an Apple Note, `push: true`
-sends a one-line ntfy summary).
+sends a one-line ntfy summary, `suggest: true` appends on-device model
+proposals), `suggest` (proactive proposals from calendar/birthdays/stale
+tasks/agent activity — {kind: task|event|drop, title, reason, due?};
+NOTHING is auto-created, apply accepted proposals via task_create).
 
 **Introspection** — `audit_log` (who did what, when, as whom), `doctor`
 (permission + config diagnostics).

@@ -61,6 +61,9 @@ struct DigestOut: Codable {
     let events: [EventOut]
     var noteCreated: String?
     var pushed: Bool?
+    /// --suggest only (IDEAS #41): proposals from the on-device model.
+    var suggestions: [SuggestionOut]?
+    var suggestError: String?
 
     struct DispatchLine: Codable {
         let id: Int
@@ -91,6 +94,9 @@ struct Digest: AsyncParsableCommand {
 
     @Flag(help: "Send a short summary to the configured ntfy topic (notify.json).")
     var push = false
+
+    @Flag(help: "Append proposals from the on-device model (IDEAS #41; never auto-created).")
+    var suggest = false
 
     func run() async throws {
         let sinceDate = try since.map { try Dates.parseDateTime($0).date }
@@ -128,6 +134,19 @@ struct Digest: AsyncParsableCommand {
                             dispatches: dispatches, auditActions: audit.count,
                             auditByCommand: byCommand, dueToday: dueToday, events: events,
                             noteCreated: nil, pushed: nil)
+
+        // Suggestions are best-effort: an unavailable model annotates the
+        // digest instead of failing the 7am run.
+        if suggest {
+            do {
+                try await store.requestEventAccess()
+                let (lines, _) = try await Suggest.gather(store: store, days: 7, staleWeeks: 4,
+                                                          includeContacts: true)
+                out.suggestions = try await SuggestClassifier.propose(context: lines, max: 8)
+            } catch {
+                out.suggestError = (error as? AppleTasksError)?.description ?? error.localizedDescription
+            }
+        }
 
         if note {
             let raw = try NotesCreate.create(title: Self.noteTitle(),
@@ -208,6 +227,19 @@ struct Digest: AsyncParsableCommand {
                 return "<li>\(HTML.escape(when)) — \(HTML.escape(e.title))"
                     + (e.location.map { " @ \(HTML.escape($0))" } ?? "") + "</li>"
             }.joined() + "</ul>")
+        }
+
+        if let suggestions = d.suggestions {
+            parts.append("<h2>Suggestions (\(suggestions.count))</h2>")
+            if suggestions.isEmpty {
+                parts.append("<p>Nothing to raise.</p>")
+            } else {
+                parts.append("<ul>" + suggestions.map { s in
+                    "<li><b>\(HTML.escape(s.kind))</b>: \(HTML.escape(s.title))"
+                        + (s.due.map { " (\(HTML.escape($0)))" } ?? "")
+                        + " — \(HTML.escape(s.reason))</li>"
+                }.joined() + "</ul>")
+            }
         }
 
         return parts.joined(separator: "\n")

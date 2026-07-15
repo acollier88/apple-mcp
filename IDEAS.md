@@ -1010,7 +1010,7 @@ approve check --wait → proceed only on approved) and uses the #13
 is none — read-only by default, approval button for everything else. No
 Swift/TS changes by design.
 
-## 41. Proactive suggestions pass — TODO (Spark proposes, we only react)
+## 41. Proactive suggestions pass — ✅ DONE 2026-07-15 (Spark proposes, we only react)
 
 `apple-tasks suggest`: feed calendar (next 7d), contacts birthdays, mail-scan
 headers, stale [read]/[dispatched] tasks, and audit-log activity to the local
@@ -1019,6 +1019,22 @@ a "Suggestions" section of the morning digest — never auto-create. Examples:
 "flight Thu, no calendar block for the drive," "Sarah's birthday in 3 days,"
 "this [read] task is 6 weeks stale — drop it?" Judgment in the model,
 application dry-run by default: same architecture rule as triage.
+
+Shipped (Suggest.swift): `suggest [--days 7] [--stale-weeks 4] [--max 8]
+[--no-contacts]` gathers events, birthdays within 14d (CNContactFetchRequest
+over birthday keys; feed degrades gracefully if Contacts is denied), stale
+open tasks ([read]/claim-tagged older than the cutoff, or long-overdue), and
+a 24h audit pulse (counts only, no bodies) → @Generable
+{kind: task|event|drop, title, reason, due?} via SystemLanguageModel.
+Nothing is ever created. `digest --suggest` appends the section best-effort
+(suggestError annotates instead of failing the unattended run). MCP tools:
+suggest + digest.suggest param (48 tools). mail-scan headers deliberately
+NOT fed in v1 (JXA latency dominates; revisit if wanted). Verified live:
+5 grounded proposals — today's birthday call, church travel block, dropping
+an 846-day-old overdue task, two this-week birthday gifts — each citing its
+signal line; prompt tuning note: the first "prefer empty over noise"
+instruction over-suppressed to zero suggestions, the shipped wording names
+the normally-worth-raising cases instead.
 
 ## 42. Google Workspace via official MCP servers — ✅ LANE DONE 2026-07-15; gmail scan capture feed still TODO (needs OAuth credentials — user setup)
 

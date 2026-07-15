@@ -665,6 +665,7 @@ tasks due today (with #19 URL linkbacks to PRs), and today's calendar.
 apple-tasks digest                # JSON to stdout
 apple-tasks digest --note         # + write it as a new Apple Note
 apple-tasks digest --note --push  # + one-line summary to your ntfy topic
+apple-tasks digest --suggest      # + a Suggestions section (see below)
 ```
 
 Schedule it for coffee time (cron/launchd):
@@ -678,6 +679,28 @@ overnight and what's on deck. Also exposed as the MCP `digest` tool, and as a
 Siri/Shortcuts intent in AgentTasks — *"Hey Siri, what did my agents do in
 AgentTasks?"* speaks the dispatch outcomes, action count, due tasks, and
 calendar load.
+
+## Proactive suggestions
+
+`apple-tasks suggest` reviews the week's signals — calendar look-ahead,
+upcoming contact birthdays, stale tasks (`[read]` saves, lingering claim
+tags, long-overdue items), and the last 24h of agent activity — with the
+on-device Foundation Models classifier, and **proposes** items:
+
+```bash
+apple-tasks suggest                       # {suggestions: [{kind, title, reason, due?}]}
+apple-tasks suggest --days 14 --max 5     # wider look-ahead, tighter cap
+apple-tasks digest --note --suggest       # proposals as a digest section
+```
+
+Kinds: `task` ("Stacy: birthday wish or call"), `event` (a travel block
+before a distant appointment), `drop` (an 846-day-old overdue task you're
+never doing). **Nothing is auto-created** — same architecture rule as
+triage: the model judges, application is a separate explicit act (yours, or
+an agent calling `task_create` on proposals you accept). Every suggestion
+carries a `reason` citing the signal line it came from. In the digest the
+section is best-effort: an unavailable model annotates the JSON
+(`suggestError`) instead of failing the 7am run. MCP: `suggest` tool.
 
 ## iOS Capture Shortcut
 
