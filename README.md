@@ -405,6 +405,36 @@ browser agent on the next pass. Safety posture, deliberately conservative:
 - Timeouts matter more here (pages hang); keep `timeoutMinutes` short and
   `maxConcurrent` at 1.
 
+### Dispatcher lanes: Google Workspace
+
+Same pattern for `[google]`-tagged tasks, using **Google's official managed
+MCP servers** (Gmail, Calendar, Drive, Chat, People — GA since May 2026;
+auth inherits your own Google permissions via OAuth on first use). Don't
+build a Google CLI sibling — Google is territorial about third-party
+Workspace tooling; wiring their own servers in keeps this personal-use and
+unbranded:
+
+```json
+"google": {
+  "command": ["claude", "-p", "{prompt}",
+              "--permission-mode", "acceptEdits",
+              "--mcp-config", "~/.config/apple-tasks/google-mcp.json"],
+  "timeoutMinutes": 15,
+  "maxConcurrent": 1
+}
+```
+
+with `google-mcp.json` pointing at the official remote servers (see
+Google's current MCP docs for the endpoint URLs — they're remote/HTTP
+servers, not local processes). Then `[google][auto] Add prep notes to
+today's meetings` — the `[gemini][calendar]` example this project started
+with — works with zero code. The same safety posture as the web lane
+applies: sending mail or modifying someone's calendar is transactional —
+route it through the approval protocol in your promptTemplate. A
+watermarked `gmail scan` capture feed (fixing the "Mail.app isn't syncing"
+hole) stays on the roadmap; it needs Gmail API OAuth credentials of its
+own, so it ships separately (IDEAS #42).
+
 ## Notifications & quiet hours
 
 `apple-tasks notify <title> <message> [--push]` shows a macOS banner;

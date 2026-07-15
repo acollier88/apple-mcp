@@ -1020,7 +1020,7 @@ a "Suggestions" section of the morning digest — never auto-create. Examples:
 "this [read] task is 6 weeks stale — drop it?" Judgment in the model,
 application dry-run by default: same architecture rule as triage.
 
-## 42. Google Workspace via official MCP servers — TODO (don't build google-mcp)
+## 42. Google Workspace via official MCP servers — ✅ LANE DONE 2026-07-15; gmail scan capture feed still TODO (needs OAuth credentials — user setup)
 
 Google ships managed remote MCP servers (GA rollout from 2026-05-01) for
 Gmail, Calendar, Drive, Chat, People — auth inherits the user's own
@@ -1040,6 +1040,15 @@ sibling; wire the official servers in:
   dispatched agent replies via official Gmail draft tool (pairs with #37).
 - Fallback if official servers are too locked down: taylorwilsdon/
   google_workspace_mcp (most complete unofficial one).
+
+Lane shipped as documentation (README "Dispatcher lanes: Google
+Workspace"): [google] agents.json template loading the official remote MCP
+servers via a separate google-mcp.json, approval-protocol posture for
+transactional actions, don't-build-google-mcp decision recorded. The
+`gmail scan` capture feed remains open: it needs the user to provision
+Gmail API OAuth credentials (client id + consent flow) before there is
+anything to build against — flagged to the user rather than shipping an
+untestable stub.
 
 ## 43. Quiet hours as a ContextGate time condition — ✅ DONE 2026-07-12 (qwen #5, reshaped)
 
