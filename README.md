@@ -68,6 +68,7 @@ apple-tasks list --list "Code Tasks" -t claude     # open tasks tagged claude
 apple-tasks list --status all                      # everything, everywhere
 apple-tasks list --overdue                         # due date has passed
 apple-tasks list --due-before 2026-07-12           # due before then (whole day incl.)
+apple-tasks list --search "MFA"                    # substring match over title + notes
 apple-tasks update <id> --add-tag backend --remove-tag repo2 --title "New title"
 apple-tasks update <child-id> --parent <parent-id>   # native subtask (private helper)
 apple-tasks complete <id>
@@ -78,6 +79,18 @@ apple-tasks show <id>
 
 All output is compact JSON. Errors go to stderr with exit code ≠ 0.
 Task ids accept either the local or sync-stable external identifier.
+
+`add-batch` creates many tasks in one call — a whole triage run's worth —
+from a JSON array on stdin (or `--file`). Each item is
+`{list, title, tags?, notes?, due?, priority?, url?, recurrence?}`; items
+fail independently, so the output separates `created` (full task JSON)
+from `failed` (index, title, error):
+
+```bash
+echo '[{"list":"Code Tasks","title":"Add MFA","tags":["claude","repo2"]},
+       {"list":"Code Tasks","title":"Rotate keys","due":"2026-07-20"}]' \
+  | apple-tasks add-batch
+```
 
 ### Recurrence
 
@@ -113,6 +126,7 @@ apple-tasks events add --start 2026-06-12 "Release day"   # date-only start = al
 apple-tasks events add --start "2026-07-01 09:00" --duration 30 \
     --recurrence "FREQ=MONTHLY;BYMONTHDAY=1" "Pay rent"   # same RRULE subset as tasks
 apple-tasks events update <id> --start "2026-06-11 13:00" --end "2026-06-11 14:30"
+apple-tasks events show <id>
 apple-tasks events delete <id>
 ```
 

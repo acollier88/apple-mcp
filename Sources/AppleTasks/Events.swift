@@ -5,7 +5,7 @@ import Foundation
 struct Events: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage Calendar events (same [tag] title convention as tasks).",
-        subcommands: [EventsList.self, EventsAdd.self, EventsUpdate.self, EventsDelete.self],
+        subcommands: [EventsList.self, EventsShow.self, EventsAdd.self, EventsUpdate.self, EventsDelete.self],
         defaultSubcommand: EventsList.self
     )
 }
@@ -47,6 +47,22 @@ struct EventsList: AsyncParsableCommand {
             events = events.filter { wanted.isSubset(of: $0.tags.map { $0.lowercased() }) }
         }
         emit(events)
+    }
+}
+
+struct EventsShow: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "show",
+        abstract: "Show a single event by id."
+    )
+
+    @Argument(help: "Event id.")
+    var id: String
+
+    func run() async throws {
+        let store = Store()
+        try await store.requestEventAccess()
+        emit(EventOut(try store.event(id: id)))
     }
 }
 

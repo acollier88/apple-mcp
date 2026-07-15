@@ -25,6 +25,22 @@ async function cli(args: string[], timeoutMs = 30_000): Promise<string> {
   }
 }
 
+/** Like cli(), but feeds `input` to the child's stdin (used by add-batch). */
+async function cliInput(args: string[], input: string, timeoutMs = 60_000): Promise<string> {
+  try {
+    const pending = execFileAsync(BIN, args, {
+      timeout: timeoutMs,
+      env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
+    });
+    pending.child.stdin?.end(input);
+    const { stdout } = await pending;
+    return stdout.trim();
+  } catch (err: any) {
+    const detail = err.stderr?.trim() || err.message;
+    throw new Error(detail);
+  }
+}
+
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
@@ -124,16 +140,18 @@ server.registerTool(
         .optional()
         .describe("Only tasks due before this date (yyyy-MM-dd inclusive of that day, 'yyyy-MM-dd HH:mm', or ISO8601). Undated tasks are excluded."),
       overdue: z.boolean().optional().describe("Only tasks whose due date has passed (excludes undated tasks)."),
+      search: z.string().optional().describe("Case-insensitive substring match over title and notes."),
     },
     outputSchema: { tasks: z.array(taskSchema) },
   },
-  async ({ list, tags, status, due_before, overdue }) => {
+  async ({ list, tags, status, due_before, overdue, search }) => {
     const args = ["list"];
     if (list) args.push("--list", list);
     for (const t of tags ?? []) args.push("--tag", t);
     if (status) args.push("--status", status);
     if (due_before) args.push("--due-before", due_before);
     if (overdue) args.push("--overdue");
+    if (search) args.push("--search", search);
     try {
       return okJson(await cli(args), "tasks");
     } catch (err) {
@@ -174,6 +192,49 @@ server.registerTool(
     args.push(title);
     try {
       return okJson(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "task_create_batch",
+  {
+    description:
+      "Create several tasks in one call (e.g. a whole triage run). Items are processed independently: " +
+      "failures are reported per-item under `failed` and never abort the rest of the batch.",
+    inputSchema: {
+      items: z
+        .array(
+          z.object({
+            list: z.string().describe("Reminders list name to create the task in (required)."),
+            title: z.string().describe("Task title, without tag prefix."),
+            tags: tagsField,
+            notes: z.string().optional(),
+            due: z.string().optional().describe("yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."),
+            priority: z.enum(["none", "low", "medium", "high"]).optional(),
+            url: z.string().optional().describe("URL to attach (PR/artifact links)."),
+            recurrence: z.string().optional().describe("Repeat rule, requires due. Same RRULE subset as task_create."),
+          })
+        )
+        .min(1)
+        .describe("Tasks to create, in order."),
+    },
+    outputSchema: {
+      created: z.array(taskSchema),
+      failed: z.array(
+        z.object({
+          index: z.number().int().describe("Index into the submitted items array."),
+          title: z.string(),
+          error: z.string(),
+        })
+      ),
+    },
+  },
+  async ({ items }) => {
+    try {
+      return okJson(await cliInput(["add-batch"], JSON.stringify(items)));
     } catch (err) {
       return fail(err);
     }
@@ -320,6 +381,22 @@ server.registerTool(
     if (to) args.push("--to", to);
     try {
       return okJson(await cli(args), "events");
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "event_show",
+  {
+    description: "Show a single Calendar event by id.",
+    inputSchema: { id: z.string().describe("Event id from event_list/event_create.") },
+    outputSchema: eventShape,
+  },
+  async ({ id }) => {
+    try {
+      return okJson(await cli(["events", "show", id]));
     } catch (err) {
       return fail(err);
     }

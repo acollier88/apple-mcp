@@ -9,7 +9,7 @@ struct AppleTasks: AsyncParsableCommand {
         abstract: "Manage Apple Reminders as agent tasks using a [tag] title-prefix convention.",
         version: "0.1.0",
         subcommands: [
-            ListTasks.self, Show.self, Add.self, Update.self,
+            ListTasks.self, Show.self, Add.self, AddBatch.self, Update.self,
             Complete.self, Uncomplete.self, Delete.self, Lists.self,
             Events.self, Calendars.self,
             Notes.self, Mail.self, ContactsCommand.self, Doctor.self,
@@ -53,6 +53,9 @@ struct ListTasks: AsyncParsableCommand {
     @Flag(help: "Only tasks whose due date has passed (excludes undated tasks).")
     var overdue = false
 
+    @Option(help: "Case-insensitive substring match over title and notes.")
+    var search: String?
+
     func run() async throws {
         let store = Store()
         try await store.requestAccess()
@@ -88,6 +91,12 @@ struct ListTasks: AsyncParsableCommand {
             let wanted = Set(tags.map { $0.lowercased() })
             tasks = tasks.filter { wanted.isSubset(of: $0.tags.map { $0.lowercased() }) }
         }
+        if let search {
+            tasks = tasks.filter {
+                $0.rawTitle.localizedCaseInsensitiveContains(search)
+                    || ($0.notes?.localizedCaseInsensitiveContains(search) ?? false)
+            }
+        }
         emit(tasks)
     }
 }
@@ -108,6 +117,36 @@ struct Show: AsyncParsableCommand {
 }
 
 // MARK: - add
+
+/// Shared by Add and AddBatch: validate, build, save, mirror native tags, and
+/// audit one new task.
+private func createTask(store: Store, listName: String, title: String, tags: [String],
+                        notes: String?, due: String?, priority: PriorityArg?, url: String?,
+                        recurrence: String?, mirrorNativeTags: Bool, auditCommand: String) throws -> TaskOut {
+    for tag in tags { try Tags.validate(tag) }
+
+    let reminder = EKReminder(eventStore: store.ek)
+    reminder.calendar = try store.calendar(named: listName)
+    reminder.title = Tags.compose(tags: tags, title: title)
+    reminder.notes = notes
+    if let url { reminder.url = URL(string: url) }
+    if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
+    if let recurrence {
+        guard due != nil else {
+            throw AppleTasksError.saveFailed("recurrence requires a due date (the first occurrence anchors the series)")
+        }
+        reminder.addRecurrenceRule(try Recurrence.parse(recurrence))
+    }
+    if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
+
+    try store.save(reminder)
+    var out = TaskOut(reminder)
+    if mirrorNativeTags {
+        out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
+    }
+    AuditDB.shared.record(command: auditCommand, taskId: out.id, list: out.list, detail: out.rawTitle)
+    return out
+}
 
 struct Add: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Create a task in a list, with tags.")
@@ -140,31 +179,97 @@ struct Add: AsyncParsableCommand {
     var title: String
 
     func run() async throws {
-        for tag in tags { try Tags.validate(tag) }
+        let store = Store()
+        try await store.requestAccess()
+        let out = try createTask(store: store, listName: listName, title: title, tags: tags,
+                                 notes: notes, due: due, priority: priority, url: url,
+                                 recurrence: recurrence, mirrorNativeTags: !noNativeTags,
+                                 auditCommand: "add")
+        emit(out)
+    }
+}
+
+// MARK: - add-batch
+
+struct AddBatch: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "add-batch",
+        abstract: "Create several tasks in one call from a JSON array (stdin or --file)."
+    )
+
+    @Option(name: .customLong("file"), help: "Read the JSON items array from this file instead of stdin.")
+    var file: String?
+
+    @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring tags to native Reminders tags.")
+    var noNativeTags = false
+
+    struct Item: Decodable {
+        let list: String
+        let title: String
+        let tags: [String]?
+        let notes: String?
+        let due: String?
+        let priority: String?
+        let url: String?
+        let recurrence: String?
+    }
+
+    struct FailureOut: Codable {
+        let index: Int
+        let title: String
+        let error: String
+    }
+
+    struct BatchOut: Codable {
+        let created: [TaskOut]
+        let failed: [FailureOut]
+    }
+
+    func run() async throws {
+        let data: Data
+        if let file {
+            do {
+                data = try Data(contentsOf: URL(fileURLWithPath: file))
+            } catch {
+                throw AppleTasksError.invalidInput("could not read '\(file)': \(error.localizedDescription)")
+            }
+        } else {
+            data = FileHandle.standardInput.readDataToEndOfFile()
+        }
+        let items: [Item]
+        do {
+            items = try JSONDecoder().decode([Item].self, from: data)
+        } catch {
+            throw AppleTasksError.invalidInput(
+                "expected a JSON array of {list, title, tags?, notes?, due?, priority?, url?, recurrence?}: \(error.localizedDescription)")
+        }
+
         let store = Store()
         try await store.requestAccess()
 
-        let reminder = EKReminder(eventStore: store.ek)
-        reminder.calendar = try store.calendar(named: listName)
-        reminder.title = Tags.compose(tags: tags, title: title)
-        reminder.notes = notes
-        if let url { reminder.url = URL(string: url) }
-        if let due { reminder.dueDateComponents = try Dates.parseDue(due) }
-        if let recurrence {
-            guard due != nil else {
-                throw AppleTasksError.saveFailed("--recurrence requires --due (the first occurrence anchors the series)")
+        // Per-item outcomes: one bad date must not sink the rest of the batch.
+        var created: [TaskOut] = []
+        var failed: [FailureOut] = []
+        for (index, item) in items.enumerated() {
+            do {
+                var priority: PriorityArg?
+                if let raw = item.priority {
+                    guard let parsed = PriorityArg(rawValue: raw) else {
+                        throw AppleTasksError.invalidInput("priority must be none|low|medium|high, got '\(raw)'")
+                    }
+                    priority = parsed
+                }
+                let out = try createTask(store: store, listName: item.list, title: item.title,
+                                         tags: item.tags ?? [], notes: item.notes, due: item.due,
+                                         priority: priority, url: item.url, recurrence: item.recurrence,
+                                         mirrorNativeTags: !noNativeTags, auditCommand: "add-batch")
+                created.append(out)
+            } catch {
+                let message = (error as? AppleTasksError)?.description ?? error.localizedDescription
+                failed.append(FailureOut(index: index, title: item.title, error: message))
             }
-            reminder.addRecurrenceRule(try Recurrence.parse(recurrence))
         }
-        if let priority { reminder.priority = Priority(rawValue: priority.rawValue)!.ekValue }
-
-        try store.save(reminder)
-        var out = TaskOut(reminder)
-        if !noNativeTags {
-            out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
-        }
-        AuditDB.shared.record(command: "add", taskId: out.id, list: out.list, detail: out.rawTitle)
-        emit(out)
+        emit(BatchOut(created: created, failed: failed))
     }
 }
 

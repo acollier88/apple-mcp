@@ -12,6 +12,7 @@ enum AppleTasksError: Error, CustomStringConvertible {
     case eventNotFound(String)
     case invalidDate(String)
     case invalidTag(String)
+    case invalidInput(String)
     case noSource
     case saveFailed(String)
     case automationFailed(String)
@@ -34,6 +35,8 @@ enum AppleTasksError: Error, CustomStringConvertible {
             return "Could not parse date '\(s)'. Use yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."
         case .invalidTag(let t):
             return "Invalid tag '\(t)'. Tags cannot contain spaces or brackets; use kebab-case (e.g. sign-in)."
+        case .invalidInput(let why):
+            return "Invalid input: \(why)"
         case .noSource:
             return "No writable Reminders source found to create a list in."
         case .saveFailed(let why):

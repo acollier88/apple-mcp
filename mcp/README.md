@@ -42,19 +42,22 @@ top-level array nest it under a named key (`tasks`, `events`, `items`, …)
 because `structuredContent` must be an object. Free-form tools
 (`shortcut_run`, `run_log`) intentionally stay text-only.
 
-## Tools (44)
+## Tools (46)
 
-**Tasks** — `task_list`, `task_show`, `task_create`, `task_update`,
-`task_complete`, `task_uncomplete`, `task_delete`. Tags become `[tag]`
-title prefixes; ids accept local or sync-stable external identifiers.
-`task_create`/`task_update` take a `recurrence` RRULE subset
-(`FREQ=WEEKLY;BYDAY=MO`); completing a recurring task rolls it to the next
-occurrence (`recurred: true`, still open, next due date).
+**Tasks** — `task_list`, `task_show`, `task_create`, `task_create_batch`,
+`task_update`, `task_complete`, `task_uncomplete`, `task_delete`. Tags
+become `[tag]` title prefixes; ids accept local or sync-stable external
+identifiers. `task_list` takes a `search` substring filter over title +
+notes. `task_create_batch` creates many tasks in one call (a whole triage
+run's worth); items fail independently and are reported under `failed`
+with their index. `task_create`/`task_update` take a `recurrence` RRULE
+subset (`FREQ=WEEKLY;BYDAY=MO`); completing a recurring task rolls it to
+the next occurrence (`recurred: true`, still open, next due date).
 
 **Plans** — `plan_list`, `plan_create` (a plan = a Reminders list).
 
-**Events** — `event_list`, `event_create` (also takes `recurrence`),
-`event_update`, `event_delete`, `calendar_list`.
+**Events** — `event_list`, `event_show`, `event_create` (also takes
+`recurrence`), `event_update`, `event_delete`, `calendar_list`.
 
 **Notes & Mail** — `notes_scan`, `mail_scan`, `mail_show` (read-only),
 `note_create` (new notes only — existing notes are never edited),

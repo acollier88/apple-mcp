@@ -856,10 +856,17 @@ unchanged text content. Top-level-array outputs nest under a named key
 tools (shortcut_run, notify, run_log, ...) deliberately stay text-only.
 Verified via stdio smoke test against real CLI output.
 
-Remaining (split out, was "while in there"): the small CRUD parity items
-(qwen #2/#3/#4): `event_show`, `task_create_batch` (every triage run pays
-the N-round-trips tax today), and `task_list --search <q>` (NSPredicate over
-title+notes). Swift work, unlike the schemas — do as its own pass.
+Remaining (split out, was "while in there") — ✅ DONE 2026-07-15: the small
+CRUD parity items (qwen #2/#3/#4). Shipped: `events show <id>` + MCP
+`event_show`; `add-batch` (JSON array via stdin or `--file`, items fail
+independently — output separates `created` from `failed` with index/title/
+error) + MCP `task_create_batch`, via a `createTask` helper shared with
+`add`; `list --search <q>` (case-insensitive substring over title+notes —
+plain Swift filter post-fetch, not NSPredicate, since reminders are already
+in memory) + MCP `task_list.search`. 46 tools. Verified live: batch with
+mixed good/bad items (bad date, bad list, bad priority), file + stdin +
+malformed-JSON paths, search over title and notes, event_show positive and
+unknown-id, MCP stdio smoke of all three.
 
 ## 36. Recurrence — ✅ DONE 2026-07-13 (qwen #1; motivating case = recurring AGENT work)
 
