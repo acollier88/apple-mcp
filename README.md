@@ -268,7 +268,8 @@ containing the task details and self-complete instructions. Config at
       "timeoutMinutes": 60,
       "maxConcurrent": 1,
       "conditions": { "location": "home", "power": "ac", "maxLoad": 8,
-                      "time": { "notBetween": ["22:00", "07:00"] } }
+                      "time": { "notBetween": ["22:00", "07:00"] },
+                      "idleMinutes": 15, "blockingApps": ["zoom.us", "Keynote"] }
     }
   },
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
@@ -307,11 +308,14 @@ the design):
 - **Context gates** (per-agent `conditions`: `location` — a named entry in
   `places`, checked against a whereami fix; `power` — `"ac"`/`"battery"` via
   pmset; `maxLoad` — 1-min load average cap; `time` — a quiet-hours window
-  `{"notBetween": ["22:00", "07:00"]}`, local time, wrapping midnight) — a
+  `{"notBetween": ["22:00", "07:00"]}`, local time, wrapping midnight;
+  `idleMinutes` — user must have been away from keyboard/mouse at least this
+  long; `blockingApps` — hold while any listed app is running, matched by
+  bundle id or app name, case-insensitive) — a
   task failing a gate stays queued untouched (no claim, no `[failed]`) and is
   reconsidered next pass. All reads, no new permissions. Use cases: heavy
   agents only on AC, personal repos only at home, nothing heavy while the
-  machine is busy or at 2am.
+  machine is busy, while you're presenting or on a call, or at 2am.
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is

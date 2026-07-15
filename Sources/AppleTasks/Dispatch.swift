@@ -72,6 +72,13 @@ struct AgentsConfig: Codable {
         /// `{"notBetween": ["22:00", "07:00"]}` (wraps midnight when
         /// start > end). Same shape as notify's `quietHours`.
         let time: TimeWindow?
+        /// Stay queued until the user has been idle (no keyboard/mouse input)
+        /// for at least this many minutes (IDEAS #48).
+        let idleMinutes: Double?
+        /// Stay queued while any of these apps are running. Each entry
+        /// matches a bundle id ("us.zoom.xos") or app name ("Keynote"),
+        /// case-insensitive exact match (IDEAS #48).
+        let blockingApps: [String]?
     }
 
     struct Place: Codable {

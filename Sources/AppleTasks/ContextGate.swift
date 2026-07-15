@@ -1,3 +1,5 @@
+import AppKit
+import CoreGraphics
 import CoreLocation
 import Foundation
 
@@ -76,6 +78,25 @@ final class GateContext {
         return result
     }
 
+    /// Seconds since the last keyboard/mouse input, session-wide (IDEAS #48).
+    /// kCGAnyInputEventType is the ~0 raw value — there is no Swift case.
+    func idleSeconds() -> Double {
+        CGEventSource.secondsSinceLastEventType(
+            .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
+    private var cachedRunningApps: [String]?
+
+    /// Lowercased bundle ids + localized names of running apps (IDEAS #48).
+    func runningApps() -> [String] {
+        if let cachedRunningApps { return cachedRunningApps }
+        let apps = NSWorkspace.shared.runningApplications.flatMap {
+            [$0.bundleIdentifier, $0.localizedName].compactMap { $0?.lowercased() }
+        }
+        cachedRunningApps = apps
+        return apps
+    }
+
     private var locationError: String?
 
     /// One-shot location fix (whereami plumbing, app-helper fallback included).
@@ -101,6 +122,18 @@ final class GateContext {
             case .inside(let window): return "quiet hours \(window)"
             case .invalid(let why): return "bad time condition: \(why)"
             case .outside: break
+            }
+        }
+        if let idleMinutes = conditions.idleMinutes {
+            let idle = idleSeconds() / 60
+            if idle < idleMinutes {
+                return String(format: "user active (idle %.1f min < %.0f min)", idle, idleMinutes)
+            }
+        }
+        if let blockingApps = conditions.blockingApps, !blockingApps.isEmpty {
+            let running = Set(runningApps())
+            if let hit = blockingApps.first(where: { running.contains($0.lowercased()) }) {
+                return "blocking app running: \(hit)"
             }
         }
         if let maxLoad = conditions.maxLoad {

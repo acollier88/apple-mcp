@@ -1074,11 +1074,20 @@ Model complex task workflows natively using parent-child reminder relationships 
 - **Why**: If a parent task contains subtasks, the dispatcher shouldn't execute the parent task until all subtasks (which may be assigned to different agents) are completed.
 - **Implementation**: Before claiming/dispatching a task, check the status of its children in EventKit. Run children in sequence or in parallel according to their agent tags, and block the parent task until all subtasks resolve.
 
-## 48. User-activity and app-focus gating — TODO (Polite background execution)
+## 48. User-activity and app-focus gating — ✅ DONE 2026-07-15 (Polite background execution)
 
 Extend the context-gated dispatch system in [ContextGate.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/ContextGate.swift) to respect user activity and focus.
 - **Why**: Running heavy tasks (like local LLM classification or multi-dependency builds) while the user is actively coding or in a meeting can cause CPU lag and locking conflicts.
 - **Implementation**: Add conditions like `idleMinutes` or `blockingApps` to `conditions` in `agents.json`. Swift can check system idle time via `CGEventSource.secondsSinceLastEventType(.combinedSessionState)` and check if heavy apps are running or focused via `NSWorkspace.shared.runningApplications`.
+
+Shipped: `conditions.idleMinutes` (CGEventSource combined-session idle with
+the kCGAnyInputEventType raw value — no Swift case exists for it) and
+`conditions.blockingApps` (case-insensitive exact match against running
+apps' bundle ids AND localized names, probed once per pass and cached).
+Both run in the cheap-gate tier before power/location. Verified live via a
+temp echo-agent config: active user gated ("user active (idle 0.2 min <
+15 min)"), running Finder gated by bundle id, non-running app passed
+through to "would dispatch". Same stays-queued semantics as every gate.
 
 ## 49. Raycast extension & menubar integration — TODO (Fast control plane)
 
