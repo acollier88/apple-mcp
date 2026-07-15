@@ -71,6 +71,8 @@ apple-tasks list --due-before 2026-07-12           # due before then (whole day 
 apple-tasks list --search "MFA"                    # substring match over title + notes
 apple-tasks update <id> --add-tag backend --remove-tag repo2 --title "New title"
 apple-tasks update <child-id> --parent <parent-id>   # native subtask (private helper)
+apple-tasks update <id> --attach-file ./shot.png --attach-url "https://…"  # attachments (private helper)
+apple-tasks show <id> --attachments                # list them (file content needs Full Disk Access)
 apple-tasks complete <id>
 apple-tasks uncomplete <id>
 apple-tasks delete <id>

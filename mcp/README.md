@@ -53,6 +53,10 @@ run's worth); items fail independently and are reported under `failed`
 with their index. `task_create`/`task_update` take a `recurrence` RRULE
 subset (`FREQ=WEEKLY;BYDAY=MO`); completing a recurring task rolls it to
 the next occurrence (`recurred: true`, still open, next due date).
+Attachments (private helper): `task_show` takes `attachments: true`,
+`task_update` takes `attach_file`/`attach_url`; dispatched agents get
+attachment paths in their prompt (reading file content needs Full Disk
+Access on the reading process).
 
 **Plans** — `plan_list`, `plan_create` (a plan = a Reminders list).
 

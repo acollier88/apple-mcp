@@ -109,10 +109,19 @@ struct Show: AsyncParsableCommand {
     @Argument(help: "Task id (internal or external identifier).")
     var id: String
 
+    @Flag(help: "Include attachments (private helper; file content needs Full Disk Access to read).")
+    var attachments = false
+
     func run() async throws {
         let store = Store()
         try await store.requestAccess()
-        emit(TaskOut(try await store.reminder(id: id)))
+        let reminder = try await store.reminder(id: id)
+        var out = TaskOut(reminder)
+        if attachments {
+            let ext = reminder.calendarItemExternalIdentifier ?? ""
+            out.attachments = NativeTags.attachments(externalIds: [ext])?[ext] ?? []
+        }
+        emit(out)
     }
 }
 
@@ -327,6 +336,14 @@ struct Update: AsyncParsableCommand {
     @Option(name: .customLong("parent"), help: "Make this task a subtask of the given task id (private ReminderKit helper).")
     var parent: String?
 
+    @Option(name: .customLong("attach-file"),
+            help: "Attach a file (copied into the Reminders store; private helper).")
+    var attachFile: String?
+
+    @Option(name: .customLong("attach-url"),
+            help: "Attach a URL as a rich attachment (private helper; distinct from --url).")
+    var attachUrl: String?
+
     // NOTE: no --clear-parent. The helper CAN detach (removeFromParentReminder,
     // proven at the ReminderKit layer), but a detached reminder is not re-filed
     // into a list calendar and so becomes invisible to EventKit — effectively
@@ -384,6 +401,14 @@ struct Update: AsyncParsableCommand {
             }
             out.subtask = NativeTags.setParent(childExternalId: reminder.calendarItemExternalIdentifier,
                                                parentExternalId: parentExternalId)
+        }
+        if attachFile != nil || attachUrl != nil {
+            let absoluteFile = attachFile.map { NSString(string: $0).expandingTildeInPath }
+            if let absoluteFile, !FileManager.default.fileExists(atPath: absoluteFile) {
+                throw AppleTasksError.invalidInput("attach-file not found: \(absoluteFile)")
+            }
+            out.attached = NativeTags.attach(externalId: reminder.calendarItemExternalIdentifier,
+                                             file: absoluteFile, url: attachUrl)
         }
         AuditDB.shared.record(command: "update", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)

@@ -16,6 +16,13 @@
 //     {"parentsOf": ["<ext1>", "<ext2>", ...]}
 //   -> {"ok":true,"parents":{"<ext1>":"<parentExt>"|null, ...}} (null = top-level;
 //      ids that fail to fetch are omitted)
+// Read-only (IDEAS #46) — attachment listing, exclusive:
+//     {"attachmentsOf": ["<ext1>", ...]}
+//   -> {"ok":true,"attachments":{"<ext1>":[{"kind":"file|image|url",
+//      "uti":..., "fileURL":..., "fileSize":N, "url":...}, ...], ...}}
+// Write (IDEAS #46) — attach to a reminder (combines with tags/parent ops):
+//     {"externalId": "<ext>", "attachFile": "/abs/path"}
+//     {"externalId": "<ext>", "attachURL": "https://..."}
 // Success: {"ok":true,"tagged":N,"parent":"set|cleared"} on stdout (fields
 // present only for operations performed). Failure: {"error":"..."} on stderr, exit 1.
 //
@@ -62,6 +69,11 @@
 
 @interface REMReminderSubtaskContextChangeItem : NSObject
 - (void)addReminderChangeItem:(id)changeItem;
+@end
+
+@interface REMReminderAttachmentContextChangeItem : NSObject
+- (id)addFileAttachmentWithURL:(NSURL *)url error:(NSError **)error;
+- (id)addURLAttachmentWithURL:(NSURL *)url;
 @end
 
 static void failJSON(NSString *message) {
@@ -161,14 +173,82 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
 
+        // Read-only attachment listing (IDEAS #46): exclusive op, exits here.
+        NSArray *attachmentsOf = cmd[@"attachmentsOf"];
+        if ([attachmentsOf isKindOfClass:[NSArray class]]) {
+            Class objectIDClass = requireClass(@"REMObjectID");
+            Class storeClass = requireClass(@"REMStore");
+            if (![objectIDClass respondsToSelector:@selector(objectIDWithURL:)]) failJSON(@"REMObjectID.objectIDWithURL: missing");
+            REMStore *store = (REMStore *)[storeClass new];
+            if (![store respondsToSelector:@selector(fetchReminderWithObjectID:error:)]) failJSON(@"REMStore.fetchReminderWithObjectID:error: missing");
+            Class imageClass = NSClassFromString(@"REMImageAttachment");
+            Class fileClass = NSClassFromString(@"REMFileAttachment");
+            Class urlClass = NSClassFromString(@"REMURLAttachment");
+
+            NSMutableDictionary *byId = [NSMutableDictionary dictionary];
+            for (id ext in attachmentsOf) {
+                if (![ext isKindOfClass:[NSString class]] || [ext length] == 0) continue;
+                NSString *urlString = [NSString stringWithFormat:@"x-apple-reminderkit://REMCDReminder/%@", ext];
+                id oid = [(Class)objectIDClass objectIDWithURL:[NSURL URLWithString:urlString]];
+                if (!oid) continue;
+                NSError *fetchError = nil;
+                REMReminder *reminder = [store fetchReminderWithObjectID:oid error:&fetchError];
+                if (!reminder) continue;
+                NSArray *attachments = nil;
+                @try {
+                    attachments = [(id)reminder valueForKey:@"attachments"]; // @dynamic — via KVC
+                } @catch (NSException *e) {
+                    failJSON(@"REMReminder.attachments missing (attachment read API changed)");
+                }
+                NSMutableArray *rows = [NSMutableArray array];
+                for (id att in attachments) {
+                    NSMutableDictionary *row = [NSMutableDictionary dictionary];
+                    if (imageClass && [att isKindOfClass:imageClass]) row[@"kind"] = @"image";
+                    else if (fileClass && [att isKindOfClass:fileClass]) row[@"kind"] = @"file";
+                    else if (urlClass && [att isKindOfClass:urlClass]) row[@"kind"] = @"url";
+                    else row[@"kind"] = @"other";
+                    @try {
+                        id uti = [att valueForKey:@"uti"];
+                        if ([uti isKindOfClass:[NSString class]]) row[@"uti"] = uti;
+                    } @catch (NSException *e) {}
+                    if (fileClass && [att isKindOfClass:fileClass]) {
+                        @try {
+                            NSURL *fileURL = [att valueForKey:@"fileURL"];
+                            if ([fileURL isKindOfClass:[NSURL class]]) row[@"fileURL"] = fileURL.path ?: fileURL.absoluteString;
+                            id size = [att valueForKey:@"fileSize"];
+                            if (size) row[@"fileSize"] = size;
+                        } @catch (NSException *e) {}
+                    }
+                    if (urlClass && [att isKindOfClass:urlClass]) {
+                        @try {
+                            NSURL *url = [att valueForKey:@"url"];
+                            if ([url isKindOfClass:[NSURL class]]) row[@"url"] = url.absoluteString;
+                        } @catch (NSException *e) {}
+                    }
+                    [rows addObject:row];
+                }
+                byId[ext] = rows;
+            }
+            NSDictionary *result = @{ @"ok": @YES, @"attachments": byId };
+            NSData *out = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            fwrite(out.bytes, 1, out.length, stdout);
+            fputc('\n', stdout);
+            return 0;
+        }
+
         NSString *externalId = cmd[@"externalId"];
         NSArray *tags = cmd[@"tags"];
         NSString *parentId = cmd[@"parent"];
         BOOL clearParent = [cmd[@"clearParent"] boolValue];
+        NSString *attachFile = cmd[@"attachFile"];
+        NSString *attachURL = cmd[@"attachURL"];
         if (![externalId isKindOfClass:[NSString class]] || externalId.length == 0) failJSON(@"missing externalId");
         BOOL wantTags = [tags isKindOfClass:[NSArray class]] && tags.count > 0;
         BOOL wantParent = [parentId isKindOfClass:[NSString class]] && parentId.length > 0;
-        if (!wantTags && !wantParent && !clearParent) failJSON(@"nothing to do (need tags, parent, or clearParent)");
+        BOOL wantAttachFile = [attachFile isKindOfClass:[NSString class]] && attachFile.length > 0;
+        BOOL wantAttachURL = [attachURL isKindOfClass:[NSString class]] && attachURL.length > 0;
+        if (!wantTags && !wantParent && !clearParent && !wantAttachFile && !wantAttachURL)
+            failJSON(@"nothing to do (need tags, parent, clearParent, attachFile, or attachURL)");
 
         Class objectIDClass = requireClass(@"REMObjectID");
         Class storeClass = requireClass(@"REMStore");
@@ -226,6 +306,31 @@ int main(int argc, const char *argv[]) {
             if (![subtaskContext respondsToSelector:@selector(addReminderChangeItem:)]) failJSON(@"addReminderChangeItem: missing (subtask API changed)");
             [subtaskContext addReminderChangeItem:change];
             result[@"parent"] = @"set";
+        }
+
+        if (wantAttachFile || wantAttachURL) {
+            id attachmentContext = nil;
+            @try {
+                attachmentContext = [(id)change valueForKey:@"attachmentContext"];
+            } @catch (NSException *e) {}
+            if (!attachmentContext) failJSON(@"attachmentContext missing (attachment API changed)");
+            if (wantAttachFile) {
+                if (![attachmentContext respondsToSelector:@selector(addFileAttachmentWithURL:error:)]) failJSON(@"addFileAttachmentWithURL:error: missing");
+                NSURL *fileURL = [NSURL fileURLWithPath:attachFile];
+                NSError *attachError = nil;
+                if (![(REMReminderAttachmentContextChangeItem *)attachmentContext addFileAttachmentWithURL:fileURL error:&attachError]) {
+                    failJSON([NSString stringWithFormat:@"attachFile failed: %@",
+                              attachError.localizedDescription ?: @"no error detail"]);
+                }
+                result[@"attached"] = @"file";
+            }
+            if (wantAttachURL) {
+                if (![attachmentContext respondsToSelector:@selector(addURLAttachmentWithURL:)]) failJSON(@"addURLAttachmentWithURL: missing");
+                NSURL *url = [NSURL URLWithString:attachURL];
+                if (!url) failJSON(@"attachURL is not a valid URL");
+                [(REMReminderAttachmentContextChangeItem *)attachmentContext addURLAttachmentWithURL:url];
+                result[@"attached"] = wantAttachFile ? @"file+url" : @"url";
+            }
         }
 
         if (![save saveSynchronouslyWithError:&error]) {

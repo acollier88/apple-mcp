@@ -97,6 +97,17 @@ const taskShape = {
     .boolean()
     .optional()
     .describe("complete only: completing this recurring task rolled it to the next occurrence (shown still open)."),
+  attachments: z
+    .array(z.object({
+      kind: z.enum(["file", "image", "url", "other"]),
+      uti: z.string().optional(),
+      fileURL: z.string().optional().describe("Path in the Reminders store; reading the file needs Full Disk Access."),
+      fileSize: z.number().int().optional(),
+      url: z.string().optional(),
+    }))
+    .optional()
+    .describe("task_show with attachments: true only."),
+  attached: z.boolean().optional().describe("task_update attach_* only: whether the attach succeeded."),
 };
 const taskSchema = z.object(taskShape);
 
@@ -276,10 +287,12 @@ server.registerTool(
         .optional()
         .describe("Set/replace the repeat rule (task must have a due date). Same RRULE subset as task_create."),
       clear_recurrence: z.boolean().optional().describe("Remove the repeat rule (series stops recurring)."),
+      attach_file: z.string().optional().describe("Attach a file by absolute path (copied into the Reminders store)."),
+      attach_url: z.string().optional().describe("Attach a URL as a rich attachment (distinct from the url field)."),
     },
     outputSchema: taskShape,
   },
-  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent, recurrence, clear_recurrence }) => {
+  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent, recurrence, clear_recurrence, attach_file, attach_url }) => {
     const args = ["update", id];
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
@@ -295,6 +308,8 @@ server.registerTool(
     if (parent) args.push("--parent", parent);
     if (recurrence) args.push("--recurrence", recurrence);
     if (clear_recurrence) args.push("--clear-recurrence");
+    if (attach_file) args.push("--attach-file", attach_file);
+    if (attach_url) args.push("--attach-url", attach_url);
     try {
       return okJson(await cli(args));
     } catch (err) {
@@ -1327,12 +1342,18 @@ server.registerTool(
   "task_show",
   {
     description: "Show a single task by id: full JSON including notes (with dispatch trailers) and tags.",
-    inputSchema: { id: z.string().describe("Task id from task_list/dispatch_list.") },
+    inputSchema: {
+      id: z.string().describe("Task id from task_list/dispatch_list."),
+      attachments: z.boolean().optional().describe(
+        "Include attachments (kind/uti/fileURL/url). Reading a fileURL's content needs Full Disk Access."),
+    },
     outputSchema: taskShape,
   },
-  async ({ id }) => {
+  async ({ id, attachments }) => {
+    const args = ["show", id];
+    if (attachments) args.push("--attachments");
     try {
-      return okJson(await cli(["show", id]));
+      return okJson(await cli(args));
     } catch (err) {
       return fail(err);
     }

@@ -452,6 +452,21 @@ struct Dispatch: AsyncParsableCommand {
             if lowerTags.contains("mail") {
                 prompt += "\nThis task came from an email (From/Subject/Message-ID are in the task notes). Write your outcome as a reply DRAFT the human will review and send — never send mail yourself: apple-tasks mail draft --reply-to \"<Message-ID from the notes>\" --body-file <your report> (or --body \"...\")."
             }
+            // Attachments (IDEAS #46): hand the agent the real paths. Reading
+            // file content needs Full Disk Access on the agent process; the
+            // helper call is skipped on dry runs to keep them cheap.
+            if !dryRun, let ext = reminder.calendarItemExternalIdentifier,
+               let attachments = NativeTags.attachments(externalIds: [ext])?[ext],
+               !attachments.isEmpty {
+                prompt += "\nAttachments on this task (read file paths for context; if a file is unreadable your process lacks Full Disk Access — note that in your outcome):"
+                for attachment in attachments.prefix(10) {
+                    if let path = attachment.fileURL {
+                        prompt += "\n- \(attachment.kind): \(path)"
+                    } else if let url = attachment.url {
+                        prompt += "\n- url: \(url)"
+                    }
+                }
+            }
             let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
 
             if dryRun {

@@ -183,6 +183,11 @@ struct TaskOut: Codable {
     /// Set by complete only: true when completing a recurring task rolled it
     /// to the next occurrence (the JSON shows the NEW occurrence, still open).
     var recurred: Bool?
+    /// Set by show --attachments only (IDEAS #46).
+    var attachments: [AttachmentOut]?
+    /// Set by update --attach-file/--attach-url only: whether the attach
+    /// succeeded (private helper; best-effort like nativeTags).
+    var attached: Bool?
 
     init(_ r: EKReminder) {
         let raw = r.title ?? ""
@@ -207,6 +212,17 @@ struct TaskOut: Codable {
 struct ListOut: Codable {
     let id: String
     let name: String
+}
+
+/// IDEAS #46: one reminder attachment, read via the private helper.
+/// File content at fileURL lives in the Reminders group container — reading
+/// it requires Full Disk Access on the READING process (doctor reports FDA).
+struct AttachmentOut: Codable {
+    let kind: String   // file | image | url | other
+    let uti: String?
+    let fileURL: String?
+    let fileSize: Int?
+    let url: String?
 }
 
 struct EventOut: Codable {

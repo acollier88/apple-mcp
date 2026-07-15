@@ -95,9 +95,44 @@ enum NativeTags {
     /// op. Returns nil when the helper is missing or fails — dependency
     /// gating then degrades to "no info" and dispatch proceeds.
     static func parents(externalIds: [String]) -> [String: String?]? {
-        guard let helper = helperURL, !externalIds.isEmpty else { return nil }
+        guard !externalIds.isEmpty,
+              let outData = runRead(["parentsOf": externalIds]),
+              let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any],
+              let parents = obj["parents"] as? [String: Any] else { return nil }
+        var result: [String: String?] = [:]
+        for (key, value) in parents { result[key] = value as? String }
+        return result
+    }
+
+    /// IDEAS #46: list attachments per externalId via the helper's read-only
+    /// attachmentsOf op. nil = helper missing/failed.
+    static func attachments(externalIds: [String]) -> [String: [AttachmentOut]]? {
+        struct Response: Decodable {
+            let ok: Bool
+            let attachments: [String: [AttachmentOut]]
+        }
+        guard !externalIds.isEmpty,
+              let outData = runRead(["attachmentsOf": externalIds]),
+              let response = try? JSONDecoder().decode(Response.self, from: outData)
+        else { return nil }
+        return response.attachments
+    }
+
+    /// IDEAS #46: attach a file (copied into the Reminders store) and/or a
+    /// URL to a reminder. Best-effort like mirror: false + stderr warning on
+    /// failure, nil when the helper isn't installed.
+    static func attach(externalId: String?, file: String?, url: String?) -> Bool? {
+        var payload: [String: Any] = ["externalId": externalId ?? ""]
+        if let file { payload["attachFile"] = file }
+        if let url { payload["attachURL"] = url }
+        return run(payload, externalId: externalId, what: "attachment")
+    }
+
+    /// Run a read-only helper op; returns stdout on exit 0, nil otherwise.
+    private static func runRead(_ payload: [String: Any]) -> Data? {
+        guard let helper = helperURL else { return nil }
         do {
-            let data = try JSONSerialization.data(withJSONObject: ["parentsOf": externalIds])
+            let data = try JSONSerialization.data(withJSONObject: payload)
             let process = Process()
             process.executableURL = helper
             let stdin = Pipe()
@@ -110,12 +145,8 @@ enum NativeTags {
             stdin.fileHandleForWriting.closeFile()
             let outData = stdout.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            guard process.terminationStatus == 0,
-                  let obj = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
-                  let parents = obj["parents"] as? [String: Any] else { return nil }
-            var result: [String: String?] = [:]
-            for (key, value) in parents { result[key] = value as? String }
-            return result
+            guard process.terminationStatus == 0 else { return nil }
+            return outData
         } catch {
             return nil
         }

@@ -1122,11 +1122,31 @@ still advances the watermark so it can't resurface. Verified live: baseline,
 new-clipping emit, unchanged dedupe, concealed skip (JXA-planted
 ConcealedType), --max-chars truncation.
 
-## 46. Reminders attachments support — TODO (Agent Vision/File Context)
+## 46. Reminders attachments support — ✅ DONE 2026-07-15 (Agent Vision/File Context)
 
 Extend `apple-tasks` to support reading and writing attachments (`EKAttachment`) on reminders and calendar events.
 - **Why**: Currently, agents only get text. If the user attaches an image (e.g. a screenshot of a bug) or a PDF/text file to a reminder, the agent should be able to download and parse it.
 - **Implementation**: Parse the attachment data in `apple-tasks` and save it to a temporary directory in the agent's workdir during dispatch, passing the file path in the agent prompt.
+
+Shipped via the private helper (there is NO public EventKit attachment API —
+"EKAttachment" doesn't exist; verified against the macOS 27 SDK
+swiftinterface). Probed live: `REMReminder.attachments` (@dynamic → KVC),
+REMFileAttachment{fileURL,fileSize}, REMImageAttachment (subclass of file,
++width/height), REMURLAttachment{url}; write side
+addFileAttachmentWithURL:error: / addURLAttachmentWithURL: on the
+attachment context change item. Helper ops: read-only
+`{"attachmentsOf": [...]}` and write `attachFile`/`attachURL` (a file is
+COPIED into the Reminders group container, verified). CLI: `show
+--attachments`, `update --attach-file/--attach-url`; MCP: task_show
+attachments param, task_update attach_file/attach_url; dispatch prompts
+list attachment paths/URLs (skipped on dry runs). Two deviations from the
+sketch: no temp-dir copy into the workdir (agents run as the same user and
+read the store path directly; copying would leak files into repos), and the
+container path is TCC-protected — reading file CONTENT needs Full Disk
+Access on the reading process (metadata always works; doctor's FDA line
+covers it; the prompt tells agents to note unreadable files). Events
+attachments not done (EKEvent has no public surface either; reminders are
+the capture channel that matters).
 
 ## 47. Subtask dependency modeling in the dispatcher — ✅ DONE 2026-07-15 (Checklist Swarms)
 
