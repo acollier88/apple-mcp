@@ -4,7 +4,7 @@ import Foundation
 
 // IDEAS #38: topic watches / standing monitors. Config lists feeds/pages to
 // watch; `watch scan` fetches each due watch, diffs against per-watch state
-// (state.json, same store as every other scan), and emits only NEW items.
+// (ScanState, same store as every other scan), and emits only NEW items.
 // Consumers are the same as the sibling scans: triage decides digest-worthy
 // vs. noise, hits become [read] tasks with the url field. The `web fetch`
 // primitive lives here too (same IDEAS item): it gives the local triage

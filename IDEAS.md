@@ -1031,7 +1031,7 @@ windows gate with a fix-it reason. notify gains `quietHours` in notify.json
 plus `--force` for priority pings; suppression still exits 0 and is audited,
 and an invalid window fails open (a typo must not mute pings).
 
-## 44. Consolidate watermark state into the audit DB — TODO (qwen #8, low-risk)
+## 44. Consolidate watermark state into the audit DB — ✅ DONE 2026-07-15 (qwen #8)
 
 state.json (scan watermarks) and apple-tasks.db (audit/ledger) don't know
 about each other. Fold watermarks into a KV table in the SQLite DB so doctor
@@ -1041,6 +1041,16 @@ once, write rows, leave the file as a dead artifact (or delete after one
 verified run). Explicitly NOT doing qwen #9 (persistent Swift process to
 avoid execFile spawns) — spawn-per-call has no stale-daemon failure mode
 and current latency doesn't hurt.
+
+Shipped: `state` KV table in apple-tasks.db (get/setState on AuditDB,
+upsert via ON CONFLICT); ScanState keeps its exact API and JSON payload but
+reads/writes the single `scan_state` row. load() migrates a pre-existing
+state.json once (best-effort: if the DB write fails the file state is still
+returned so watermarks survive) and leaves the file as a dead artifact.
+save() now throws if the DB is unavailable rather than silently losing the
+watermark. Verified live: migration preserved all keys byte-for-byte
+(watchState included), file mtime untouched, and a subsequent
+`screenshots scan` advanced the DB row while the file stayed frozen.
 
 ## 45. Clipboard watcher capture — TODO (cheap channel, phone-parity habit)
 

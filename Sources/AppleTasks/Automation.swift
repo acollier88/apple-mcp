@@ -122,7 +122,12 @@ enum NativeTags {
     }
 }
 
-// MARK: - Scan watermark state (~/.config/apple-tasks/state.json)
+// MARK: - Scan watermark state (KV row in the audit DB; IDEAS #44)
+//
+// Historically ~/.config/apple-tasks/state.json; now the 'scan_state' row in
+// apple-tasks.db carries the same JSON payload, so doctor and the ledger read
+// one source of truth. A pre-existing state.json is migrated on first load
+// and then left behind as a dead artifact.
 
 struct ScanState: Codable {
     var notesScanWatermark: String?
@@ -133,22 +138,35 @@ struct ScanState: Codable {
     /// Per-watch scan state (IDEAS #38), keyed by watch name.
     var watchState: [String: WatchRecord]?
 
-    static var url: URL {
+    static let dbKey = "scan_state"
+
+    /// Legacy file location, read once for migration only.
+    static var legacyURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/apple-tasks/state.json")
     }
 
     static func load() -> ScanState {
-        guard let data = try? Data(contentsOf: url),
-              let state = try? JSONDecoder().decode(ScanState.self, from: data)
-        else { return ScanState() }
-        return state
+        if let json = AuditDB.shared.getState(dbKey),
+           let state = try? JSONDecoder().decode(ScanState.self, from: Data(json.utf8)) {
+            return state
+        }
+        // Migrate best-effort: if the DB write fails the file state is still
+        // returned, so scans keep their watermarks and save() retries later.
+        if let data = try? Data(contentsOf: legacyURL),
+           let state = try? JSONDecoder().decode(ScanState.self, from: data) {
+            try? state.save()
+            return state
+        }
+        return ScanState()
     }
 
     func save() throws {
-        try FileManager.default.createDirectory(
-            at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(self)
-        try data.write(to: Self.url)
+        guard let json = String(data: data, encoding: .utf8),
+              AuditDB.shared.setState(Self.dbKey, json)
+        else {
+            throw AppleTasksError.saveFailed("could not persist scan state to \(AuditDB.url.path)")
+        }
     }
 }

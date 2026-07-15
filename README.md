@@ -140,7 +140,7 @@ prompt for Automation permission ("Terminal wants to control Notes/Mail").
 
 ```bash
 apple-tasks notes scan                       # notes modified since last scan
-                                             # (watermark in ~/.config/apple-tasks/state.json;
+                                             # (watermark in apple-tasks.db;
                                              #  first run looks back 24h)
 apple-tasks notes scan --since 2026-06-01 --folder Work --max-chars 500   # stateless
 apple-tasks mail scan --since 2026-06-02 --limit 20    # inbox headers, newest first

@@ -53,6 +53,12 @@ final class AuditDB {
         exec("ALTER TABLE dispatches ADD COLUMN worktree TEXT")
         exec("ALTER TABLE dispatches ADD COLUMN summary TEXT")
         exec("""
+        CREATE TABLE IF NOT EXISTS state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """)
+        exec("""
         CREATE TABLE IF NOT EXISTS approvals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             token TEXT NOT NULL UNIQUE,
@@ -323,6 +329,30 @@ final class AuditDB {
                 runLogPath: col(9), worktree: col(10), summary: col(11)))
         }
         return rows
+    }
+
+    // MARK: State KV (scan watermarks; IDEAS #44)
+
+    func getState(_ key: String) -> String? {
+        guard db != nil else { return nil }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT value FROM state WHERE key = ?", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+    }
+
+    @discardableResult
+    func setState(_ key: String, _ value: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     // MARK: Approvals (IDEAS #39)
