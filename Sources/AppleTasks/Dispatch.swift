@@ -371,6 +371,9 @@ struct Dispatch: AsyncParsableCommand {
             if lowerTags.contains("pr") {
                 prompt += "\nThis task requires a Pull Request. When finished, push your branch to origin with 'git push -u origin HEAD' and open a PR with 'gh pr create' (title + a body describing the change and how you verified). Run these commands to associate it: apple-tasks update \(taskId) --url \"<PR url>\""
             }
+            if lowerTags.contains("mail") {
+                prompt += "\nThis task came from an email (From/Subject/Message-ID are in the task notes). Write your outcome as a reply DRAFT the human will review and send — never send mail yourself: apple-tasks mail draft --reply-to \"<Message-ID from the notes>\" --body-file <your report> (or --body \"...\")."
+            }
             let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
 
             if dryRun {

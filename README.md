@@ -137,6 +137,21 @@ Bodies come back as plain text (HTML stripped). Password-protected notes are
 invisible to scripting. `mail scan` returns `[]` unless Mail.app is actually
 syncing the account.
 
+The write half is **drafts only — there is no send path** (IDEAS #37):
+
+```bash
+apple-tasks mail draft --to sarah@corp.com --subject "Re: budget" --body "..."
+apple-tasks mail draft --reply-to "<CADkT0=abc@mail.gmail.com>" --body-file report.md
+```
+
+`--reply-to` accepts the RFC Message-ID a `[mail]`-captured task carries in
+its notes (or a numeric id from `mail scan`) and uses Mail's native reply so
+threading is preserved; only the inbox is searched. The draft lands in
+Mail's Drafts — synced to every device — and a human hits send. Combined
+with the #12 mail rule this closes the email loop: mail in → task →
+dispatched agent → reply draft + push out. Dispatched `[mail]` tasks get a
+prompt line telling the agent to report exactly this way.
+
 AgentTasks also adopts the Notes and Calendar App Intents domains
 (macOS 27, `NotesSchemaIntents.swift` / `CalendarSchemaIntents.swift`):
 *"Hey Siri, create a note in AgentTasks"* shells to `notes create`, and

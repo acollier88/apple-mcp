@@ -755,6 +755,41 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "mail_draft",
+  {
+    description:
+      "Create a DRAFT in Mail.app — never sends; the human reviews and hits send. Either a new message " +
+      "(to + subject) or a reply (reply_to: an RFC Message-ID from a [mail] task's notes, or a numeric id " +
+      "from mail_scan; threading preserved, subject defaults to Re: <original>).",
+    inputSchema: {
+      to: z.array(z.string()).optional().describe("Recipient addresses. Required unless reply_to."),
+      subject: z.string().optional().describe("Required for new drafts; optional override for replies."),
+      body: z.string().describe("Draft body text."),
+      reply_to: z.string().optional().describe("Message to reply to (RFC Message-ID or mail_scan numeric id)."),
+    },
+    // MailDraft.Out (Sources/AppleTasks/Mail.swift)
+    outputSchema: {
+      drafted: z.boolean(),
+      mode: z.enum(["new", "reply"]),
+      to: z.array(z.string()),
+      subject: z.string(),
+      inReplyTo: z.string().optional().describe("Reply mode: id of the message being replied to."),
+    },
+  },
+  async ({ to, subject, body, reply_to }) => {
+    const args = ["mail", "draft", "--body", body];
+    for (const addr of to ?? []) args.push("--to", addr);
+    if (subject) args.push("--subject", subject);
+    if (reply_to) args.push("--reply-to", reply_to);
+    try {
+      return okJson(await cli(args, 60_000));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
 // WatchItemOut / WatchScan.Out (Sources/AppleTasks/Watches.swift)
 const watchItemShape = {
   watch: z.string().describe("Name of the watch that produced this item."),

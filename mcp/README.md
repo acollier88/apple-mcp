@@ -42,7 +42,7 @@ top-level array nest it under a named key (`tasks`, `events`, `items`, …)
 because `structuredContent` must be an object. Free-form tools
 (`shortcut_run`, `run_log`) intentionally stay text-only.
 
-## Tools (43)
+## Tools (44)
 
 **Tasks** — `task_list`, `task_show`, `task_create`, `task_update`,
 `task_complete`, `task_uncomplete`, `task_delete`. Tags become `[tag]`
@@ -57,7 +57,9 @@ occurrence (`recurred: true`, still open, next due date).
 `event_update`, `event_delete`, `calendar_list`.
 
 **Notes & Mail** — `notes_scan`, `mail_scan`, `mail_show` (read-only),
-`note_create` (new notes only — existing notes are never edited).
+`note_create` (new notes only — existing notes are never edited),
+`mail_draft` (new message or threaded reply; drafts only, **no send path
+exists** — the human reviews and sends).
 
 **Capture scans** (all watermarked; feed the output to triage) —
 `screenshots_scan` (on-device Vision OCR), `files_scan` (text dropped in

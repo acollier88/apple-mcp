@@ -893,7 +893,7 @@ not "by"). Together these make "every Monday 7am, run the weekly-review
 agent" work with zero dispatcher config. Not done: recurrence on `events
 update`/`delete` (needs EKSpan .futureEvents plumbing; .thisEvent today).
 
-## 37. Two-way email interface — TODO (Spark's killer feature, we're 70% there)
+## 37. Two-way email interface — ✅ DONE 2026-07-15 (Spark's killer feature, we're 70% there)
 
 Spark's dedicated Gmail address is its most-loved surface. Our half exists:
 the #12 Mail rule already turns matching inbound mail into [mail]-tagged
@@ -904,6 +904,17 @@ Shape: `apple-tasks mail draft --to X --subject Y --body-file Z --reply-to
 reply draft." Then: email `you+agent@...` from any device → rule routes to
 dispatcher → result appears as a reply draft + ntfy push. Full assistant
 reachability with zero new UI and zero ToS risk (unlike iMessage).
+
+Shipped: `mail draft` (Mail.swift) — new (`--to`/`--subject`) or reply
+(`--reply-to`, RFC Message-ID from a [mail] task's notes or numeric scan
+id; Mail's native reply keeps threading; inbox-only lookup) with `--body`/
+`--body-file`. NO send path exists anywhere in the command. Dispatcher:
+[mail]-tagged tasks get a prompt line directing agents to report as a
+reply draft. MCP: mail_draft (44 tools). Verified live: new draft created
++ confirmed unsent in Drafts, clean error for unknown reply target.
+Caveats: reply positive-path untested on this Mac (inbox not syncing);
+scripted DELETION of local drafts doesn't stick (a Mail quirk that doesn't
+affect the feature — drafts are meant to persist for the human).
 
 ## 38. Topic watches / standing monitors — ✅ DONE 2026-07-13 (Spark "stay up to date")
 
