@@ -380,7 +380,10 @@ tags when routing. Injection-tested (`quoted form of` everywhere). Beta
 finding: `using terms from application "Mail"` fails to compile on macOS
 27 beta 3 though the sdef still declares the terms — the script uses raw
 event/class codes («event emalcpma», sndr/subj/meid) instead; add to the
-§32 watch list.
+§32 watch list. Re-checked 2026-07-15 on the beta 3 respin (26A5378n):
+the regression HEALED — `using terms from` compiles again. Keeping the
+raw-codes script anyway (proven robust across the breakage); watch-list
+entry can be dropped.
 
 ## 13. Multi-Mac claim protocol — ✅ DONE 2026-07-15
 
@@ -697,11 +700,15 @@ plugin (useful reference — none of this is documented anywhere public):
   size (no `indirect` for structs, unlike enums) — both are **computed**
   properties returning `nil` (nested folders/accounts aren't modeled).
 
-Not done: `UpdateNoteIntent` (schema exposes it; same pattern should
-apply — deferred for time). Verified: compiler/metadata-processor
-conformance + the underlying CLI path. Not verified: an actual spoken
-Siri invocation end-to-end (no Shortcuts-CLI way to trigger a specific
-App Intent by name without first building a Shortcut in the GUI).
+Not done: `UpdateNoteIntent` — resolved 2026-07-15 as WON'T DO, on
+principle rather than time: its perform() would have to edit an existing
+note body, and the project's read-only-notes rule exists precisely
+because AppleScript body writes mangle formatting. A schema conformance
+with a refusing perform() would be worse than absence. Verified:
+compiler/metadata-processor conformance + the underlying CLI path. Not
+verified: an actual spoken Siri invocation end-to-end (no Shortcuts-CLI
+way to trigger a specific App Intent by name without first building a
+Shortcut in the GUI).
 
 ### Calendar domain — descoped, not shipped
 
@@ -778,6 +785,10 @@ partnership dispute per press reports). Extensions are built ON App Intents,
 so idea #29 IS the preparation — nothing else actionable until Apple flips
 the backend on. Re-check each beta.
 
+Re-checked 2026-07-15: still backend-disabled as of the July 13 public
+beta per press coverage (EU DMA talks unresolved; OpenAI weighing legal
+options over Siri placement). Status quo — keep watching.
+
 ## 31. Spotlight "Search or Ask" — make our Siri index donations continuous — ✅ DONE (2026-07-08)
 
 Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
@@ -810,6 +821,14 @@ AND dyld-runs `spikes/ClaudeLanguageModel/SchemaProbe.swift` when present.
 Still manual: `findmy_devices` (network-dependent) and the AgentTasksApp
 rebuild (needs Xcode, not in the SwiftPM build).
 
+**Drill run 2026-07-15** (OS respin 26A5378j → 26A5378n, same Xcode beta):
+all 7 steps PASS, AgentTasksApp rebuilt clean (no schema drift), private
+helper --check ok (now also reporting subtaskRead per #47). Findings
+recorded in place: #12 `using terms from` healed, #33 executor skew
+persists, #30 Extensions still dormant. Still needing a human at the Mac:
+#31 Spotlight-ask live check (app launched + donating, try Spotlight),
+#2 real-device Siri conversational test, #15 FindMy login.
+
 ## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
 
 Found 2026-07-07 while building the ClaudeLanguageModel spike (docs/
@@ -831,6 +850,13 @@ Event protocol→struct migration is expected to be a small mechanical diff
 (factory methods look unchanged). Add to the §32 drill: dyld-run a trivial
 FoundationModels binary, not just compile one — compile-clean is no longer
 proof on this framework.
+
+Re-checked 2026-07-15 (OS respin 26A5378n, Xcode beta still 27A5194q):
+STILL SKEWED — the harness compiles and dies in dyld on the exact
+documented symbol (LanguageModelExecutorGenerationChannel.send generic).
+The basic surface remains fine (betacheck's fm probe compiles AND runs),
+so #27/#41 are unaffected. No new Xcode beta has shipped; nothing to do
+until one does.
 
 ## 34. Fold notes-scan into triage — ✅ DONE 2026-07-08 (`triage --notes`)
 
@@ -1185,7 +1211,13 @@ temp echo-agent config: active user gated ("user active (idle 0.2 min <
 15 min)"), running Finder gated by bundle id, non-running app passed
 through to "would dispatch". Same stays-queued semantics as every gate.
 
-## 49. Raycast extension & menubar integration — TODO (Fast control plane)
+## 49. Raycast extension & menubar integration — SHELVED 2026-07-15 (user call)
+
+Shelved: the fast-control-plane use cases (task search, run logs,
+approvals, manual dispatch) are expected to be covered by the Spotlight
+donations (#31) and Siri/App Intents surfaces (#2/#29) instead of a
+third-party launcher. Revisit only if a keyboard-driven surface still
+feels missing after those mature on the betas.
 
 Provide a Raycast extension or a lightweight macOS menu bar app for managing `apple-tasks`.
 - **Why**: Reminders.app is a great task view, but developer workflows benefit from a keyboard-driven search and command interface.
