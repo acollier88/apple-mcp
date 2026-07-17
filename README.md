@@ -359,6 +359,14 @@ the design):
   line in the ledger's `summary` column. Agents are prompted to record their
   own 1–3 sentence outcome first via `apple-tasks update <id> --append-notes`
   (non-destructive; appends a paragraph).
+- **Task-tag prompt lines** — some tags add role instructions to the
+  dispatch prompt: `[pr]` (push the branch, open a PR, link it back),
+  `[mail]` (report as a reply draft — never send), `[research]` (a
+  one-shot deep-dive: read the task's URL/topic via `apple-tasks web
+  fetch`, write findings to an Apple Note titled `Research: <task title>`,
+  append a one-line conclusion to the task notes). Tag any task
+  `[research]` alongside its agent tag and a `--url` to queue reading
+  for an agent instead of for yourself.
 - **Worktree GC** — every pass reclaims finished runs' worktrees: merged
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout worktrees are kept

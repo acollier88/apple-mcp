@@ -1372,7 +1372,7 @@ to agents. Design questions: per-seat defaults vs a tag (`[fast]`)?
 does dispatch retry a failed lane on the next preference, and how does
 that interact with maxRetries?
 
-## 53. Bookmarks: categorize/review + follow-up research tag — MAYBE (user's capture 2026-07-16)
+## 53. Bookmarks: categorize/review + follow-up research tag — C ✅ DONE 2026-07-17; A/B still MAYBE (user's capture 2026-07-16)
 
 From the user's Reminder capture: "Safari/Chrome bookmark categorize/
 reviewer to sort and tag; maybe tangental: a follow-up or read-later list
@@ -1394,14 +1394,17 @@ back is deliberately out: Safari rewrites its plist and iCloud-syncs it
 wants applied organization, it lives on our side of the fence: tasks
 tagged per category, or a digest/note report.
 
-**C. `[research]` follow-up lane**: a designated bookmark folder (e.g.
-"Follow up") or bookmarks surfaced by the scan become `[research][auto]`
-tasks (URL in the url field, #19 linkback). A `[research]` prompt line in
-dispatch (like the existing `[mail]`/`[pr]` lines) tells the agent:
-web_fetch the URL, research the topic, and write findings somewhere
-reviewable (task notes / Apple Note / reply draft). Reuses web_fetch,
-watches machinery stays separate (watches = recurring monitors,
-research = one-shot deep-dive).
+**C. `[research]` follow-up lane — ✅ SHIPPED 2026-07-17**: a `[research]`
+prompt line in dispatch (beside the `[mail]`/`[pr]` lines): investigate
+the task's URL/topic and report back, do not code; the reminder's url
+field is rendered into the prompt when set; read via `apple-tasks web
+fetch` (or the agent's own web tools); findings → Apple Note
+"Research: <task title>" (answer first, then detail + sources); one-line
+conclusion appended to task notes. Verified via echo-mock dispatch: URL,
+note title, and task-id-bearing commands all render. Usage: tag a task
+`[research]` + agent tag + `--url`. Watches stay separate (recurring
+monitors vs one-shot deep-dive). When/if A ships, its follow-up folder
+feeds this lane.
 
 Open questions before building: is Reading List (already shipped) close
 enough for the read-later half — is the marginal value bookmarks-folder

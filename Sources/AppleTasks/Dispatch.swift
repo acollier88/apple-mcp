@@ -488,6 +488,12 @@ struct Dispatch: AsyncParsableCommand {
             if lowerTags.contains("mail") {
                 prompt += "\nThis task came from an email (From/Subject/Message-ID are in the task notes). Write your outcome as a reply DRAFT the human will review and send — never send mail yourself: apple-tasks mail draft --reply-to \"<Message-ID from the notes>\" --body-file <your report> (or --body \"...\")."
             }
+            // [research] (IDEAS #53): one-shot deep-dive on a saved link or
+            // topic; findings land in an Apple Note the human reads later.
+            if lowerTags.contains("research") {
+                let researchURL = reminder.url.map { "\nURL to research: \($0.absoluteString)" } ?? ""
+                prompt += "\nThis is a RESEARCH task: investigate the URL/topic and report back — do not code.\(researchURL)\nRead pages with: apple-tasks web fetch \"<url>\" (repeat for obviously relevant linked pages; use your own web tools instead if you have them). Write your findings as an Apple Note: apple-tasks notes create --title \"Research: \(parsed.title)\" \"<findings as HTML>\" — lead with a 2-3 sentence answer, then supporting detail and source URLs. Then record a one-line conclusion on the task: apple-tasks update \(taskId) --append-notes \"<one-line conclusion + note title>\"."
+            }
             // Attachments (IDEAS #46): hand the agent the real paths. Reading
             // file content needs Full Disk Access on the agent process; the
             // helper call is skipped on dry runs to keep them cheap.
