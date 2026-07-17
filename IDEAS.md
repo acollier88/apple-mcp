@@ -139,6 +139,15 @@ them to the right plan list via `task_update`.
 - A dedicated "Inbox" list is cleaner but requires saying "...to my Inbox list".
 - Sample triage prompt lives in README.
 
+**Real-device test 2026-07-17**: "Remind me to test the siri capture
+pipeline" → Siri offered a destination choice of **Agent Tasks or
+Reminders** (our AppIntents entities are visible to Siri as a capture
+target) → landed in the default Reminders list (dictation heard "series",
+as expected for voice input) → `triage --agent local` dry-run classified
+it `[claude][apple-mcp]` → route to Code Tasks, and the co-resident
+Spotlight probe task `[personal]`. Full voice → Reminders → CLI →
+on-device-classifier loop confirmed.
+
 ## 3. Notes scanning → reminders/events — ✅ DONE (user's idea)
 
 Implemented as `apple-tasks notes scan` (+ MCP `notes_scan`). JXA via osascript,
@@ -421,7 +430,7 @@ TCC grant is per-host-process; first-run prompt must happen from a real
 terminal (sandboxed/headless shells can't display it). Uses: location-aware
 triage, am-I-home dispatcher gating, geotagging the morning digest.
 
-## 15. FindMy.py sidecar — real Find My data — TODO (researched 2026-06-09)
+## 15. FindMy.py sidecar — real Find My data — ✅ DONE 2026-07-17 (session verified live; no accessories to track)
 
 Find My itself is locked down (verified on macOS 27 beta): no AppleScript
 dictionary; cache TCC-protected AND encrypted since macOS 14.4; the four
@@ -441,9 +450,16 @@ exports dropped in `~/.config/apple-tasks/findmy/accessories/`. MCP gained
 (`~/.config/apple-tasks/findmy/venv`, auto-detected; override
 `APPLE_TASKS_FINDMY_PYTHON`). `doctor` reports sidecar config state.
 Errors come back as JSON `{error, hint}` so agents can self-serve setup
-guidance. **Untested with a real account/accessory yet** — login + plist
-export are manual first-run steps. NOT doing: FindMySyncPlus-style cache
-decryption (debugger key extraction, fragile, unproven on macOS 27).
+guidance. NOT doing: FindMySyncPlus-style cache decryption (debugger key
+extraction, fragile, unproven on macOS 27).
+
+**Verified 2026-07-17**: saved session is live (`LoginState.LOGGED_IN`,
+account loads and closes cleanly) — the interactive login had already been
+completed. User owns no AirTags (and this Mac has no
+`~/Library/com.apple.icloud.searchpartyd` beacon store), so the accessory
+plist-export step is N/A; `devices` correctly returns `[]`. Sidecar is done
+to the full extent applicable — if an AirTag is ever paired, drop its
+pairing export in `accessories/` and it lights up with zero code changes.
 
 ## 16. Pre-publish hardening & security review — TODO (process step)
 
@@ -819,9 +835,14 @@ Upgraded:
 - The app holds a long-lived `EKEventStore` (and requests Reminders access) --
   required for `.EKEventStoreChanged` to be delivered at all -- and re-donates
   all open tasks on every mutation, debounced 2s.
-- Verified: compiles through the full appintentsmetadataprocessor. NOT yet
-  verified live: that tasks surface in Spotlight ask on beta 3 (needs the app
-  running + a mutation while watching Spotlight).
+- Verified: compiles through the full appintentsmetadataprocessor.
+- **Verified LIVE 2026-07-17** (public beta, 26A5378n): with the app
+  running, a freshly created reminder ("Spotlight probe: water the office
+  ferns") surfaced in Spotlight under its own **AgentTasks** group header —
+  distinct from the Reminders app's own result — within seconds of the
+  mutation (screenshot-confirmed). Siri also offers "Agent Tasks" as a
+  reminder-creation destination, so the entity donations are feeding both
+  surfaces.
 
 
 ## 32. Beta-upgrade regression drill (✅ SCRIPTED as `make betacheck` 2026-07-07; run after EVERY beta)
@@ -849,6 +870,7 @@ recorded in place: #12 `using terms from` healed, #33 executor skew
 persists, #30 Extensions still dormant. Still needing a human at the Mac:
 #31 Spotlight-ask live check (app launched + donating, try Spotlight),
 #2 real-device Siri conversational test, #15 FindMy login.
+**All three human checks cleared 2026-07-17** — see §31, §2, §15.
 
 ## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
 
