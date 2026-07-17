@@ -20,9 +20,18 @@
 //     {"attachmentsOf": ["<ext1>", ...]}
 //   -> {"ok":true,"attachments":{"<ext1>":[{"kind":"file|image|url",
 //      "uti":..., "fileURL":..., "fileSize":N, "url":...}, ...], ...}}
+// Read-only (IDEAS #26) — section membership, exclusive:
+//     {"sectionsOf": ["<ext1>", ...]}
+//   -> {"ok":true,"sections":{"<ext1>":"Section Name"|null, ...}}
 // Write (IDEAS #46) — attach to a reminder (combines with tags/parent ops):
 //     {"externalId": "<ext>", "attachFile": "/abs/path"}
 //     {"externalId": "<ext>", "attachURL": "https://..."}
+// Write (IDEAS #26) — assign to a section in the reminder's list, creating
+// the section if needed (find by display name, case-insensitive):
+//     {"externalId": "<ext>", "section": "Phase 1"}
+// Membership identifiers MUST be NSUUIDs — strings and REMObjectIDs both
+// make remindd drop the XPC connection ("couldn't communicate with a
+// helper application"), discovered by bisection 2026-07-15.
 // Success: {"ok":true,"tagged":N,"parent":"set|cleared"} on stdout (fields
 // present only for operations performed). Failure: {"error":"..."} on stderr, exit 1.
 //
@@ -41,12 +50,38 @@
 
 @interface REMStore : NSObject
 - (id)fetchReminderWithObjectID:(id)objectID error:(NSError **)error;
+- (id)fetchListWithObjectID:(id)objectID error:(NSError **)error;
+- (NSArray *)fetchListSectionsWithListObjectID:(id)objectID error:(NSError **)error;
 @end
 
 @interface REMSaveRequest : NSObject
 - (instancetype)initWithStore:(id)store;
 - (id)updateReminder:(id)reminder;
+- (id)updateList:(id)list;
+- (id)addListSectionWithDisplayName:(NSString *)name toListSectionContextChangeItem:(id)context;
 - (BOOL)saveSynchronouslyWithError:(NSError **)error;
+@end
+
+@interface REMListChangeItem : NSObject
+- (id)sectionsContextChangeItem;
+@end
+
+@interface REMListSectionContextChangeItem : NSObject
+- (void)setUnsavedMembershipsOfRemindersInSections:(id)memberships;
+@end
+
+@interface REMMembership : NSObject
+- (instancetype)initWithMemberIdentifier:(id)member groupIdentifier:(id)group
+                              isObsolete:(BOOL)obsolete modifiedOn:(NSDate *)date;
+@end
+
+@interface REMMemberships : NSObject
+- (instancetype)initWithMemberships:(NSArray *)memberships;
+@end
+
+@interface REMListSectionsDataView : NSObject
+- (instancetype)initWithStore:(id)store;
+- (id)fetchListSectionWithReminderID:(id)objectID error:(NSError **)error;
 @end
 
 @interface REMReminderChangeItem : NSObject
@@ -123,8 +158,17 @@ int main(int argc, const char *argv[]) {
             Class reminderClass = NSClassFromString(@"REMReminder");
             BOOL subtaskRead = reminderClass
                 && class_getProperty(reminderClass, "parentReminderID") != NULL;
-            printf("{\"ok\":true,\"mode\":\"check\",\"subtasks\":%s,\"subtaskRead\":%s}\n",
-                   subtasks ? "true" : "false", subtaskRead ? "true" : "false");
+            // Sections (IDEAS #26): create + membership + read-back surface.
+            Class saveCls = NSClassFromString(@"REMSaveRequest");
+            BOOL sections = NSClassFromString(@"REMMembership") != nil
+                && NSClassFromString(@"REMMemberships") != nil
+                && NSClassFromString(@"REMListSectionsDataView") != nil
+                && saveCls && [saveCls instancesRespondToSelector:@selector(updateList:)]
+                && [saveCls instancesRespondToSelector:
+                    @selector(addListSectionWithDisplayName:toListSectionContextChangeItem:)];
+            printf("{\"ok\":true,\"mode\":\"check\",\"subtasks\":%s,\"subtaskRead\":%s,\"sections\":%s}\n",
+                   subtasks ? "true" : "false", subtaskRead ? "true" : "false",
+                   sections ? "true" : "false");
             return 0;
         }
 
@@ -236,19 +280,47 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
 
+        // Read-only section membership (IDEAS #26): exclusive op, exits here.
+        NSArray *sectionsOf = cmd[@"sectionsOf"];
+        if ([sectionsOf isKindOfClass:[NSArray class]]) {
+            Class objectIDClass = requireClass(@"REMObjectID");
+            REMStore *store = (REMStore *)[requireClass(@"REMStore") new];
+            REMListSectionsDataView *view =
+                [(REMListSectionsDataView *)[requireClass(@"REMListSectionsDataView") alloc] initWithStore:store];
+            NSMutableDictionary *byId = [NSMutableDictionary dictionary];
+            for (id ext in sectionsOf) {
+                if (![ext isKindOfClass:[NSString class]] || [ext length] == 0) continue;
+                NSString *urlString = [NSString stringWithFormat:@"x-apple-reminderkit://REMCDReminder/%@", ext];
+                id oid = [(Class)objectIDClass objectIDWithURL:[NSURL URLWithString:urlString]];
+                if (!oid) continue;
+                NSError *fetchError = nil;
+                id section = [view fetchListSectionWithReminderID:oid error:&fetchError];
+                NSString *name = nil;
+                if (section) { @try { name = [section valueForKey:@"displayName"]; } @catch (NSException *e) {} }
+                byId[ext] = name ?: (id)[NSNull null];
+            }
+            NSDictionary *result = @{ @"ok": @YES, @"sections": byId };
+            NSData *out = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            fwrite(out.bytes, 1, out.length, stdout);
+            fputc('\n', stdout);
+            return 0;
+        }
+
         NSString *externalId = cmd[@"externalId"];
         NSArray *tags = cmd[@"tags"];
         NSString *parentId = cmd[@"parent"];
         BOOL clearParent = [cmd[@"clearParent"] boolValue];
         NSString *attachFile = cmd[@"attachFile"];
         NSString *attachURL = cmd[@"attachURL"];
+        NSString *sectionName = cmd[@"section"];
         if (![externalId isKindOfClass:[NSString class]] || externalId.length == 0) failJSON(@"missing externalId");
         BOOL wantTags = [tags isKindOfClass:[NSArray class]] && tags.count > 0;
         BOOL wantParent = [parentId isKindOfClass:[NSString class]] && parentId.length > 0;
         BOOL wantAttachFile = [attachFile isKindOfClass:[NSString class]] && attachFile.length > 0;
         BOOL wantAttachURL = [attachURL isKindOfClass:[NSString class]] && attachURL.length > 0;
-        if (!wantTags && !wantParent && !clearParent && !wantAttachFile && !wantAttachURL)
-            failJSON(@"nothing to do (need tags, parent, clearParent, attachFile, or attachURL)");
+        BOOL wantSection = [sectionName isKindOfClass:[NSString class]] && sectionName.length > 0;
+        if (!wantTags && !wantParent && !clearParent && !wantAttachFile && !wantAttachURL && !wantSection)
+            failJSON(@"nothing to do (need tags, parent, clearParent, attachFile, attachURL, or section)");
 
         Class objectIDClass = requireClass(@"REMObjectID");
         Class storeClass = requireClass(@"REMStore");
@@ -293,6 +365,14 @@ int main(int argc, const char *argv[]) {
         if (clearParent) {
             if (![change respondsToSelector:@selector(removeFromParentReminder)]) failJSON(@"removeFromParentReminder missing (subtask API changed)");
             [change removeFromParentReminder];
+            // Re-file into its list in the SAME save: detach alone leaves the
+            // reminder unfiled and invisible to EventKit (effective data
+            // loss — the original IDEAS #26 blocker; fix proven 2026-07-15).
+            id listID = nil;
+            @try { listID = [reminder valueForKey:@"listID"]; } @catch (NSException *e) {}
+            if (!listID) failJSON(@"cannot clear parent: reminder has no listID to re-file into");
+            @try { [(id)change setValue:listID forKey:@"listID"]; }
+            @catch (NSException *e) { failJSON(@"cannot re-file after detach (listID setter changed)"); }
             result[@"parent"] = @"cleared";
         } else if (wantParent) {
             id parentReminder = [store fetchReminderWithObjectID:fetch(parentId) error:&error];
@@ -306,6 +386,56 @@ int main(int argc, const char *argv[]) {
             if (![subtaskContext respondsToSelector:@selector(addReminderChangeItem:)]) failJSON(@"addReminderChangeItem: missing (subtask API changed)");
             [subtaskContext addReminderChangeItem:change];
             result[@"parent"] = @"set";
+        }
+
+        if (wantSection) {
+            id listID = nil;
+            @try { listID = [reminder valueForKey:@"listID"]; } @catch (NSException *e) {}
+            if (!listID) failJSON(@"reminder has no listID (section API changed)");
+            NSError *listError = nil;
+            id list = [store fetchListWithObjectID:listID error:&listError];
+            if (!list) failJSON([NSString stringWithFormat:@"could not fetch list: %@",
+                                 listError.localizedDescription ?: @"no detail"]);
+            NSError *sectionsError = nil;
+            NSArray *sections = [store fetchListSectionsWithListObjectID:listID error:&sectionsError];
+
+            id existingSection = nil;
+            for (id s in sections) {
+                NSString *dn = nil;
+                @try { dn = [s valueForKey:@"displayName"]; } @catch (NSException *e) {}
+                if (dn && [dn caseInsensitiveCompare:sectionName] == NSOrderedSame) { existingSection = s; break; }
+            }
+
+            REMListChangeItem *listChange = [save updateList:list];
+            if (!listChange || ![listChange respondsToSelector:@selector(sectionsContextChangeItem)])
+                failJSON(@"sectionsContextChangeItem missing (section API changed)");
+            REMListSectionContextChangeItem *sectionsCtx = [listChange sectionsContextChangeItem];
+
+            id sectionOID = nil;
+            BOOL createdSection = NO;
+            if (existingSection) {
+                @try { sectionOID = [existingSection valueForKey:@"objectID"]; } @catch (NSException *e) {}
+            } else {
+                id sectionChange = [save addListSectionWithDisplayName:sectionName
+                                       toListSectionContextChangeItem:sectionsCtx];
+                @try { sectionOID = [sectionChange valueForKey:@"objectID"]; } @catch (NSException *e) {}
+                createdSection = YES;
+            }
+            NSUUID *groupUUID = nil;
+            @try { groupUUID = [sectionOID valueForKey:@"uuid"]; } @catch (NSException *e) {}
+            NSUUID *memberUUID = [[NSUUID alloc] initWithUUIDString:externalId];
+            if (!groupUUID || !memberUUID) failJSON(@"could not derive UUIDs for section membership");
+
+            // Identifiers MUST be NSUUIDs; remindd merges memberships (CRDT
+            // via modifiedOn), so a single-entry object never clobbers other
+            // reminders' sections — both verified live 2026-07-15.
+            REMMembership *membership = [(REMMembership *)[requireClass(@"REMMembership") alloc]
+                initWithMemberIdentifier:memberUUID groupIdentifier:groupUUID
+                              isObsolete:NO modifiedOn:[NSDate date]];
+            REMMemberships *memberships = [(REMMemberships *)[requireClass(@"REMMemberships") alloc]
+                initWithMemberships:@[membership]];
+            [sectionsCtx setUnsavedMembershipsOfRemindersInSections:memberships];
+            result[@"section"] = createdSection ? @"created+set" : @"set";
         }
 
         if (wantAttachFile || wantAttachURL) {

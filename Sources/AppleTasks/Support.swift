@@ -185,6 +185,10 @@ struct TaskOut: Codable {
     var recurred: Bool?
     /// Set by show --attachments only (IDEAS #46).
     var attachments: [AttachmentOut]?
+    /// Set by show --section only (IDEAS #26): section display name, if any.
+    var section: String?
+    /// Set by update --section only: whether the assign succeeded.
+    var sectionApplied: Bool?
     /// Set by update --attach-file/--attach-url only: whether the attach
     /// succeeded (private helper; best-effort like nativeTags).
     var attached: Bool?

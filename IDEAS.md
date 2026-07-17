@@ -592,7 +592,7 @@ needs it, so it ships last and stays optional.
 - MCP tool `readinglist_scan`; `--path` override for testing without FDA.
 
 
-## 26. Sections & subtasks via the private helper — ✅ SUBTASKS DONE 2026-07-08 (`update --parent`); sections + detach still open
+## 26. Sections & subtasks via the private helper — ✅ FULLY DONE 2026-07-15 (subtasks 07-08; sections + safe detach 07-15)
 
 The remctl spike proved ReminderKit can write more than tags: subtasks,
 sections, smart lists. Extend apple-tasks-private with `--set-section` and
@@ -615,6 +615,27 @@ and list normally. Two findings from live testing:
   re-file-into-list step is found. Sections are also still open: section
   CREATE selectors exist (addListSectionWithDisplayName:...) but the
   reminder->section reference needed to ASSIGN a task to a section is unproven.
+
+Both blockers solved 2026-07-15 (live-spiked against a sacrificial list):
+- **Sections**: assignment goes through the LIST change item —
+  `updateList:` → `sectionsContextChangeItem` →
+  `setUnsavedMembershipsOfRemindersInSections:` with a `REMMemberships`
+  of `REMMembership(memberIdentifier:groupIdentifier:isObsolete:modifiedOn:)`.
+  The identifiers MUST be **NSUUIDs** (reminder externalId / section
+  objectID uuid) — plain strings and REMObjectIDs both make remindd drop
+  the XPC connection; found by bisection. remindd MERGES memberships
+  (CRDT via modifiedOn), so single-entry writes never clobber other
+  reminders' sections (verified with two reminders). Read-back:
+  `REMListSectionsDataView.fetchListSectionWithReminderID:`. Shipped:
+  helper ops `{"section": "Name"}` (find-or-create by display name,
+  case-insensitive) + read `{"sectionsOf": [ids]}`; CLI `update --section`
+  / `show --section`; MCP task_update.section / task_show.section;
+  `--check` reports `sections`.
+- **Safe detach**: `removeFromParentReminder` + `setValue:forKey:@"listID"`
+  (the change item's listID is settable) in the SAME save re-files the
+  reminder into its list — it stays EventKit-visible, killing the
+  data-loss problem. `--clear-parent` is now exposed (CLI + MCP
+  task_update.clear_parent), mutually exclusive with --parent.
 
 ## macOS 27 beta 2/3 research (2026-07-06) — what the upgrade unlocks
 

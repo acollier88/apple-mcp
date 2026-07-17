@@ -108,6 +108,8 @@ const taskShape = {
     .optional()
     .describe("task_show with attachments: true only."),
   attached: z.boolean().optional().describe("task_update attach_* only: whether the attach succeeded."),
+  section: z.string().optional().describe("task_show with section: true only — the task's section name."),
+  sectionApplied: z.boolean().optional().describe("task_update section only: whether the assign succeeded."),
 };
 const taskSchema = z.object(taskShape);
 
@@ -289,10 +291,12 @@ server.registerTool(
       clear_recurrence: z.boolean().optional().describe("Remove the repeat rule (series stops recurring)."),
       attach_file: z.string().optional().describe("Attach a file by absolute path (copied into the Reminders store)."),
       attach_url: z.string().optional().describe("Attach a URL as a rich attachment (distinct from the url field)."),
+      clear_parent: z.boolean().optional().describe("Detach from the parent task (stays in its list)."),
+      section: z.string().optional().describe("Move into this section of the task's list, creating it if needed."),
     },
     outputSchema: taskShape,
   },
-  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent, recurrence, clear_recurrence, attach_file, attach_url }) => {
+  async ({ id, title, add_tags, remove_tags, notes, append_notes, due, clear_due, priority, list, url, clear_url, parent, recurrence, clear_recurrence, attach_file, attach_url, clear_parent, section }) => {
     const args = ["update", id];
     if (title) args.push("--title", title);
     for (const t of add_tags ?? []) args.push("--add-tag", t);
@@ -310,6 +314,8 @@ server.registerTool(
     if (clear_recurrence) args.push("--clear-recurrence");
     if (attach_file) args.push("--attach-file", attach_file);
     if (attach_url) args.push("--attach-url", attach_url);
+    if (clear_parent) args.push("--clear-parent");
+    if (section) args.push("--section", section);
     try {
       return okJson(await cli(args));
     } catch (err) {
@@ -1391,12 +1397,14 @@ server.registerTool(
       id: z.string().describe("Task id from task_list/dispatch_list."),
       attachments: z.boolean().optional().describe(
         "Include attachments (kind/uti/fileURL/url). Reading a fileURL's content needs Full Disk Access."),
+      section: z.boolean().optional().describe("Include the task's section name."),
     },
     outputSchema: taskShape,
   },
-  async ({ id, attachments }) => {
+  async ({ id, attachments, section }) => {
     const args = ["show", id];
     if (attachments) args.push("--attachments");
+    if (section) args.push("--section");
     try {
       return okJson(await cli(args));
     } catch (err) {

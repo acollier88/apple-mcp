@@ -112,14 +112,20 @@ struct Show: AsyncParsableCommand {
     @Flag(help: "Include attachments (private helper; file content needs Full Disk Access to read).")
     var attachments = false
 
+    @Flag(help: "Include the task's section name (private helper).")
+    var section = false
+
     func run() async throws {
         let store = Store()
         try await store.requestAccess()
         let reminder = try await store.reminder(id: id)
         var out = TaskOut(reminder)
+        let ext = reminder.calendarItemExternalIdentifier ?? ""
         if attachments {
-            let ext = reminder.calendarItemExternalIdentifier ?? ""
             out.attachments = NativeTags.attachments(externalIds: [ext])?[ext] ?? []
+        }
+        if section {
+            out.section = NativeTags.sections(externalIds: [ext])?[ext] ?? nil
         }
         emit(out)
     }
@@ -336,6 +342,14 @@ struct Update: AsyncParsableCommand {
     @Option(name: .customLong("parent"), help: "Make this task a subtask of the given task id (private ReminderKit helper).")
     var parent: String?
 
+    @Flag(name: .customLong("clear-parent"),
+          help: "Detach from the parent task (the task stays in its list; private helper).")
+    var clearParent = false
+
+    @Option(name: .customLong("section"),
+            help: "Move the task into this section of its list, creating the section if needed (private helper).")
+    var section: String?
+
     @Option(name: .customLong("attach-file"),
             help: "Attach a file (copied into the Reminders store; private helper).")
     var attachFile: String?
@@ -344,13 +358,10 @@ struct Update: AsyncParsableCommand {
             help: "Attach a URL as a rich attachment (private helper; distinct from --url).")
     var attachUrl: String?
 
-    // NOTE: no --clear-parent. The helper CAN detach (removeFromParentReminder,
-    // proven at the ReminderKit layer), but a detached reminder is not re-filed
-    // into a list calendar and so becomes invisible to EventKit — effectively
-    // data loss from every EventKit-based surface. Left unexposed until the
-    // re-file step is figured out (IDEAS #26).
-
     func run() async throws {
+        if parent != nil && clearParent {
+            throw AppleTasksError.invalidInput("--parent and --clear-parent are mutually exclusive")
+        }
         for tag in addTags { try Tags.validate(tag) }
         let store = Store()
         try await store.requestAccess()
@@ -401,6 +412,15 @@ struct Update: AsyncParsableCommand {
             }
             out.subtask = NativeTags.setParent(childExternalId: reminder.calendarItemExternalIdentifier,
                                                parentExternalId: parentExternalId)
+        }
+        if clearParent {
+            out.subtask = NativeTags.clearParent(externalId: reminder.calendarItemExternalIdentifier)
+        }
+        // Section assignment (IDEAS #26): find-or-create by display name in
+        // the task's list, membership merged CRDT-style by remindd.
+        if let section {
+            out.sectionApplied = NativeTags.setSection(
+                externalId: reminder.calendarItemExternalIdentifier, name: section)
         }
         if attachFile != nil || attachUrl != nil {
             let absoluteFile = attachFile.map { NSString(string: $0).expandingTildeInPath }

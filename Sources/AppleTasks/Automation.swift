@@ -84,10 +84,29 @@ enum NativeTags {
             externalId: childExternalId, what: "subtask")
     }
 
-    /// Detach `externalId` from its parent reminder.
+    /// Detach `externalId` from its parent reminder (the helper re-files it
+    /// into its list in the same save, so it stays EventKit-visible).
     static func clearParent(externalId: String?) -> Bool? {
         run(["externalId": externalId ?? "", "clearParent": true],
             externalId: externalId, what: "subtask detach")
+    }
+
+    /// IDEAS #26: assign the reminder to a section in its list by display
+    /// name (created case-insensitively if missing). Best-effort like mirror.
+    static func setSection(externalId: String?, name: String) -> Bool? {
+        run(["externalId": externalId ?? "", "section": name],
+            externalId: externalId, what: "section assign")
+    }
+
+    /// IDEAS #26: section display name per externalId (nil value = none).
+    static func sections(externalIds: [String]) -> [String: String?]? {
+        guard !externalIds.isEmpty,
+              let outData = runRead(["sectionsOf": externalIds]),
+              let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any],
+              let sections = obj["sections"] as? [String: Any] else { return nil }
+        var result: [String: String?] = [:]
+        for (key, value) in sections { result[key] = value as? String }
+        return result
     }
 
     /// IDEAS #47: map each externalId to its parent reminder's externalId

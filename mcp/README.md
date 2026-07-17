@@ -56,7 +56,11 @@ the next occurrence (`recurred: true`, still open, next due date).
 Attachments (private helper): `task_show` takes `attachments: true`,
 `task_update` takes `attach_file`/`attach_url`; dispatched agents get
 attachment paths in their prompt (reading file content needs Full Disk
-Access on the reading process).
+Access on the reading process). Structure (private helper): `task_update`
+takes `parent`/`clear_parent` (native subtasks) and `section` (move into a
+named section of the task's list, created if needed); `task_show` takes
+`section: true` — a plan list can be visually phased in Reminders
+(sections = phases, subtasks = steps).
 
 **Plans** — `plan_list`, `plan_create` (a plan = a Reminders list).
 
