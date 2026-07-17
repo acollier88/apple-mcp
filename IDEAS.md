@@ -1372,3 +1372,41 @@ to agents. Design questions: per-seat defaults vs a tag (`[fast]`)?
 does dispatch retry a failed lane on the next preference, and how does
 that interact with maxRetries?
 
+## 53. Bookmarks: categorize/review + follow-up research tag — MAYBE (user's capture 2026-07-16)
+
+From the user's Reminder capture: "Safari/Chrome bookmark categorize/
+reviewer to sort and tag; maybe tangental: a follow-up or read-later list
+on bookmarks — a specific reminder tag that would prompt the agent to
+research." Two pieces:
+
+**A. `bookmarks scan` — capture feed** (mirrors reading-list scan):
+watermarked scan over Safari (`~/Library/Safari/Bookmarks.plist`, binary
+plist, needs Full Disk Access — same as Reading List) and Chrome
+(`~/Library/Application Support/Google/Chrome/*/Bookmarks`, plain JSON,
+`date_added`). Emits `{title, url, folder, added, browser}`. New-bookmark
+detection via the usual ScanState watermark.
+
+**B. Categorize/review — propose-only**: feed the scan to a model seat
+(#51: local/CLI/BYOM all work) that proposes folder/tag organization —
+same posture as `suggest`: PROPOSALS ONLY. Writing browser bookmark files
+back is deliberately out: Safari rewrites its plist and iCloud-syncs it
+(corruption risk), Chrome clobbers file edits while running. If the human
+wants applied organization, it lives on our side of the fence: tasks
+tagged per category, or a digest/note report.
+
+**C. `[research]` follow-up lane**: a designated bookmark folder (e.g.
+"Follow up") or bookmarks surfaced by the scan become `[research][auto]`
+tasks (URL in the url field, #19 linkback). A `[research]` prompt line in
+dispatch (like the existing `[mail]`/`[pr]` lines) tells the agent:
+web_fetch the URL, research the topic, and write findings somewhere
+reviewable (task notes / Apple Note / reply draft). Reuses web_fetch,
+watches machinery stays separate (watches = recurring monitors,
+research = one-shot deep-dive).
+
+Open questions before building: is Reading List (already shipped) close
+enough for the read-later half — is the marginal value bookmarks-folder
+capture, or the research lane? Does Chrome matter or is Safari enough?
+The research prompt line (C) is cheap and standalone — it could ship
+first without any bookmark scanning at all (tag any task `[research]`
+with a URL).
+
