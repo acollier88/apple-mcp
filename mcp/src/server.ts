@@ -718,7 +718,7 @@ server.registerTool(
   "suggest",
   {
     description:
-      "Proactive suggestions from the on-device model: reviews the next week's calendar, upcoming " +
+      "Proactive suggestions: reviews the next week's calendar, upcoming " +
       "birthdays, stale tasks, and recent agent activity, and PROPOSES tasks/events/drops. Nothing is " +
       "ever created — apply accepted proposals yourself via task_create/event_create.",
     inputSchema: {
@@ -726,6 +726,7 @@ server.registerTool(
       stale_weeks: z.number().int().optional().describe("Open [read]/claimed/overdue tasks older than this count as stale (default 4)."),
       max: z.number().int().optional().describe("Suggestion cap (default 8)."),
       no_contacts: z.boolean().optional().describe("Skip the birthday feed (no Contacts prompt)."),
+      agent: z.string().optional().describe("Model seat: 'local' (on-device Apple model) or an agents.json lane (CLI or BYOM llm). Default: agents.json suggest.agent, else local."),
     },
     // SuggestOut (Sources/AppleTasks/Suggest.swift)
     outputSchema: {
@@ -740,12 +741,13 @@ server.registerTool(
       suggestions: z.array(suggestionSchema),
     },
   },
-  async ({ days, stale_weeks, max, no_contacts }) => {
+  async ({ days, stale_weeks, max, no_contacts, agent }) => {
     const args = ["suggest"];
     if (days !== undefined) args.push("--days", String(days));
     if (stale_weeks !== undefined) args.push("--stale-weeks", String(stale_weeks));
     if (max !== undefined) args.push("--max", String(max));
     if (no_contacts) args.push("--no-contacts");
+    if (agent) args.push("--agent", agent);
     try {
       return okJson(await cli(args, 180_000));
     } catch (err) {

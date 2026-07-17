@@ -531,10 +531,21 @@ Two honest limits, by design:
   run log (`run_log`/`dispatches`).
 - It's one prompt, one reply — no conversation state.
 
-The same lane slots into the triage classifier seat
-(`triage --agent homelab`, or `"triage": {"agent": "homelab"}` for the
-dispatch-cycle triage), since the classifier is also a single
-prompt-in/JSON-out call. The bridge is also usable standalone:
+**Model seats.** Everywhere apple-tasks itself consults a model accepts
+any lane as its backend — the point of BYOM isn't the CLI, it's swapping
+the brain per seat:
+
+| seat | flag | agents.json default |
+|---|---|---|
+| triage classifier (`triage`, `--notes`, dispatch-cycle triage) | `triage --agent homelab` | `"triage": {"agent": "homelab"}` |
+| suggestions (`suggest`) | `suggest --agent homelab` | `"suggest": {"agent": "homelab"}` |
+| digest proposals (`digest --suggest`) | (no flag) | `"suggest": {"agent": "homelab"}` |
+
+`local` always means the on-device Apple model (default everywhere).
+Every seat is a single prompt-in/JSON-out call, which is exactly what a
+bare endpoint can do. Screenshot OCR and voice transcription are Vision/
+Speech framework calls, not LLM seats — they stay on-device. The bridge
+is also usable standalone:
 
 ```bash
 apple-tasks llm -p "one-line summary of: ..." --endpoint http://mini.local:11434/v1 --model qwen3:32b
@@ -817,6 +828,7 @@ on-device Foundation Models classifier, and **proposes** items:
 ```bash
 apple-tasks suggest                       # {suggestions: [{kind, title, reason, due?}]}
 apple-tasks suggest --days 14 --max 5     # wider look-ahead, tighter cap
+apple-tasks suggest --agent homelab       # same seat, different model (BYOM/CLI lane)
 apple-tasks digest --note --suggest       # proposals as a digest section
 ```
 
@@ -828,6 +840,13 @@ an agent calling `task_create` on proposals you accept). Every suggestion
 carries a `reason` citing the signal line it came from. In the digest the
 section is best-effort: an unavailable model annotates the JSON
 (`suggestError`) instead of failing the 7am run. MCP: `suggest` tool.
+
+The model seat is swappable: `--agent local` (default) is the on-device
+model; any agents.json lane — a CLI agent or a BYOM `llm` endpoint — takes
+the same prompt-in/JSON-out contract. Set a durable default with
+`"suggest": {"agent": "homelab"}` in agents.json (picked up by
+`digest --suggest` too, which takes no flag). Triage's seat works the same
+way (`triage --agent ...` / `"triage": {"agent": ...}`).
 
 ## iOS Capture Shortcut
 

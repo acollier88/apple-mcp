@@ -114,12 +114,20 @@ struct AgentsConfig: Codable {
         let inbox: String?
     }
 
+    /// A model seat's default backend (IDEAS #51): "local" for the
+    /// on-device model, or any agents.json lane (CLI or BYOM llm).
+    struct SeatConfig: Codable {
+        let agent: String?
+    }
+
     var agents: [String: Agent]
     /// Named places for `conditions.location` gates.
     var places: [String: Place]?
     /// When present, run a one-shot inbox triage (see Triage.swift) at the
     /// start of every dispatch cycle, before scanning for dispatchable tasks.
     var triage: TriageConfig?
+    /// Default backend for the `suggest` seat (also digest --suggest).
+    var suggest: SeatConfig?
     /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
     var maxConcurrent: Int?
     /// Repo/project tag -> working directory.

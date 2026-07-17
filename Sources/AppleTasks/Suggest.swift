@@ -58,6 +58,9 @@ struct Suggest: AsyncParsableCommand {
     @Flag(name: .customLong("no-contacts"), help: "Skip the birthday feed (no Contacts prompt).")
     var noContacts = false
 
+    @Option(help: "Model seat: 'local' for the on-device Apple model, or an agents.json lane (CLI or BYOM llm). Default: agents.json \"suggest\": {\"agent\": ...}, else local.")
+    var agent: String?
+
     func run() async throws {
         let store = Store()
         try await store.requestAccess()
@@ -66,7 +69,7 @@ struct Suggest: AsyncParsableCommand {
         let (lines, inputs) = try await Suggest.gather(
             store: store, days: days, staleWeeks: staleWeeks, includeContacts: !noContacts)
         let suggestions = try await SuggestClassifier.propose(
-            context: lines, max: maxSuggestions)
+            context: lines, max: maxSuggestions, agent: agent)
 
         emit(SuggestOut(generatedAt: ISO8601DateFormatter().string(from: Date()),
                         inputs: inputs, suggestions: suggestions))
@@ -162,7 +165,64 @@ struct Suggest: AsyncParsableCommand {
 }
 
 enum SuggestClassifier {
-    static func propose(context: [String], max maxItems: Int) async throws -> [SuggestionOut] {
+    static let instructions = """
+    You are a proactive personal assistant reviewing someone's upcoming week. \
+    From the signal lines provided, propose a SHORT list of genuinely helpful \
+    suggestions. Kinds: "task" — a to-do worth creating; "event" — a calendar \
+    block worth adding (e.g. travel time before a distant appointment); "drop" \
+    — an existing STALE-TASK the person should probably drop or recommit to. \
+    Normally worth raising: a BIRTHDAY in the next few days (propose a wish/\
+    call/gift task due that date), an EVENT that plainly needs preparation or \
+    travel, any STALE-TASK (propose dropping or recommitting). Skip routine \
+    recurring events. Do not invent items with no supporting signal line. \
+    Today is \(Dates.format(Date(), "yyyy-MM-dd EEEE")).
+    """
+
+    /// The seat's backend: an explicit agent, the agents.json
+    /// `"suggest": {"agent": ...}` default, else the on-device model.
+    static func resolveAgent(_ explicit: String?) -> String {
+        explicit ?? (try? AgentsConfig.load())?.suggest?.agent ?? LocalClassifier.agentTag
+    }
+
+    static func propose(context: [String], max maxItems: Int,
+                        agent: String? = nil) async throws -> [SuggestionOut] {
+        let seat = resolveAgent(agent)
+        guard seat == LocalClassifier.agentTag else {
+            return try proposeExternal(context: context, max: maxItems, agentTag: seat)
+        }
+        return try await proposeLocal(context: context, max: maxItems)
+    }
+
+    /// Any agents.json lane — a CLI agent or a BYOM llm block (IDEAS #51):
+    /// same prompt-in/JSON-out contract as the triage classifier.
+    private static func proposeExternal(context: [String], max maxItems: Int,
+                                        agentTag: String) throws -> [SuggestionOut] {
+        guard !context.isEmpty else { return [] }
+        let config = try AgentsConfig.load()
+        guard let lane = config.agents[agentTag.lowercased()] else {
+            throw AppleTasksError.saveFailed("no '\(agentTag)' agent in agents.json for the suggest seat")
+        }
+        guard let template = lane.commandTemplate(tag: agentTag.lowercased()) else {
+            throw AppleTasksError.saveFailed(
+                "agent '\(agentTag)' has neither \"command\" nor \"llm\" in agents.json")
+        }
+        let prompt = """
+        \(instructions)
+
+        Output ONLY a JSON array, no prose, no markdown fences:
+        [{"kind": "task"|"event"|"drop", "title": "...", "reason": "...", \
+        "due": "yyyy-MM-dd" or "yyyy-MM-dd HH:mm" or null}]
+
+        Signals:
+        \(context.joined(separator: "\n"))
+        """
+        let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+        let raw = try Triage.runAgent(argv, timeoutMinutes: lane.timeoutMinutes ?? 5, env: lane.env)
+        let items: [SuggestionOut] = try Triage.parseJSONArray(raw)
+        return Array(items.prefix(maxItems))
+    }
+
+    private static func proposeLocal(context: [String], max maxItems: Int) async throws -> [SuggestionOut] {
         #if canImport(FoundationModels)
         guard #available(macOS 26.0, *) else {
             throw AppleTasksError.saveFailed("suggest needs macOS 26+ (FoundationModels)")
@@ -172,18 +232,8 @@ enum SuggestClassifier {
                 "on-device model \(LocalClassifier.status()) — check Apple Intelligence in System Settings")
         }
         guard !context.isEmpty else { return [] }
-        let session = LanguageModelSession(model: SystemLanguageModel.default, instructions: """
-        You are a proactive personal assistant reviewing someone's upcoming week. \
-        From the signal lines provided, propose a SHORT list of genuinely helpful \
-        suggestions. Kinds: "task" — a to-do worth creating; "event" — a calendar \
-        block worth adding (e.g. travel time before a distant appointment); "drop" \
-        — an existing STALE-TASK the person should probably drop or recommit to. \
-        Normally worth raising: a BIRTHDAY in the next few days (propose a wish/\
-        call/gift task due that date), an EVENT that plainly needs preparation or \
-        travel, any STALE-TASK (propose dropping or recommitting). Skip routine \
-        recurring events. Do not invent items with no supporting signal line. \
-        Today is \(Dates.format(Date(), "yyyy-MM-dd EEEE")).
-        """)
+        let session = LanguageModelSession(model: SystemLanguageModel.default,
+                                           instructions: instructions)
         let decision = try await session.respond(to: context.joined(separator: "\n"),
                                                  generating: SuggestionList.self).content
         return decision.items.prefix(maxItems).map {

@@ -1341,6 +1341,20 @@ Shipped (Llm.swift + Dispatch/Triage wiring):
   `dispatch --agent byom` run claimed the task, ran the synthesized
   bridge command, logged the reply, exit 0 → succeeded.
 
+**Model seats (the actual point, clarified by user 2026-07-17):** every
+place apple-tasks itself consults a model can now pick its backend —
+local (on-device), a CLI lane, or a BYOM llm lane:
+- triage classifier: already seat-selectable (`--agent` /
+  `"triage": {"agent"}`); BYOM lanes just work through commandTemplate.
+- suggest + digest --suggest: NEW `suggest --agent <lane>` flag and
+  agents.json `"suggest": {"agent": ...}` default (SeatConfig); external
+  path shares the exact instructions text with the @Generable session and
+  parses via Triage.parseJSONArray. MCP `suggest` tool gained `agent`.
+  Verified via mock endpoint: flag path and config-default path both
+  produce parsed suggestions from real gathered signals.
+- NOT LLM seats: screenshots OCR (Vision) and audio transcription
+  (Speech) — deterministic frameworks, stay on-device.
+
 ## 52. Model-preference tiers ("fast" / "thinking" / "complex") — TODO (user's idea 2026-07-17)
 
 Hermes-style ordered model preferences: config maps task categories to
