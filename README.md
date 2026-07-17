@@ -442,10 +442,44 @@ servers, not local processes). Then `[google][auto] Add prep notes to
 today's meetings` — the `[gemini][calendar]` example this project started
 with — works with zero code. The same safety posture as the web lane
 applies: sending mail or modifying someone's calendar is transactional —
-route it through the approval protocol in your promptTemplate. A
-watermarked `gmail scan` capture feed (fixing the "Mail.app isn't syncing"
-hole) stays on the roadmap; it needs Gmail API OAuth credentials of its
-own, so it ships separately (IDEAS #42).
+route it through the approval protocol in your promptTemplate. The capture
+side ships separately as `gmail scan` (below) — official MCPs are
+pull-tools for agents, not watermarked feeds.
+
+### Gmail capture (`gmail scan`, read-only)
+
+A watermarked Gmail inbox feed (IDEAS #42) that fixes the "Mail.app isn't
+syncing → `mail scan` returns `[]`" hole — Gmail becomes a first-class
+triage input alongside Notes/Mail/screenshots. Talks to the Gmail API
+directly with the **read-only scope**; like Mail, there is no send path.
+
+One-time setup (personal Google Cloud project, ~5 minutes):
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create a
+   project (any name, e.g. `apple-tasks`).
+2. APIs & Services → Library → **Gmail API** → Enable.
+3. OAuth consent screen (Google Auth Platform): External, add yourself as
+   a **test user**.
+4. Credentials → Create credentials → OAuth client ID → type **Desktop
+   app** → download the JSON to
+   `~/.config/apple-tasks/gmail/credentials.json`.
+5. `apple-tasks gmail login` — opens the browser consent (PKCE + loopback
+   redirect; tokens land in `gmail/token.json`, chmod 600, auto-refreshed).
+
+While the consent screen is in "Testing" status Google expires refresh
+tokens after 7 days; publish the app to "In production" (unverified is
+fine for personal use — click through the warning) for a durable token.
+
+```bash
+apple-tasks gmail scan                        # inbox messages since last scan
+                                              # (watermark in apple-tasks.db;
+                                              #  first run looks back 24h)
+apple-tasks gmail scan --limit 20 --query "from:boss@example.com"
+apple-tasks gmail show <id> --max-chars 2000  # one message, plain-text body
+```
+
+Scan output mirrors `mail scan` (plus `threadId` and `snippet`); `show`
+prefers the `text/plain` MIME part and falls back to the snippet.
 
 ## Notifications & quiet hours
 
@@ -600,6 +634,7 @@ apple-tasks files scan --archive             # + move processed files to done/
 apple-tasks audio scan                       # transcribe voice notes in the inbox folder
 apple-tasks reading-list scan                # new Safari Reading List saves
 apple-tasks clipboard scan                   # clipboard text, if it changed
+apple-tasks gmail scan                       # Gmail inbox (setup above)
 ```
 
 - **`screenshots scan`** turns the "screenshot it to deal with later" habit

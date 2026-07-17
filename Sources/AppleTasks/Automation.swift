@@ -220,6 +220,8 @@ struct ScanState: Codable {
     var watchState: [String: WatchRecord]?
     /// NSPasteboard.changeCount at the last clipboard scan (IDEAS #45).
     var clipboardChangeCount: Int?
+    /// Gmail internalDate (epoch ms) of the newest message seen (IDEAS #42).
+    var gmailScanWatermark: String?
 
     static let dbKey = "scan_state"
 

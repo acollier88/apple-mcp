@@ -1105,7 +1105,7 @@ signal line; prompt tuning note: the first "prefer empty over noise"
 instruction over-suppressed to zero suggestions, the shipped wording names
 the normally-worth-raising cases instead.
 
-## 42. Google Workspace via official MCP servers — ✅ LANE DONE 2026-07-15; gmail scan capture feed still TODO (needs OAuth credentials — user setup)
+## 42. Google Workspace via official MCP servers — ✅ LANE DONE 2026-07-15; gmail scan ✅ CODE SHIPPED 2026-07-17 (unverified live — awaiting OAuth onboarding decision)
 
 Google ships managed remote MCP servers (GA rollout from 2026-05-01) for
 Gmail, Calendar, Drive, Chat, People — auth inherits the user's own
@@ -1129,11 +1129,36 @@ sibling; wire the official servers in:
 Lane shipped as documentation (README "Dispatcher lanes: Google
 Workspace"): [google] agents.json template loading the official remote MCP
 servers via a separate google-mcp.json, approval-protocol posture for
-transactional actions, don't-build-google-mcp decision recorded. The
-`gmail scan` capture feed remains open: it needs the user to provision
-Gmail API OAuth credentials (client id + consent flow) before there is
-anything to build against — flagged to the user rather than shipping an
-untestable stub.
+transactional actions, don't-build-google-mcp decision recorded.
+
+**gmail scan CODE SHIPPED 2026-07-17** (`Sources/AppleTasks/Gmail.swift`):
+`gmail login` (PKCE + loopback-redirect OAuth, browser consent, tokens →
+`~/.config/apple-tasks/gmail/token.json` chmod 600, auto-refresh with
+rotation), `gmail scan` (watermarked via ScanState.gmailScanWatermark =
+newest internalDate ms; `after:` + strict-ms filter; mirrors mail_scan's
+shape + threadId/snippet; --query for extra search terms), `gmail show`
+(text/plain part, base64url-decoded, snippet fallback). Read-only scope
+only — no send path, matching the mail posture. MCP: `gmail_scan` /
+`gmail_show` (51 tools). Builds + typechecks clean; error chain verified
+(scan → "run gmail login" → login → console-setup hint). **NOT yet run
+against a live mailbox** — blocked on the OAuth onboarding decision below.
+
+**OPEN QUESTION (user, 2026-07-17): lower the setup barrier.** BYO Google
+Cloud project + OAuth client is too much friction for anyone but us.
+Options to weigh before first login:
+- **Ship a shared OAuth client id** in the repo: needs Google verification
+  for restricted scopes (gmail.readonly) — CASA security assessment,
+  $15k+/yr class of burden; unverified shared clients hit the 100-user cap
+  and scare-screens. Also the "secret" can't be secret in open source
+  (Google tolerates this for Desktop clients, but ToS-gray).
+- **Device flow**: not available for Gmail's restricted scopes.
+- **IMAP + app password instead**: `imap.gmail.com`, user enables 2FA and
+  mints an app password — no cloud project, no consent screen, ~1 minute
+  of setup, works for any IMAP provider not just Gmail. Loses labels/
+  threadId niceties; scan shape stays identical. Likely the real
+  barrier-killer; could live alongside the OAuth path or replace it.
+- **Status quo**: document BYO-credentials as the power-user path (already
+  in README).
 
 ## 43. Quiet hours as a ContextGate time condition — ✅ DONE 2026-07-12 (qwen #5, reshaped)
 

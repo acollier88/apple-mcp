@@ -1169,6 +1169,62 @@ server.registerTool(
   }
 );
 
+// GmailHeaderOut / GmailMessageOut (Sources/AppleTasks/Gmail.swift)
+const gmailHeaderShape = {
+  id: z.string(),
+  threadId: z.string(),
+  subject: z.string(),
+  from: z.string(),
+  received: z.string(),
+  read: z.boolean(),
+};
+
+server.registerTool(
+  "gmail_scan",
+  {
+    description:
+      "List Gmail inbox messages newer than the last scan (watermarked capture feed; first call looks back 24h). " +
+      "Headers + snippet only, newest first; use gmail_show for a body. Read-only scope — no send path exists. " +
+      "Needs a one-time 'apple-tasks gmail login' from a terminal.",
+    inputSchema: {
+      limit: z.number().int().optional().describe("Max messages, newest first (default 50)."),
+      query: z.string().optional().describe("Extra Gmail search terms ANDed with the watermark (e.g. 'from:boss@example.com')."),
+    },
+    outputSchema: { messages: z.array(z.object({ ...gmailHeaderShape, snippet: z.string() })) },
+  },
+  async ({ limit, query }) => {
+    const args = ["gmail", "scan"];
+    if (limit !== undefined) args.push("--limit", String(limit));
+    if (query) args.push("--query", query);
+    try {
+      return okJson(await cli(args), "messages");
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+server.registerTool(
+  "gmail_show",
+  {
+    description: "Show one Gmail message including its plain-text body. Read-only.",
+    inputSchema: {
+      id: z.string().describe("Message id from gmail_scan."),
+      max_chars: z.number().int().optional().describe("Truncate the body (default 4000)."),
+    },
+    outputSchema: { ...gmailHeaderShape, body: z.string() },
+  },
+  async ({ id, max_chars }) => {
+    const args = ["gmail", "show", id];
+    if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+    try {
+      return okJson(await cli(args));
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
 server.registerTool(
   "shortcut_list",
   {
