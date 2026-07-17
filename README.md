@@ -274,7 +274,13 @@ containing the task details and self-complete instructions. Config at
       "maxConcurrent": 1,
       "conditions": { "location": "home", "power": "ac", "maxLoad": 8,
                       "time": { "notBetween": ["22:00", "07:00"] },
-                      "idleMinutes": 15, "blockingApps": ["zoom.us", "Keynote"] }
+                      "idleMinutes": 15, "blockingApps": ["zoom.us", "Keynote"] },
+      "env": { "ANTHROPIC_BASE_URL": "http://mini.local:8082" }
+    },
+    "homelab": {
+      "llm": { "endpoint": "http://mini.local:11434/v1", "model": "qwen3:32b",
+               "apiKeyEnv": "HOMELAB_KEY" },
+      "timeoutMinutes": 5
     }
   },
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
@@ -288,6 +294,11 @@ containing the task details and self-complete instructions. Config at
   "notifyOn": "failure"
 }
 ```
+
+`env` merges per-agent environment variables over the inherited ones
+(endpoint overrides, API keys — no wrapper scripts). An agent with an
+`llm` block instead of a `command` is a BYOM lane — any OpenAI-compatible
+endpoint; see "Dispatcher lanes: BYOM" below.
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Dedupe is enforced by both the dispatch ledger and the
@@ -480,6 +491,56 @@ apple-tasks gmail show <id> --max-chars 2000  # one message, plain-text body
 
 Scan output mirrors `mail scan` (plus `threadId` and `snippet`); `show`
 prefers the `text/plain` MIME part and falls back to the snippet.
+
+### Dispatcher lanes: BYOM (bring your own model)
+
+Any OpenAI-compatible endpoint — a homelab box running ollama/LM Studio/
+vLLM/llama.cpp, LiteLLM, OpenRouter, anything with `/chat/completions` —
+plugs in as a lane with an `llm` block instead of a `command`:
+
+```json
+"homelab": {
+  "llm": {
+    "endpoint": "http://mini.local:11434/v1",
+    "model": "qwen3:32b",
+    "apiKey": "sk-...",
+    "system": "Be terse.",
+    "maxTokens": 2048
+  },
+  "promptTemplate": "Task: {title}. Notes: {notes}. Reply with the result only.",
+  "timeoutMinutes": 5,
+  "maxConcurrent": 1
+}
+```
+
+The dispatcher runs the built-in bridge (`apple-tasks llm --agent homelab
+-p <prompt>`) — the bridge re-reads agents.json for the profile, so the
+API key never appears on a command line or in the process list. `apiKeyEnv`
+names an environment variable instead of inlining the key; keys can also
+go per-agent via `"env": {"NAME": "value"}`, which works for CLI lanes too
+(e.g. pointing `claude` at a network endpoint via `ANTHROPIC_BASE_URL`
+without a wrapper script).
+
+Two honest limits, by design:
+
+- A bare completion endpoint has **no tools** — it can't run `apple-tasks`
+  commands, edit files, or remove its own claim tag. BYOM lanes suit
+  classifier seats and generate-only tasks (summarize, draft, classify);
+  give them a promptTemplate that asks for text out, like the example
+  above. Success = the endpoint answered (exit 0); the reply lives in the
+  run log (`run_log`/`dispatches`).
+- It's one prompt, one reply — no conversation state.
+
+The same lane slots into the triage classifier seat
+(`triage --agent homelab`, or `"triage": {"agent": "homelab"}` for the
+dispatch-cycle triage), since the classifier is also a single
+prompt-in/JSON-out call. The bridge is also usable standalone:
+
+```bash
+apple-tasks llm -p "one-line summary of: ..." --endpoint http://mini.local:11434/v1 --model qwen3:32b
+apple-tasks llm --agent homelab -p "..."       # profile from agents.json
+echo "long prompt" | apple-tasks llm --profile local   # profiles in llm.json, prompt from stdin
+```
 
 ## Notifications & quiet hours
 

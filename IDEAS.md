@@ -1313,3 +1313,48 @@ read-only pass. Outbound --close-issues path is code-complete but
 deliberately NOT exercised (external write); first real run should be
 human-supervised. Linear: not planned — no Linear account in play.
 
+## 51. BYOM — bring your own model endpoint — ✅ DONE 2026-07-17 (user's idea)
+
+Plug any OpenAI-compatible endpoint + API key (homelab ollama/LM Studio/
+vLLM, LiteLLM, OpenRouter, …) into the lanes, the way a wrapper script
+points `claude` at an on-network agent — but configured in agents.json,
+no script.
+
+Shipped (Llm.swift + Dispatch/Triage wiring):
+- `apple-tasks llm` — dumb bridge: one prompt (flag or stdin) → POST
+  `/chat/completions` → print the reply. Profiles from agents.json
+  (`--agent <tag>`), llm.json (`--profile`), or flags. No tools, no
+  state — deliberately: the CLI stays dumb, agents make judgment calls.
+- agents.json `Agent.llm` block (endpoint/model/apiKey/apiKeyEnv/system/
+  maxTokens/temperature): a lane with `llm` and no `command` dispatches
+  through the bridge via synthesized argv `llm --agent <tag> -p {prompt}` —
+  the bridge re-reads agents.json, so keys never hit argv/ps. Works as a
+  triage classifier seat too (prompt-in/JSON-out).
+- agents.json `Agent.env` dict: per-agent environment overlay (dispatch +
+  triage runners) — API keys/`ANTHROPIC_BASE_URL`-style endpoint overrides
+  for CLI lanes without wrapper scripts.
+- Documented limits: no tool use (classifier + generate-only tasks;
+  success = endpoint answered, reply lives in the run log), no
+  conversation state.
+- Verified end-to-end against a local mock OpenAI server: bridge honored
+  agents.json profile (auth header, model, system, max_tokens), and a real
+  `dispatch --agent byom` run claimed the task, ran the synthesized
+  bridge command, logged the reply, exit 0 → succeeded.
+
+## 52. Model-preference tiers ("fast" / "thinking" / "complex") — TODO (user's idea 2026-07-17)
+
+Hermes-style ordered model preferences: config maps task categories to
+preference arrays, e.g. `"modelPrefs": {"fast": ["local", "homelab-7b"],
+"thinking": ["homelab-32b", "claude"], "complex": ["claude"]}` (entries =
+agents.json lanes / llm profiles / "local" for the on-device model). When
+a seat doesn't name a provider — triage's classifier, `[auto]` tasks
+without an agent tag, digest/suggest generation — resolve the category,
+walk the list, and fall back on connection/auth failure to the next entry.
+Categories could come from the seat (triage = "fast" by default) or from
+an agent judgment call (a classifier already routes tasks; it can pick the
+tier too, keeping the CLI dumb). Builds directly on #51's profiles; the
+fallback walk belongs in the bridge/dispatcher, the tier *choice* belongs
+to agents. Design questions: per-seat defaults vs a tag (`[fast]`)?
+does dispatch retry a failed lane on the next preference, and how does
+that interact with maxRetries?
+

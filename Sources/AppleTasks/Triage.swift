@@ -107,14 +107,19 @@ struct Triage: AsyncParsableCommand {
         let workdirs = Array(config.workdirs?.keys ?? [:].keys)
         let useLocal = agentTag.lowercased() == LocalClassifier.agentTag
 
-        func externalAgent() throws -> AgentsConfig.Agent {
+        func externalAgent() throws -> (AgentsConfig.Agent, template: [String]) {
             guard let agent = config.agents[agentTag.lowercased()] else {
                 throw AppleTasksError.saveFailed(
                     "no '\(agentTag)' agent in agents.json; add one, e.g. "
                     + "{\"command\": [\"agy\", \"-p\", \"{prompt}\", \"--model\", \"Gemini 3.5 Flash (Medium)\"]}"
+                    + " or a BYOM lane {\"llm\": {\"endpoint\": ..., \"model\": ...}}"
                     + " — or use --agent local for the on-device model")
             }
-            return agent
+            guard let template = agent.commandTemplate(tag: agentTag.lowercased()) else {
+                throw AppleTasksError.saveFailed(
+                    "agent '\(agentTag)' has neither \"command\" nor \"llm\" in agents.json")
+            }
+            return (agent, template)
         }
 
         var actions: [TriageResult.Action] = []
@@ -135,11 +140,11 @@ struct Triage: AsyncParsableCommand {
             classifications = try await LocalClassifier.classify(
                 items: items, agents: routingAgents, workdirs: workdirs, planLists: planLists)
         } else {
-            let agent = try externalAgent()
+            let (agent, template) = try externalAgent()
             let prompt = Self.prompt(items: items, agents: routingAgents,
                                      workdirs: workdirs, planLists: planLists)
-            let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
-            let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5)
+            let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+            let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5, env: agent.env)
             classifications = try Self.parseJSONArray(raw)
         }
         let byId = Dictionary(classifications.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -204,11 +209,11 @@ struct Triage: AsyncParsableCommand {
                         notes: noteItems, agents: routingAgents,
                         workdirs: workdirs, planLists: planLists)
                 } else {
-                    let agent = try externalAgent()
+                    let (agent, template) = try externalAgent()
                     let prompt = Self.notesPrompt(notes: noteItems, agents: routingAgents,
                                                   workdirs: workdirs, planLists: planLists)
-                    let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
-                    let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5)
+                    let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+                    let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5, env: agent.env)
                     decisions = try Self.parseJSONArray(raw)
                 }
                 collected = try Self.applyNoteDecisions(decisions, store: store, apply: apply,
@@ -343,10 +348,16 @@ struct Triage: AsyncParsableCommand {
         """
     }
 
-    static func runAgent(_ argv: [String], timeoutMinutes: Int) throws -> String {
+    static func runAgent(_ argv: [String], timeoutMinutes: Int,
+                         env extraEnv: [String: String]? = nil) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
+        if let extraEnv, !extraEnv.isEmpty {
+            var env = ProcessInfo.processInfo.environment
+            for (name, value) in extraEnv { env[name] = value }
+            process.environment = env
+        }
         let out = Pipe()
         process.standardOutput = out
         process.standardError = FileHandle.nullDevice

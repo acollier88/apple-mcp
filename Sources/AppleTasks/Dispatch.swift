@@ -47,7 +47,13 @@ struct Dispatches: AsyncParsableCommand {
 struct AgentsConfig: Codable {
     struct Agent: Codable {
         /// Command argv; "{prompt}" is replaced with the rendered prompt.
-        let command: [String]
+        /// Optional when `llm` is set (a BYOM lane needs no command).
+        let command: [String]?
+        /// BYOM (IDEAS #51): an OpenAI-compatible endpoint profile. A lane
+        /// with `llm` and no `command` runs the built-in `llm` bridge —
+        /// plain completions, no tool use, so it suits classifier seats
+        /// (triage) and generate-only tasks.
+        let llm: LlmCommand.Profile?
         let promptTemplate: String?
         /// Run in a fresh git worktree of the workdir (output = a branch, not
         /// edits to the main checkout). Requires the workdir to be a git repo.
@@ -56,6 +62,19 @@ struct AgentsConfig: Codable {
         let timeoutMinutes: Int?
         /// Max simultaneous runs for THIS agent (default: no per-agent cap).
         let maxConcurrent: Int?
+        /// Extra environment variables for the agent process (IDEAS #51) —
+        /// endpoint overrides, API keys — merged over the inherited env.
+        let env: [String: String]?
+
+        /// The argv template for this lane ({prompt} not yet substituted),
+        /// or nil when neither `command` nor `llm` is configured. BYOM lanes
+        /// call back into this binary's `llm` bridge with only the tag —
+        /// the bridge re-reads agents.json, so keys never hit the argv.
+        func commandTemplate(tag: String) -> [String]? {
+            if let command { return command }
+            guard llm != nil else { return nil }
+            return [AgentsConfig.selfBinary, "llm", "--agent", tag, "-p", "{prompt}"]
+        }
         /// Context gates (IDEAS #22): all must pass or the task stays queued
         /// (no claim, no [failed]) and is retried next pass.
         let conditions: Conditions?
@@ -119,6 +138,15 @@ struct AgentsConfig: Codable {
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/apple-tasks/agents.json")
+    }
+
+    /// Path of the running binary, for BYOM lanes to call back into. A bare
+    /// argv[0] (PATH lookup) is left as-is — runners exec via /usr/bin/env,
+    /// which re-resolves it the same way.
+    static var selfBinary: String {
+        let arg0 = CommandLine.arguments[0]
+        guard arg0.contains("/") else { return arg0 }
+        return URL(fileURLWithPath: arg0).standardizedFileURL.path
     }
 
     static func load() throws -> AgentsConfig {
@@ -467,7 +495,14 @@ struct Dispatch: AsyncParsableCommand {
                     }
                 }
             }
-            let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+            guard let template = agent.commandTemplate(tag: agentTag) else {
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                              cwd: nil,
+                                              action: "skipped: agent '\(agentTag)' has neither \"command\" nor \"llm\" in agents.json",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            }
+            let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
 
             if dryRun {
                 let action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
@@ -542,7 +577,8 @@ struct Dispatch: AsyncParsableCommand {
             specs.append(RunSpec(ledgerId: ledgerId, taskId: taskId, title: parsed.title,
                                  agentTag: agentTag, argv: argv, repo: cwd, runCwd: runCwd,
                                  worktree: worktreePath, branch: branchName,
-                                 timeoutMinutes: agent.timeoutMinutes, logPath: logURL.path))
+                                 timeoutMinutes: agent.timeoutMinutes, env: agent.env,
+                                 logPath: logURL.path))
             specsPerAgent[agentTag, default: 0] += 1
         }
 
@@ -607,6 +643,7 @@ struct Dispatch: AsyncParsableCommand {
         let worktree: String?
         let branch: String?
         let timeoutMinutes: Int?
+        let env: [String: String]?
         let logPath: String
     }
 
@@ -634,6 +671,7 @@ struct Dispatch: AsyncParsableCommand {
         process.arguments = spec.argv
         if let runCwd = spec.runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
         var env = ProcessInfo.processInfo.environment
+        for (name, value) in spec.env ?? [:] { env[name] = value }
         env["APPLE_TASKS_CALLER"] = "agent:\(spec.agentTag)"
         process.environment = env
         if let logHandle {
