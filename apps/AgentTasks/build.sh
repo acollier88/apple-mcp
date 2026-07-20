@@ -2,6 +2,7 @@
 # Hand-rolled .app build with App Intents metadata extraction (no Xcode project).
 set -euo pipefail
 cd "$(dirname "$0")"
+REPO_ROOT="$(cd ../.. && pwd)"
 
 # Use the Xcode 27 beta when present (Reminders domain schemas need its SDK).
 if [ -d /Applications/Xcode-beta.app ]; then
@@ -15,8 +16,28 @@ TOOLCHAIN=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}/Toolchain
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 XCODE_BUILD=$(xcodebuild -version | awk '/Build version/{print $3}')
 
+# Ensure the CLI the app shells to exists, and stamp its absolute path into the
+# bundle so /Applications/AgentTasks.app still finds it after install.
+echo "== ensuring CLI =="
+make -C "$REPO_ROOT/cli" cli
+CLI_BIN=""
+for candidate in \
+    "$REPO_ROOT/cli/.build/release/apple-tasks" \
+    "$REPO_ROOT/cli/.build/out/Products/Release/apple-tasks"; do
+    if [[ -x "$candidate" ]]; then
+        CLI_BIN="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+        break
+    fi
+done
+if [[ -z "$CLI_BIN" ]]; then
+    echo "error: apple-tasks binary missing after make -C cli" >&2
+    exit 1
+fi
+echo "    CLI: $CLI_BIN"
+
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+printf '%s\n' "$CLI_BIN" > "$APP/Contents/Resources/apple-tasks-bin.path"
 
 echo "== compiling =="
 # The frontend wants a flat JSON array; the toolchain ships a versioned wrapper.

@@ -29,7 +29,7 @@ helper: cli
 mcp:
 	cd mcp && bun install
 
-app:
+app: cli
 	cd apps/AgentTasks && ./build.sh
 
 clean:

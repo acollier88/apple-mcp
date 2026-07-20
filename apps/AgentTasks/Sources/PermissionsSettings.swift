@@ -23,6 +23,19 @@ struct PermissionsSettingsTab: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("CLI binary")
+                            .font(.body.weight(.medium))
+                        Text(CLI.displayBinaryPath)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Text("Override with APPLE_TASKS_BIN, or rebuild the app after make.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 4)
+
                     ForEach(rows) { row in
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
