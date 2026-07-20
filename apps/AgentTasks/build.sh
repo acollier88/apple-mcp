@@ -44,8 +44,13 @@ echo "    CLI: $CLI_BIN"
 echo "    helper: $HELPER_BIN"
 
 rm -rf build
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/recipes"
 printf '%s\n' "$CLI_BIN" > "$APP/Contents/Resources/apple-tasks-bin.path"
+# Bundled task recipes (seeded into ~/.config/apple-tasks/recipes/ on first open).
+if [[ -d "$REPO_ROOT/examples/recipes" ]]; then
+    find "$REPO_ROOT/examples/recipes" -maxdepth 1 -name '*.json' -exec cp {} "$APP/Contents/Resources/recipes/" \;
+    echo "    recipes: $(ls "$APP/Contents/Resources/recipes"/*.json 2>/dev/null | wc -l | tr -d ' ') bundled"
+fi
 
 echo "== compiling =="
 # The frontend wants a flat JSON array; the toolchain ships a versioned wrapper.

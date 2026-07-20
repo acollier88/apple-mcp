@@ -1,0 +1,16 @@
+{
+  "id": "morning-calendar-debrief",
+  "name": "Morning calendar debrief",
+  "description": "Daily scan of today's calendar; add a 5-minute [debrief] block at the start of each meeting with short prep context.",
+  "title": "Scan today's calendar and add 5-min [debrief] blocks at the start of each meeting",
+  "notes": "Use the apple-tasks CLI in a shell (bash). Do not invent Calendar.app clicks.\n\nFor each meeting today (skip all-day; skip titles already starting with [debrief]):\n1. List today: `apple-tasks events list --from YYYY-MM-DD --to YYYY-MM-DD` (use today's date for both).\n2. Create a 5-minute block at that meeting's start: `apple-tasks events add --start 'YYYY-MM-DD HH:mm' --duration 5 --notes '…' '[debrief]<exact meeting name>'`\n3. Put short prep context in --notes (topic/attendees from the parent event if available).\n4. Do not modify the original meeting.\nIdempotent: if a [debrief] sibling already exists for that meeting, skip it.",
+  "list": "Code Tasks",
+  "agent": "cursor",
+  "workdir": "apple-mcp",
+  "tags": [],
+  "priority": "none",
+  "includeAuto": true,
+  "dueTime": "07:00",
+  "dueOffsetDays": 0,
+  "recurrence": "FREQ=DAILY"
+}

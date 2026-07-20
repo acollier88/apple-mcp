@@ -475,6 +475,36 @@ struct QueueTaskRow: View {
 // MARK: - Add Task
 
 private let addTaskOtherRepo = "__other__"
+private let addTaskNoRecipe = "__none__"
+
+private enum RecurrencePreset: String, CaseIterable, Identifiable {
+    case none = "None"
+    case daily = "Daily"
+    case weekdays = "Weekdays"
+    case weekly = "Weekly"
+    case custom = "Custom…"
+
+    var id: String { rawValue }
+
+    var rrule: String? {
+        switch self {
+        case .none: return nil
+        case .daily: return "FREQ=DAILY"
+        case .weekdays: return "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+        case .weekly: return "FREQ=WEEKLY"
+        case .custom: return nil // use customRecurrence field
+        }
+    }
+
+    static func matching(rrule: String?) -> RecurrencePreset {
+        guard let rrule, !rrule.isEmpty else { return .none }
+        let upper = rrule.uppercased()
+        for preset in Self.allCases where preset != .none && preset != .custom {
+            if preset.rrule?.uppercased() == upper { return preset }
+        }
+        return .custom
+    }
+}
 
 struct AddTaskSheet: View {
     let onCreated: () -> Void
@@ -492,6 +522,16 @@ struct AddTaskSheet: View {
     @State private var notes = ""
     @State private var priority = "none"
     @State private var includeAuto = true
+    @State private var scheduleEnabled = false
+    @State private var dueDate = Calendar.current.date(
+        bySettingHour: 7, minute: 0, second: 0, of: Date()
+    ) ?? Date()
+    @State private var recurrencePreset: RecurrencePreset = .none
+    @State private var customRecurrence = ""
+    @State private var recipes: [RecipesStore.Recipe] = []
+    @State private var recipeSelection = addTaskNoRecipe
+    @State private var showSaveRecipe = false
+    @State private var saveRecipeName = ""
     @State private var isSaving = false
     @State private var error: String?
 
@@ -515,18 +555,53 @@ struct AddTaskSheet: View {
         return workdirs.first(where: { $0.tag == repoSelection })?.path
     }
 
+    private var resolvedRecurrence: String? {
+        guard scheduleEnabled else { return nil }
+        switch recurrencePreset {
+        case .none: return nil
+        case .custom:
+            let r = customRecurrence.trimmingCharacters(in: .whitespacesAndNewlines)
+            return r.isEmpty ? nil : r
+        default:
+            return recurrencePreset.rrule
+        }
+    }
+
+    private var dueCLIString: String? {
+        guard scheduleEnabled else { return nil }
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd HH:mm"
+        return fmt.string(from: dueDate)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Add Task")
                     .font(.headline)
                 Spacer()
+                recipeMenu
                 Button("Cancel", action: onCancel)
                     .disabled(isSaving)
             }
             .padding(16)
             Divider()
             Form {
+                if !recipes.isEmpty {
+                    Picker("Recipe", selection: $recipeSelection) {
+                        Text("Blank").tag(addTaskNoRecipe)
+                        ForEach(recipes) { recipe in
+                            Text(recipe.name).tag(recipe.id)
+                        }
+                    }
+                    if let blurb = recipes.first(where: { $0.id == recipeSelection })?.description,
+                       !blurb.isEmpty {
+                        Text(blurb)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 TextField("Title", text: $title, prompt: Text("What should the agent do?"))
                 Picker("List", selection: $listName) {
                     if lists.isEmpty {
@@ -572,8 +647,24 @@ struct AddTaskSheet: View {
                 Picker("Priority", selection: $priority) {
                     ForEach(priorities, id: \.self) { Text($0).tag($0) }
                 }
+                Toggle("Schedule (due / repeat)", isOn: $scheduleEnabled)
+                if scheduleEnabled {
+                    DatePicker("First due", selection: $dueDate)
+                    Picker("Repeat", selection: $recurrencePreset) {
+                        ForEach(RecurrencePreset.allCases) { preset in
+                            Text(preset.rawValue).tag(preset)
+                        }
+                    }
+                    if recurrencePreset == .custom {
+                        TextField("RRULE", text: $customRecurrence,
+                                  prompt: Text("FREQ=WEEKLY;BYDAY=MO"))
+                        Text("Subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY; INTERVAL; BYDAY; COUNT|UNTIL")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
                 TextField("Notes", text: $notes, axis: .vertical)
-                    .lineLimit(3...6)
+                    .lineLimit(3...8)
                 if let error {
                     Text(error)
                         .font(.caption)
@@ -584,10 +675,17 @@ struct AddTaskSheet: View {
             .padding(.horizontal, 8)
             Divider()
             HStack {
-                Text(previewTitle)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(previewTitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    if scheduleEnabled, let due = dueCLIString {
+                        Text(resolvedRecurrence.map { "due \(due) · \($0)" } ?? "due \(due)")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
                 Spacer()
                 Button("Create") {
                     Task { await create() }
@@ -597,24 +695,92 @@ struct AddTaskSheet: View {
             }
             .padding(16)
         }
-        .frame(minWidth: 520, minHeight: 480)
+        .frame(minWidth: 560, minHeight: 620)
         .onAppear {
             workdirs = WorkdirsStore.load()
+            recipes = RecipesStore.load()
             if repoSelection.isEmpty {
                 repoSelection = workdirs.first?.tag ?? addTaskOtherRepo
             }
             Task { await loadLists() }
         }
-        .onChange(of: repoSelection) { _, new in
-            if new == addTaskOtherRepo, customPath.isEmpty {
-                // Nudge the user to pick a folder when they choose Other.
+        .onChange(of: recipeSelection) { _, newId in
+            guard newId != addTaskNoRecipe,
+                  let recipe = recipes.first(where: { $0.id == newId }) else { return }
+            applyRecipe(recipe)
+        }
+        .sheet(isPresented: $showSaveRecipe) {
+            saveRecipeSheet
+        }
+    }
+
+    private var recipeMenu: some View {
+        Menu("Recipes") {
+            Button("Import…") {
+                if let recipe = RecipesStore.importFromPanel() {
+                    recipes = RecipesStore.load()
+                    recipeSelection = recipe.id
+                    applyRecipe(recipe)
+                }
+            }
+            Button("Export current…") {
+                RecipesStore.exportToPanel(currentAsRecipe(name: title.isEmpty ? "untitled" : title))
+            }
+            .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Save current as recipe…") {
+                saveRecipeName = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                showSaveRecipe = true
+            }
+            .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if let recipe = recipes.first(where: { $0.id == recipeSelection }) {
+                Divider()
+                Button("Export “\(recipe.name)”…") {
+                    RecipesStore.exportToPanel(recipe)
+                }
+            }
+            Divider()
+            Button("Reveal recipes folder") {
+                RecipesStore.load()
+                NSWorkspace.shared.open(RecipesStore.directory)
             }
         }
+        .disabled(isSaving)
+    }
+
+    private var saveRecipeSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Save recipe")
+                .font(.headline)
+            TextField("Name", text: $saveRecipeName)
+            HStack {
+                Spacer()
+                Button("Cancel") { showSaveRecipe = false }
+                Button("Save") {
+                    do {
+                        let recipe = currentAsRecipe(name: saveRecipeName)
+                        try RecipesStore.save(recipe)
+                        recipes = RecipesStore.load()
+                        recipeSelection = recipe.id
+                        showSaveRecipe = false
+                    } catch {
+                        self.error = error.localizedDescription
+                        showSaveRecipe = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(saveRecipeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
     }
 
     private var canCreate: Bool {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return false }
+        if scheduleEnabled, resolvedRecurrence != nil, dueCLIString == nil {
+            return false
+        }
         if isOther {
             return !resolvedRepoTag.isEmpty && resolvedRepoPath != nil
         }
@@ -632,6 +798,72 @@ struct AddTaskSheet: View {
 
     private func shortPath(_ path: String) -> String {
         path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+    }
+
+    private func applyRecipe(_ recipe: RecipesStore.Recipe) {
+        title = recipe.title
+        if let notes = recipe.notes { self.notes = notes }
+        if let list = recipe.list, !list.isEmpty { listName = list }
+        if let agent = recipe.agent, agents.contains(agent) { self.agent = agent }
+        if let priority = recipe.priority, priorities.contains(priority) {
+            self.priority = priority
+        }
+        includeAuto = recipe.includeAuto ?? true
+        if let workdir = recipe.workdir, !workdir.isEmpty {
+            if workdirs.contains(where: { $0.tag == workdir }) {
+                repoSelection = workdir
+            } else {
+                // Keep current repo; recipe workdir may not be registered yet.
+            }
+        }
+        if let dueTime = recipe.dueTime,
+           let dueStr = RecipesStore.dueArgument(dueTime: dueTime, offsetDays: recipe.dueOffsetDays),
+           let parsed = parseDue(dueStr) {
+            scheduleEnabled = true
+            dueDate = parsed
+        } else if recipe.recurrence != nil {
+            scheduleEnabled = true
+        }
+        if let rrule = recipe.recurrence, !rrule.isEmpty {
+            scheduleEnabled = true
+            recurrencePreset = RecurrencePreset.matching(rrule: rrule)
+            if recurrencePreset == .custom {
+                customRecurrence = rrule
+            }
+        } else {
+            recurrencePreset = .none
+            customRecurrence = ""
+        }
+    }
+
+    private func currentAsRecipe(name: String) -> RecipesStore.Recipe {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "HH:mm"
+        let dueTime = scheduleEnabled ? fmt.string(from: dueDate) : nil
+        return RecipesStore.Recipe(
+            id: RecipesStore.sanitizeId(name),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: nil,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : notes,
+            list: listName,
+            agent: agent,
+            workdir: resolvedRepoTag.isEmpty ? nil : resolvedRepoTag,
+            tags: nil,
+            priority: priority == "none" ? nil : priority,
+            includeAuto: includeAuto,
+            dueTime: dueTime,
+            dueOffsetDays: 0,
+            recurrence: resolvedRecurrence
+        )
+    }
+
+    private func parseDue(_ s: String) -> Date? {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd HH:mm"
+        return fmt.date(from: s)
     }
 
     @MainActor
@@ -682,18 +914,28 @@ struct AddTaskSheet: View {
                 repoTag = repoSelection
             }
 
+            let due = dueCLIString
+            let recurrence = resolvedRecurrence
+            if recurrence != nil, due == nil {
+                throw NSError(domain: "AgentTasks", code: 5,
+                              userInfo: [NSLocalizedDescriptionKey: "Recurrence requires a due date"])
+            }
+
             struct AddOut: Decodable {
                 let id: String
                 let externalId: String?
                 let nativeTags: Bool?
             }
-            let addJSON = try await Task.detached { [listName, agent, notes, priority, includeAuto] in
+            let addJSON = try await Task.detached {
+                [listName, agent, notes, priority, includeAuto, repoTag, trimmed, due, recurrence] in
                 var args = ["add", "--list", listName, "--tag", agent, "--tag", repoTag]
                 if includeAuto { args += ["--tag", "auto"] }
                 if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     args += ["--notes", notes]
                 }
                 if priority != "none" { args += ["--priority", priority] }
+                if let due { args += ["--due", due] }
+                if let recurrence { args += ["--recurrence", recurrence] }
                 args.append(trimmed)
                 return try CLI.run(args, timeout: 30)
             }.value
