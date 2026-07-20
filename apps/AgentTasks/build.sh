@@ -18,8 +18,10 @@ XCODE_BUILD=$(xcodebuild -version | awk '/Build version/{print $3}')
 
 # Ensure the CLI the app shells to exists, and stamp its absolute path into the
 # bundle so /Applications/AgentTasks.app still finds it after install.
-echo "== ensuring CLI =="
-make -C "$REPO_ROOT/cli" cli
+echo "== ensuring CLI + native-tag helper =="
+# `all` builds apple-tasks and the sibling apple-tasks-private ReminderKit
+# helper. Without the helper, add/update only write [tag] title prefixes.
+make -C "$REPO_ROOT/cli" all
 CLI_BIN=""
 for candidate in \
     "$REPO_ROOT/cli/.build/release/apple-tasks" \
@@ -33,7 +35,13 @@ if [[ -z "$CLI_BIN" ]]; then
     echo "error: apple-tasks binary missing after make -C cli" >&2
     exit 1
 fi
+HELPER_BIN="$(dirname "$CLI_BIN")/apple-tasks-private"
+if [[ ! -x "$HELPER_BIN" ]]; then
+    echo "error: apple-tasks-private missing next to CLI ($HELPER_BIN) — native Reminders tags will not mirror" >&2
+    exit 1
+fi
 echo "    CLI: $CLI_BIN"
+echo "    helper: $HELPER_BIN"
 
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

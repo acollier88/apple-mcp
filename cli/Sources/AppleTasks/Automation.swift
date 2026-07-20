@@ -71,9 +71,28 @@ enum NativeTags {
     /// Reminders tags. Returns true on success, false (with a stderr warning)
     /// on any failure — the [tag] title prefix is the source of truth, so a
     /// failed mirror never fails the command.
+    ///
+    /// Retries briefly: right after an EventKit `save`, ReminderKit often
+    /// cannot resolve the new externalId yet ("reminder not found"), which
+    /// left AgentTasks creates with `[tag]` prefixes but no native hashtags.
     static func mirror(tags: [String], externalId: String?) -> Bool? {
         guard !tags.isEmpty else { return nil }
-        return run(["externalId": externalId ?? "", "tags": tags], externalId: externalId, what: "native tag mirror")
+        guard helperURL != nil else { return nil }
+        guard let externalId, !externalId.isEmpty else {
+            FileHandle.standardError.write(Data("warning: native tag mirror skipped (no external identifier yet)\n".utf8))
+            return false
+        }
+        let attempts = 5
+        var last: Bool?
+        for attempt in 0..<attempts {
+            if attempt > 0 {
+                Thread.sleep(forTimeInterval: 0.2 * Double(attempt))
+            }
+            last = run(["externalId": externalId, "tags": tags],
+                       externalId: externalId, what: "native tag mirror")
+            if last == true { return true }
+        }
+        return last ?? false
     }
 
     /// IDEAS #26: make `externalId` a subtask of `parentExternalId` via the

@@ -15,6 +15,13 @@ struct QueueTask: Codable, Identifiable, Hashable {
     let priority: String
     let completed: Bool
     let url: String?
+    let recurrence: String?
+
+    /// Forces SwiftUI rows to rebuild when Reminders content changes (same id).
+    var contentStamp: String {
+        [rawTitle, notes ?? "", due ?? "", recurrence ?? "", priority, list, tags.joined(separator: ",")]
+            .joined(separator: "\u{1e}")
+    }
 
     /// Known agent lanes — prefer these over repo tags when labeling the row.
     static let knownAgents: Set<String> = [
@@ -79,6 +86,8 @@ struct QueueTab: View {
 
     @State private var tasks: [QueueTask] = []
     @State private var isLoading = false
+    /// Increments every refresh request; in-flight results with an older epoch are dropped.
+    @State private var refreshEpoch = 0
     @State private var busyIds: Set<String> = []
     @State private var caption: String?
     @State private var showAdd = false
@@ -207,7 +216,7 @@ struct QueueTab: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(filtered) { task in
+                    ForEach(filtered, id: \.stableId) { task in
                         QueueTaskRow(
                             task: task,
                             isBusy: busyIds.contains(task.stableId),
@@ -216,6 +225,7 @@ struct QueueTab: View {
                             onFail: { Task { await fail(task) } },
                             onSetFolder: { Task { await setFolder(for: task) } }
                         )
+                        .id("\(task.stableId)|\(task.contentStamp)")
                     }
                 }
             }
@@ -225,7 +235,10 @@ struct QueueTab: View {
     }
 
     private func refresh() async {
-        guard !isLoading else { return }
+        // Never drop a refresh while one is in flight — that left the Queue
+        // stuck on stale rows after Reminders edits + a second Refresh click.
+        refreshEpoch += 1
+        let epoch = refreshEpoch
         isLoading = true
         workdirs = WorkdirsStore.load()
         do {
@@ -234,12 +247,14 @@ struct QueueTab: View {
             }.value
             let decoded = try JSONDecoder().decode([QueueTask].self, from: Data(json.utf8))
             await MainActor.run {
+                guard epoch == refreshEpoch else { return }
                 self.tasks = decoded
                 self.isLoading = false
                 self.caption = nil
             }
         } catch {
             await MainActor.run {
+                guard epoch == refreshEpoch else { return }
                 self.tasks = []
                 self.isLoading = false
                 self.caption = "Queue failed: \(error.localizedDescription)"
@@ -392,10 +407,24 @@ struct QueueTaskRow: View {
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
-                    if let due = task.due {
-                        Text("due \(due)")
-                            .font(.caption2)
+                    HStack(spacing: 8) {
+                        if let due = task.due {
+                            Text("due \(due)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let recurrence = task.recurrence, !recurrence.isEmpty {
+                            Text(recurrence)
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let notes = task.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !notes.isEmpty {
+                        Text(notes)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(3)
                     }
                     HStack(spacing: 4) {
                         ForEach(task.tags.filter { $0.lowercased() != "auto" }.prefix(6), id: \.self) { tag in
@@ -653,7 +682,12 @@ struct AddTaskSheet: View {
                 repoTag = repoSelection
             }
 
-            _ = try await Task.detached { [listName, agent, notes, priority, includeAuto] in
+            struct AddOut: Decodable {
+                let id: String
+                let externalId: String?
+                let nativeTags: Bool?
+            }
+            let addJSON = try await Task.detached { [listName, agent, notes, priority, includeAuto] in
                 var args = ["add", "--list", listName, "--tag", agent, "--tag", repoTag]
                 if includeAuto { args += ["--tag", "auto"] }
                 if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -663,6 +697,15 @@ struct AddTaskSheet: View {
                 args.append(trimmed)
                 return try CLI.run(args, timeout: 30)
             }.value
+            let added = try JSONDecoder().decode(AddOut.self, from: Data(addJSON.utf8))
+            // Title prefixes always land; native hashtags need the private helper
+            // and can race ReminderKit right after create — remirror once if needed.
+            if added.nativeTags != true {
+                let key = added.externalId ?? added.id
+                _ = try? await Task.detached {
+                    try CLI.run(["remirror-tags", "--id", key], timeout: 45)
+                }.value
+            }
             await MainActor.run {
                 isSaving = false
                 onCreated()

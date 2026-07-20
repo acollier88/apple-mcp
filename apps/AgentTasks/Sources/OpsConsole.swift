@@ -109,7 +109,7 @@ func relativeTime(from isoString: String) -> String {
 
 struct ContentView: View {
     @State private var selectedTab = 0
-    /// Bumped after dispatch so Activity can refresh too.
+    /// Bumped after dispatch / Reminders edits so tabs reload.
     @State private var refreshToken = 0
 
     var body: some View {
@@ -128,6 +128,9 @@ struct ContentView: View {
                 .tag(3)
         }
         .frame(minWidth: 680, maxWidth: .infinity, minHeight: 500, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: .agentTasksEventKitChanged)) { _ in
+            refreshToken += 1
+        }
     }
 }
 
@@ -139,6 +142,7 @@ struct ActivityTab: View {
     @State private var events: [AuditEvent] = []
     @State private var isLoading = false
     @State private var isTriaging = false
+    @State private var isMirroring = false
     @State private var statusCaption: String?
     @State private var commandFilter: String? = nil // nil = All
     @State private var callerFilter: CallerFamily = .all
@@ -208,8 +212,23 @@ struct ActivityTab: View {
                     Text("Triage Inbox")
                 }
             }
-            .disabled(isTriaging)
+            .disabled(isTriaging || isMirroring)
             .help("Classify and route untagged reminders in your inbox")
+
+            Button {
+                Task { await mirrorTags() }
+            } label: {
+                HStack(spacing: 5) {
+                    if isMirroring {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "tag")
+                    }
+                    Text("Mirror Tags")
+                }
+            }
+            .disabled(isTriaging || isMirroring)
+            .help("Re-apply [tag] title prefixes as native Reminders hashtags on open [auto] tasks")
 
             RefreshButton(isLoading: isLoading) {
                 Task { await refresh() }
@@ -309,10 +328,13 @@ struct ActivityTab: View {
                 let data = Data(json.utf8)
                 guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let actions = obj["actions"] as? [[String: Any]] else { return "Triage done" }
-                if actions.isEmpty { return "Inbox clear — nothing to triage" }
+                // Triage only classifies untagged inbox items; remirror so any
+                // tags it just wrote (and other open [auto] work) get native hashtags.
+                _ = try? CLI.run(["remirror-tags", "--tag", "auto", "--status", "open"], timeout: 120)
+                if actions.isEmpty { return "Inbox clear — mirrored open [auto] tags" }
                 let agents = actions.filter { ($0["kind"] as? String) == "agent" }.count
                 let personal = actions.filter { ($0["kind"] as? String) == "personal" }.count
-                return "Triaged \(actions.count): \(agents) agent, \(personal) personal"
+                return "Triaged \(actions.count): \(agents) agent, \(personal) personal · mirrored tags"
             } catch {
                 return "Triage failed: \(error.localizedDescription)"
             }
@@ -320,6 +342,30 @@ struct ActivityTab: View {
         await MainActor.run {
             self.statusCaption = summary
             self.isTriaging = false
+        }
+        await refresh()
+    }
+
+    private func mirrorTags() async {
+        guard !isMirroring else { return }
+        isMirroring = true
+        statusCaption = nil
+        let summary: String = await Task.detached {
+            do {
+                let json = try CLI.run(["remirror-tags", "--tag", "auto", "--status", "open"], timeout: 120)
+                let rows = (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]]) ?? []
+                let ok = rows.filter { ($0["nativeTags"] as? Bool) == true }.count
+                let failed = rows.filter { ($0["nativeTags"] as? Bool) == false }.count
+                if rows.isEmpty { return "No open [auto] tasks to mirror" }
+                if failed == 0 { return "Mirrored native tags on \(ok) task\(ok == 1 ? "" : "s")" }
+                return "Mirrored \(ok), failed \(failed) (is apple-tasks-private next to the CLI?)"
+            } catch {
+                return "Mirror failed: \(error.localizedDescription)"
+            }
+        }.value
+        await MainActor.run {
+            self.statusCaption = summary
+            self.isMirroring = false
         }
         await refresh()
     }

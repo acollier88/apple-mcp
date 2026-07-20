@@ -4,13 +4,18 @@ import Foundation
 import EventKit
 import Combine
 
+extension Notification.Name {
+    /// Posted (debounced) when Reminders/Calendar mutate so UI tabs can reload.
+    static let agentTasksEventKitChanged = Notification.Name("AgentTasksEventKitChanged")
+}
+
 @main
 struct AgentTasksApp: App {
     // EventKit only delivers .EKEventStoreChanged to processes that hold an
     // initialized event store (with access granted), so keep one for the
     // app's lifetime -- without this the observer below never fires.
     private let eventStore = EKEventStore()
-    @State private var reindexTask: Task<Void, Never>?
+    @State private var eventKitDebounce: Task<Void, Never>?
 
     init() {
         // Headless helper mode: bare CLI executables can't get a Location
@@ -32,12 +37,13 @@ struct AgentTasksApp: App {
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged, object: nil)) { _ in
-                    if #available(macOS 27.0, *) {
-                        // Mutations arrive in bursts; debounce before re-donating.
-                        reindexTask?.cancel()
-                        reindexTask = Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            guard !Task.isCancelled else { return }
+                    // Mutations arrive in bursts; debounce before UI / Spotlight work.
+                    eventKitDebounce?.cancel()
+                    eventKitDebounce = Task {
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled else { return }
+                        NotificationCenter.default.post(name: .agentTasksEventKitChanged, object: nil)
+                        if #available(macOS 27.0, *) {
                             await SpotlightDonation.donateAllOpenTasks()
                         }
                     }

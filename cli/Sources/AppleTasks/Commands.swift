@@ -11,6 +11,7 @@ struct AppleTasks: AsyncParsableCommand {
         subcommands: [
             ListTasks.self, Show.self, Add.self, AddBatch.self, Update.self,
             Complete.self, Uncomplete.self, Delete.self, Lists.self,
+            RemirrorTags.self,
             Events.self, Calendars.self,
             Notes.self, Mail.self, ContactsCommand.self, Doctor.self,
             Dispatch.self, Dispatches.self, Log.self,
@@ -158,7 +159,16 @@ func createTask(store: Store, listName: String, title: String, tags: [String],
     try store.save(reminder)
     var out = TaskOut(reminder)
     if mirrorNativeTags {
-        out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
+        var ext = reminder.calendarItemExternalIdentifier
+        if ext == nil || ext?.isEmpty == true {
+            // CloudKit external id can lag the first save by a beat.
+            Thread.sleep(forTimeInterval: 0.25)
+            if let refreshed = store.ek.calendarItem(withIdentifier: reminder.calendarItemIdentifier) as? EKReminder {
+                ext = refreshed.calendarItemExternalIdentifier
+                out = TaskOut(refreshed)
+            }
+        }
+        out.nativeTags = NativeTags.mirror(tags: tags, externalId: ext)
     }
     AuditDB.shared.record(command: auditCommand, taskId: out.id, list: out.list, detail: out.rawTitle)
     return out
@@ -340,6 +350,10 @@ struct Update: AsyncParsableCommand {
     @Flag(name: .customLong("no-native-tags"), help: "Skip mirroring added tags to native Reminders tags.")
     var noNativeTags = false
 
+    @Flag(name: .customLong("mirror-tags"),
+          help: "Re-apply every [tag] title prefix as a native Reminders hashtag (even when not adding tags).")
+    var mirrorNativeTags = false
+
     @Option(name: .customLong("parent"), help: "Make this task a subtask of the given task id (private ReminderKit helper).")
     var parent: String?
 
@@ -400,8 +414,10 @@ struct Update: AsyncParsableCommand {
 
         try store.save(reminder)
         var out = TaskOut(reminder)
-        if !noNativeTags && !addTags.isEmpty {
-            out.nativeTags = NativeTags.mirror(tags: addTags, externalId: reminder.calendarItemExternalIdentifier)
+        // Mirror the full title-tag set (not only newly added ones) so a
+        // tag edit in Reminders → update path still paints native hashtags.
+        if !noNativeTags && (!addTags.isEmpty || !removeTags.isEmpty || mirrorNativeTags) {
+            out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
         }
         // Subtask relationship (IDEAS #26) via the private helper. Resolve the
         // parent's sync-stable externalId; save the reminder first so its own
@@ -433,6 +449,95 @@ struct Update: AsyncParsableCommand {
         }
         AuditDB.shared.record(command: "update", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)
+    }
+}
+
+// MARK: - remirror-tags
+
+struct RemirrorTags: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "remirror-tags",
+        abstract: "Re-apply [tag] title prefixes as native Reminders hashtags (private helper backfill)."
+    )
+
+    @Option(name: .customLong("list"), help: "Only tasks in this Reminders list.")
+    var listName: String?
+
+    @Option(name: [.customShort("t"), .customLong("tag")], help: "Require this title tag (repeatable; AND).")
+    var tags: [String] = []
+
+    @Option(help: "open | completed | all (default: open).")
+    var status: StatusFilter = .open
+
+    @Option(help: "Single task id (internal or external).")
+    var id: String?
+
+    struct Report: Codable {
+        let id: String
+        let externalId: String?
+        let rawTitle: String
+        let tags: [String]
+        let nativeTags: Bool?
+        let note: String?
+    }
+
+    func run() async throws {
+        guard NativeTags.helperURL != nil else {
+            throw AppleTasksError.saveFailed(
+                "apple-tasks-private helper missing next to the CLI (run: make helper)")
+        }
+        let store = Store()
+        try await store.requestAccess()
+
+        var reminders: [EKReminder]
+        if let id {
+            reminders = [try await store.reminder(id: id)]
+        } else {
+            let calendars = try listName.map { [try store.calendar(named: $0)] }
+            reminders = await store.reminders(in: calendars)
+            switch status {
+            case .open: reminders = reminders.filter { !$0.isCompleted }
+            case .completed: reminders = reminders.filter { $0.isCompleted }
+            case .all: break
+            }
+            if !tags.isEmpty {
+                let wanted = Set(tags.map { $0.lowercased() })
+                reminders = reminders.filter {
+                    wanted.isSubset(of: Tags.parse($0.title ?? "").tags.map { $0.lowercased() })
+                }
+            }
+        }
+
+        var reports: [Report] = []
+        for reminder in reminders {
+            let parsed = Tags.parse(reminder.title ?? "")
+            guard !parsed.tags.isEmpty else {
+                reports.append(Report(
+                    id: reminder.calendarItemIdentifier,
+                    externalId: reminder.calendarItemExternalIdentifier,
+                    rawTitle: reminder.title ?? "",
+                    tags: [],
+                    nativeTags: nil,
+                    note: "skipped: no [tag] prefixes"))
+                continue
+            }
+            let ok = NativeTags.mirror(tags: parsed.tags,
+                                       externalId: reminder.calendarItemExternalIdentifier)
+            reports.append(Report(
+                id: reminder.calendarItemIdentifier,
+                externalId: reminder.calendarItemExternalIdentifier,
+                rawTitle: reminder.title ?? "",
+                tags: parsed.tags,
+                nativeTags: ok,
+                note: ok == true ? nil : "mirror failed (see stderr)"))
+            AuditDB.shared.record(command: "remirror-tags",
+                                  taskId: reminder.calendarItemExternalIdentifier
+                                      ?? reminder.calendarItemIdentifier,
+                                  list: reminder.calendar?.title,
+                                  detail: parsed.tags.joined(separator: ","),
+                                  result: ok == true ? "ok" : "failed")
+        }
+        emit(reports)
     }
 }
 
