@@ -51,8 +51,11 @@ automation entrypoints that still speak JSON and stay headless. Product 2
 **Who uses it:** you (via Siri, Shortcuts, the menu/activity UI).
 
 **What it is:** a thin App Intents macOS app that exposes the queue to Siri /
-Spotlight and provides human-facing controls (triage, status). It always
-shells to `apple-tasks` via `APPLE_TASKS_BIN` (or the monorepo build path).
+Spotlight and an **ops console** window (Activity audit feed + Dispatches
+ledger with Dry Run / Dispatch Now / Open Log). It always shells to
+`apple-tasks` via `APPLE_TASKS_BIN` (or the monorepo build path) — the
+visibility surface when CLI agent sessions (Cursor `agent`, etc.) don’t
+appear in the IDE.
 
 **Rules:**
 
@@ -81,8 +84,10 @@ Documented fully in [`cli/README.md`](../cli/README.md):
 ## Build entrypoints
 
 ```bash
-make          # CLI + private helper → cli/.build/release/
-make mcp      # bun install in mcp/
-make app      # build + register AgentTasks.app
+make                 # CLI + private helper → cli/.build/release/
+make mcp             # bun install in mcp/
+make app             # build → /Applications/AgentTasks.app (replaces existing)
+make install-agent   # LaunchAgent: apple-tasks dispatch on an interval
+make install-digest  # LaunchAgent: morning digest --note --push
 make betacheck
 ```

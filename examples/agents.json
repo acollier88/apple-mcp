@@ -1,0 +1,68 @@
+{
+  "agents": {
+    "cursor": {
+      "command": [
+        "agent",
+        "-p",
+        "{prompt}",
+        "--force",
+        "--trust",
+        "--approve-mcps",
+        "--sandbox",
+        "disabled"
+      ],
+      "worktree": true,
+      "timeoutMinutes": 60,
+      "maxConcurrent": 1
+    },
+    "claude": {
+      "command": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "acceptEdits"
+      ],
+      "worktree": true,
+      "timeoutMinutes": 60,
+      "maxConcurrent": 1
+    },
+    "antigravity": {
+      "command": [
+        "agy",
+        "-p",
+        "{prompt}",
+        "--sandbox",
+        "--dangerously-skip-permissions"
+      ],
+      "worktree": true,
+      "timeoutMinutes": 20,
+      "maxConcurrent": 1
+    },
+    "triage": {
+      "command": [
+        "agy",
+        "-p",
+        "{prompt}",
+        "--model",
+        "Gemini 3.5 Flash (Medium)"
+      ],
+      "worktree": false,
+      "timeoutMinutes": 5,
+      "maxConcurrent": 1
+    }
+  },
+  "triage": {
+    "agent": "local",
+    "inbox": "Reminders"
+  },
+  "workdirs": {
+    "apple-mcp": "~/Code/apple-mcp"
+  },
+  "requireAutoTag": true,
+  "maxRetries": 2,
+  "retryBackoffMinutes": 30,
+  "maxConcurrent": 2,
+  "keepFailedWorktreeDays": 7,
+  "notifyOn": "failure"
+}

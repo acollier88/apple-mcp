@@ -6,3 +6,4 @@ Optional helpers used by the CLI / MCP — not standalone products.
 |------|---------|
 | `findmy/` | FindMy.py sidecar for AirTag location (`findmy_devices` / `findmy_locate`) |
 | `mail-rule-capture.applescript` | Mail.app rule → `[mail]` inbox reminders (`make mail-rule`) |
+| `launchd/` | LaunchAgent plists + env wrapper (`make install-agent` / `install-digest`) |

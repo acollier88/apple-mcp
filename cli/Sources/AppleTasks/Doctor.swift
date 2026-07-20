@@ -18,6 +18,9 @@ struct DoctorOut: Codable {
     let notesScanWatermark: String?
     let speech: String
     let fullDiskAccess: String
+    let agentsConfig: String
+    let cursorAgent: String
+    let launchAgent: String
     let automationNote: String
 
     struct PrivateHelperStatus: Codable {
@@ -117,6 +120,62 @@ struct Doctor: AsyncParsableCommand {
         }
     }
 
+    private static func agentsConfigStatus() -> String {
+        let path = AgentsConfig.url.path
+        guard FileManager.default.fileExists(atPath: path) else {
+            return "missing (copy examples/agents.json → \(path), or make install-agent)"
+        }
+        do {
+            let cfg = try AgentsConfig.load()
+            let tags = cfg.agents.keys.sorted().joined(separator: ", ")
+            return "ok (\(cfg.agents.count) agents: \(tags))"
+        } catch {
+            return "unreadable: \(error.localizedDescription)"
+        }
+    }
+
+    /// Resolve `agent` (Cursor Agent CLI) on PATH the same way dispatch does (/usr/bin/env).
+    private static func cursorAgentStatus() -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["which", "agent"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else {
+            return "not found (install: curl https://cursor.com/install -fsS | bash)"
+        }
+        process.waitUntilExit()
+        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard process.terminationStatus == 0, !path.isEmpty else {
+            return "not found (install: curl https://cursor.com/install -fsS | bash)"
+        }
+        return "present: \(path) (tag tasks [cursor][auto]; agent login or CURSOR_API_KEY)"
+    }
+
+    private static func launchAgentStatus() -> String {
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.apple-tasks.dispatch.plist").path
+        guard FileManager.default.fileExists(atPath: plist) else {
+            return "not installed (run: make install-agent)"
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", "gui/\(getuid())/com.apple-tasks.dispatch"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else {
+            return "plist present, launchctl probe failed"
+        }
+        process.waitUntilExit()
+        if process.terminationStatus == 0 {
+            return "loaded (com.apple-tasks.dispatch)"
+        }
+        return "plist present but not loaded (re-run: make install-agent)"
+    }
+
     func run() async throws {
         emit(DoctorOut(
             binary: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path,
@@ -139,6 +198,9 @@ struct Doctor: AsyncParsableCommand {
             notesScanWatermark: ScanState.load().notesScanWatermark,
             speech: Self.speechStatus(),
             fullDiskAccess: Self.fdaStatus(),
+            agentsConfig: Self.agentsConfigStatus(),
+            cursorAgent: Self.cursorAgentStatus(),
+            launchAgent: Self.launchAgentStatus(),
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."
         ))
     }

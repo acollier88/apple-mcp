@@ -1,29 +1,109 @@
 import AppIntents
+import Darwin
 import Foundation
 
 enum CLI {
-    /// Resolve the monorepo CLI build (apps/AgentTasks → ../../cli/.build/release).
-    /// Override with APPLE_TASKS_BIN when the app is installed outside the checkout.
-    static var defaultBinary: String {
+    /// Absolute path to the apple-tasks binary. Order: env → path stamped at
+    /// app build time → monorepo `.build` candidates → PATH.
+    static var resolvedBinary: String {
+        get throws {
+            let candidates = binaryCandidates()
+            for path in candidates {
+                if FileManager.default.isExecutableFile(atPath: path) { return path }
+            }
+            let listed = candidates.isEmpty ? "(none)" : candidates.joined(separator: "\n  ")
+            throw NSError(
+                domain: "AgentTasks", code: 3,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "apple-tasks binary not found. Tried:\n  \(listed)\n"
+                    + "Build the CLI (`make` in the repo) or set APPLE_TASKS_BIN."])
+        }
+    }
+
+    /// Path shown in Settings (best effort; may not exist yet).
+    static var displayBinaryPath: String {
+        (try? resolvedBinary) ?? (binaryCandidates().first ?? "(unset)")
+    }
+
+    private static func binaryCandidates() -> [String] {
+        var paths: [String] = []
+        if let env = ProcessInfo.processInfo.environment["APPLE_TASKS_BIN"], !env.isEmpty {
+            paths.append(env)
+        }
+        // Written by build.sh when installing the app (survives /Applications install).
+        if let stamped = Bundle.main.url(forResource: "apple-tasks-bin", withExtension: "path"),
+           let text = try? String(contentsOf: stamped, encoding: .utf8) {
+            let path = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty { paths.append(path) }
+        }
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // Sources
             .deletingLastPathComponent() // AgentTasks
             .deletingLastPathComponent() // apps
             .deletingLastPathComponent() // repo root
-        return repoRoot.appendingPathComponent("cli/.build/release/apple-tasks").path
+        paths.append(repoRoot.appendingPathComponent("cli/.build/release/apple-tasks").path)
+        paths.append(repoRoot.appendingPathComponent("cli/.build/out/Products/Release/apple-tasks").path)
+        // PATH lookup last (launchd/login PATH may not include the build dir).
+        if let which = which("apple-tasks") { paths.append(which) }
+        // Deduplicate while preserving order.
+        var seen = Set<String>()
+        return paths.filter { seen.insert($0).inserted }
     }
 
-    static func run(_ args: [String]) throws -> String {
+    private static func which(_ name: String) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath:
-            ProcessInfo.processInfo.environment["APPLE_TASKS_BIN"] ?? defaultBinary)
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["which", name]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else { return nil }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (path?.isEmpty == false) ? path : nil
+    }
+
+    /// Shell out to apple-tasks. `timeout` (seconds) kills a hung process; nil waits forever
+    /// (fine for short reads). Dispatch uses a generous timeout so a stuck agent can't freeze the app.
+    static func run(_ args: [String], timeout: TimeInterval? = nil) throws -> String {
+        let bin = try resolvedBinary
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: bin)
         process.arguments = args
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        try process.run()
-        process.waitUntilExit()
+        do {
+            try process.run()
+        } catch {
+            throw NSError(
+                domain: "AgentTasks", code: 3,
+                userInfo: [NSLocalizedDescriptionKey:
+                    "Failed to launch \(bin): \(error.localizedDescription)"])
+        }
+
+        if let timeout {
+            let deadline = Date().addingTimeInterval(timeout)
+            while process.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            if process.isRunning {
+                process.terminate()
+                for _ in 0..<25 where process.isRunning {
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                throw NSError(domain: "AgentTasks", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey:
+                                "apple-tasks \(args.first ?? "") timed out after \(Int(timeout))s"])
+            }
+        } else {
+            process.waitUntilExit()
+        }
+
         guard process.terminationStatus == 0 else {
             let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw NSError(domain: "AgentTasks", code: 1,
