@@ -144,6 +144,15 @@ them to the right plan list via `task_update`.
 - A dedicated "Inbox" list is cleaner but requires saying "...to my Inbox list".
 - Sample triage prompt lives in README.
 
+**Real-device test 2026-07-17**: "Remind me to test the siri capture
+pipeline" → Siri offered a destination choice of **Agent Tasks or
+Reminders** (our AppIntents entities are visible to Siri as a capture
+target) → landed in the default Reminders list (dictation heard "series",
+as expected for voice input) → `triage --agent local` dry-run classified
+it `[claude][apple-mcp]` → route to Code Tasks, and the co-resident
+Spotlight probe task `[personal]`. Full voice → Reminders → CLI →
+on-device-classifier loop confirmed.
+
 ## 3. Notes scanning → reminders/events — ✅ DONE (user's idea)
 
 Implemented as `apple-tasks notes scan` (+ MCP `notes_scan`). JXA via osascript,
@@ -385,15 +394,34 @@ tags when routing. Injection-tested (`quoted form of` everywhere). Beta
 finding: `using terms from application "Mail"` fails to compile on macOS
 27 beta 3 though the sdef still declares the terms — the script uses raw
 event/class codes («event emalcpma», sndr/subj/meid) instead; add to the
-§32 watch list.
+§32 watch list. Re-checked 2026-07-15 on the beta 3 respin (26A5378n):
+the regression HEALED — `using terms from` compiles again. Keeping the
+raw-codes script anyway (proven robust across the breakage); watch-list
+entry can be dropped.
 
-## 13. Multi-Mac claim protocol — KNOWN LIMITATION / TODO
+## 13. Multi-Mac claim protocol — ✅ DONE 2026-07-15
 
 The dispatch ledger is per-machine but tasks sync via iCloud: two Macs running
 dispatchers would double-run a task ([dispatched] tag helps but races over
 sync lag). Fix: claim tag includes hostname ([dispatched:mbp]) and dispatchers
 only reap/retry their own claims; or designate one dispatch machine via
 config. Note in README if a second Mac ever runs the dispatcher.
+
+Shipped (ClaimTags in Dispatch.swift): claim tags are hostname-scoped —
+[dispatched:andrews-mac-mini] / [failed:<host>] (gethostname first label,
+lowercased, tag-safe chars only). Any Mac's dispatched-family tag blocks
+re-dispatch; retries and markFailed only touch THIS machine's claims
+(another Mac's [failed:x] is its claim to retry — our ledger has no attempt
+history for it anyway); bare legacy [dispatched]/[failed] tags are treated
+as this machine's. The default prompt template's remove-tag line renders
+the actual claim tag via a {claimTag} placeholder, and recurrence rollover
+(`complete`) sheds ALL hosts' lifecycle tags since the fresh occurrence is
+fresh work. Verified live: scoped claim written + rendered into the prompt,
+foreign dispatched/failed tags skipped, legacy [failed] retried and
+re-claimed under the scoped tag. Note: the sync-lag race window between two
+Macs' EventKit views technically remains (tags ARE the cross-machine
+signal; there is no shared lock) — hostname scoping makes claims attributable
+and reap/retry safe, which is the practical fix short of a shared ledger.
 
 ## 14. CoreLocation "whereami" — ✅ BUILT 2026-06-10
 
@@ -407,7 +435,7 @@ TCC grant is per-host-process; first-run prompt must happen from a real
 terminal (sandboxed/headless shells can't display it). Uses: location-aware
 triage, am-I-home dispatcher gating, geotagging the morning digest.
 
-## 15. FindMy.py sidecar — real Find My data — TODO (researched 2026-06-09)
+## 15. FindMy.py sidecar — real Find My data — ✅ DONE 2026-07-17 (session verified live; no accessories to track)
 
 Find My itself is locked down (verified on macOS 27 beta): no AppleScript
 dictionary; cache TCC-protected AND encrypted since macOS 14.4; the four
@@ -427,9 +455,16 @@ exports dropped in `~/.config/apple-tasks/findmy/accessories/`. MCP gained
 (`~/.config/apple-tasks/findmy/venv`, auto-detected; override
 `APPLE_TASKS_FINDMY_PYTHON`). `doctor` reports sidecar config state.
 Errors come back as JSON `{error, hint}` so agents can self-serve setup
-guidance. **Untested with a real account/accessory yet** — login + plist
-export are manual first-run steps. NOT doing: FindMySyncPlus-style cache
-decryption (debugger key extraction, fragile, unproven on macOS 27).
+guidance. NOT doing: FindMySyncPlus-style cache decryption (debugger key
+extraction, fragile, unproven on macOS 27).
+
+**Verified 2026-07-17**: saved session is live (`LoginState.LOGGED_IN`,
+account loads and closes cleanly) — the interactive login had already been
+completed. User owns no AirTags (and this Mac has no
+`~/Library/com.apple.icloud.searchpartyd` beacon store), so the accessory
+plist-export step is N/A; `devices` correctly returns `[]`. Sidecar is done
+to the full extent applicable — if an AirTag is ever paired, drop its
+pairing export in `accessories/` and it lights up with zero code changes.
 
 ## 16. Pre-publish hardening & security review — TODO (process step)
 
@@ -507,7 +542,7 @@ with provenance (screenshot filename in notes). Pairs with iCloud Photo
 sync lag caveat — Desktop screenshots first, Photos library NOT in scope
 (separate TCC + heavier API).
 
-## 21. Voice-note transcription scan — Speech framework
+## 21. Voice-note transcription scan — Speech framework — ✅ DONE (2026-07-08)
 
 `apple-tasks audio scan --folder <dir>`: watermark a watched folder for new
 audio files, transcribe on-device via `SFSpeechRecognizer`
@@ -516,6 +551,12 @@ triages like notes_scan. Watch the folder = an iCloud Drive dir so Voice
 Memos/watch recordings can be shared into it from any device (Voice Memos'
 own storage is TCC/FDA-protected — don't touch it; the share-sheet drop
 folder sidesteps that). Speech adds its own TCC prompt; doctor line.
+- Subcommand `audio scan` implemented in `Sources/AppleTasks/Audio.swift`.
+- Integrates with `ScanState` watermark persistence.
+- Adds speech recognition TCC check to the `doctor` command.
+- MCP tool `audio_scan`. Failed transcriptions are reported per-file, are
+  never archived, and hold the watermark back so the next scan retries them.
+
 
 ## 22. Context-gated dispatch — ✅ DONE 2026-07-08 (location/power/maxLoad; focus deferred)
 
@@ -557,17 +598,22 @@ half of the voice-to-PR loop: you spoke the task from the car; the "PR ready"
 ping should reach the car too, not a Mac banner nobody sees. ntfy first
 (free, no account, plain HTTP POST — curl from Swift or the MCP server).
 
-## 25. Safari Reading List scan
+## 25. Safari Reading List scan — ✅ DONE (2026-07-08)
 
 `~/Library/Safari/Bookmarks.plist` holds the Reading List (needs Full Disk
 Access for the host process — doctor should detect and say so). Read-only
-`apple-tasks readinglist scan` with the usual watermark → {title, url,
+`apple-tasks reading-list scan` with the usual watermark → {title, url,
 dateAdded, previewText}. Triage agent turns saved articles into [read]
 tasks with the URL field (#19), or flags ones relevant to active plans.
 Skip if FDA feels too heavy — this is the only idea in this round that
 needs it, so it ships last and stays optional.
+- Subcommand `reading-list scan` implemented in `Sources/AppleTasks/ReadingList.swift`.
+- Integrates with `ScanState` watermark persistence.
+- Adds Full Disk Access probe to the `doctor` command.
+- MCP tool `readinglist_scan`; `--path` override for testing without FDA.
 
-## 26. Sections & subtasks via the private helper — ✅ SUBTASKS DONE 2026-07-08 (`update --parent`); sections + detach still open
+
+## 26. Sections & subtasks via the private helper — ✅ FULLY DONE 2026-07-15 (subtasks 07-08; sections + safe detach 07-15)
 
 The remctl spike proved ReminderKit can write more than tags: subtasks,
 sections, smart lists. Extend apple-tasks-private with `--set-section` and
@@ -590,6 +636,27 @@ and list normally. Two findings from live testing:
   re-file-into-list step is found. Sections are also still open: section
   CREATE selectors exist (addListSectionWithDisplayName:...) but the
   reminder->section reference needed to ASSIGN a task to a section is unproven.
+
+Both blockers solved 2026-07-15 (live-spiked against a sacrificial list):
+- **Sections**: assignment goes through the LIST change item —
+  `updateList:` → `sectionsContextChangeItem` →
+  `setUnsavedMembershipsOfRemindersInSections:` with a `REMMemberships`
+  of `REMMembership(memberIdentifier:groupIdentifier:isObsolete:modifiedOn:)`.
+  The identifiers MUST be **NSUUIDs** (reminder externalId / section
+  objectID uuid) — plain strings and REMObjectIDs both make remindd drop
+  the XPC connection; found by bisection. remindd MERGES memberships
+  (CRDT via modifiedOn), so single-entry writes never clobber other
+  reminders' sections (verified with two reminders). Read-back:
+  `REMListSectionsDataView.fetchListSectionWithReminderID:`. Shipped:
+  helper ops `{"section": "Name"}` (find-or-create by display name,
+  case-insensitive) + read `{"sectionsOf": [ids]}`; CLI `update --section`
+  / `show --section`; MCP task_update.section / task_show.section;
+  `--check` reports `sections`.
+- **Safe detach**: `removeFromParentReminder` + `setValue:forKey:@"listID"`
+  (the change item's listID is settable) in the SAME save re-files the
+  reminder into its list — it stays EventKit-visible, killing the
+  data-loss problem. `--clear-parent` is now exposed (CLI + MCP
+  task_update.clear_parent), mutually exclusive with --parent.
 
 ## macOS 27 beta 2/3 research (2026-07-06) — what the upgrade unlocks
 
@@ -634,7 +701,7 @@ just a session in the AgentTasksApp or a `apple-tasks agent` subcommand.
 Auth via ANTHROPIC_API_KEY env. Beta caveat: APIs may change before GA;
 pin the package version.
 
-## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped; files not started
+## 29. Adopt more App Intents schema domains (calendar, notes, mail, files) — ✅ NOTES + FILES DONE 2026-07-08; calendar DESCOPED (findings below); mail skipped
 
 Verified in the local SDK's AppIntents.swiftinterface: schema domains now
 cover **assistant, audio, books, browser, calendar, camera, clock, files,
@@ -675,11 +742,15 @@ plugin (useful reference — none of this is documented anywhere public):
   size (no `indirect` for structs, unlike enums) — both are **computed**
   properties returning `nil` (nested folders/accounts aren't modeled).
 
-Not done: `UpdateNoteIntent` (schema exposes it; same pattern should
-apply — deferred for time). Verified: compiler/metadata-processor
-conformance + the underlying CLI path. Not verified: an actual spoken
-Siri invocation end-to-end (no Shortcuts-CLI way to trigger a specific
-App Intent by name without first building a Shortcut in the GUI).
+Not done: `UpdateNoteIntent` — resolved 2026-07-15 as WON'T DO, on
+principle rather than time: its perform() would have to edit an existing
+note body, and the project's read-only-notes rule exists precisely
+because AppleScript body writes mangle formatting. A schema conformance
+with a refusing perform() would be worse than absence. Verified:
+compiler/metadata-processor conformance + the underlying CLI path. Not
+verified: an actual spoken Siri invocation end-to-end (no Shortcuts-CLI
+way to trigger a specific App Intent by name without first building a
+Shortcut in the GUI).
 
 ### Calendar domain — descoped, not shipped
 
@@ -726,9 +797,25 @@ is no schema intent for "list mail" or "show new items," so there's no
 natural mapping without first building Mail-write support (a distinct,
 separately-scoped feature). Not attempted.
 
-### Files domain — not started
+### Files domain — shipped (2026-07-08; validated against the beta 3 macro plugin)
 
-Queued (pairs with #23's drop-folder), not reached this session.
+`spikes/AgentTasksApp/Sources/FilesSchemaIntents.swift`: `InboxFileEntity` +
+`OpenFileIntent` (schemas `.files.file`/`.files.openFile`). The entity query
+surfaces recent AgentInbox drops via `apple-tasks files scan`;
+`OpenFileIntent.perform()` resolves `FileEntityIdentifier.fileURL` and opens
+it via `NSWorkspace`. Compiles clean through the full
+appintentsmetadataprocessor. Bisection findings:
+- There is NO `.files.folder` schema — the domain's only entity is `file`
+  (intents: openFile, createFolder, renameFile, moveFiles, deleteFiles).
+- The schema macro conforms the type to the SDK's marker protocol, itself
+  named `FileEntity` — so the app struct needs a different name
+  (`InboxFileEntity`) or the generated `extension FileEntity: FileEntity`
+  fails to compile.
+- That protocol pins `ID == FileEntityIdentifier` (not String; build ids via
+  `.file(url:)`) and requires `static supportedContentTypes: [UTType]`.
+- The validator additionally requires `creationDate` and
+  `fileModificationDate` properties on the entity.
+
 
 ## 30. Siri Extensions status — WATCH, don't build (beta 2/3 reality check)
 
@@ -740,16 +827,28 @@ partnership dispute per press reports). Extensions are built ON App Intents,
 so idea #29 IS the preparation — nothing else actionable until Apple flips
 the backend on. Re-check each beta.
 
-## 31. Spotlight "Search or Ask" — make our Siri index donations continuous
+Re-checked 2026-07-15: still backend-disabled as of the July 13 public
+beta per press coverage (EU DMA talks unresolved; OpenAI weighing legal
+options over Siri placement). Status quo — keep watching.
+
+## 31. Spotlight "Search or Ask" — make our Siri index donations continuous — ✅ DONE (2026-07-08)
 
 Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
-ground its answers. Our `IndexedEntity` donation (built in Round 3) runs only
-on app launch — stale within hours on an active queue. Upgrade: donate on
-every mutation (CLI pings the app, or the app watches EKEventStoreChanged and
-re-donates diffs), adopt `IndexedEntityQuery` for the system's semantic
-reindex callbacks, and verify open tasks actually surface in Spotlight ask
-("what's open for claude in repo2?") on beta 3. Cheap, and it's the layer
-the new Siri actually reads from.
+ground its answers. Our `IndexedEntity` donation runs on app launch, but goes stale.
+Upgraded:
+- `TaskEntityQuery` adopts `IndexedEntityQuery` for system-initiated reindex callbacks.
+- The app holds a long-lived `EKEventStore` (and requests Reminders access) --
+  required for `.EKEventStoreChanged` to be delivered at all -- and re-donates
+  all open tasks on every mutation, debounced 2s.
+- Verified: compiles through the full appintentsmetadataprocessor.
+- **Verified LIVE 2026-07-17** (public beta, 26A5378n): with the app
+  running, a freshly created reminder ("Spotlight probe: water the office
+  ferns") surfaced in Spotlight under its own **AgentTasks** group header —
+  distinct from the Reminders app's own result — within seconds of the
+  mutation (screenshot-confirmed). Siri also offers "Agent Tasks" as a
+  reminder-creation destination, so the entity donations are feeding both
+  surfaces.
+
 
 ## 32. Beta-upgrade regression drill (✅ SCRIPTED as `make betacheck` 2026-07-07; run after EVERY beta)
 
@@ -768,6 +867,15 @@ PASS/FAIL line per step and stop-on-first-failure, then (per §33) compiles
 AND dyld-runs `research/ClaudeLanguageModel/SchemaProbe.swift` when present.
 Still manual: `findmy_devices` (network-dependent) and the AgentTasksApp
 rebuild (needs Xcode, not in the SwiftPM build).
+
+**Drill run 2026-07-15** (OS respin 26A5378j → 26A5378n, same Xcode beta):
+all 7 steps PASS, AgentTasksApp rebuilt clean (no schema drift), private
+helper --check ok (now also reporting subtaskRead per #47). Findings
+recorded in place: #12 `using terms from` healed, #33 executor skew
+persists, #30 Extensions still dormant. Still needing a human at the Mac:
+#31 Spotlight-ask live check (app launched + donating, try Spotlight),
+#2 real-device Siri conversational test, #15 FindMy login.
+**All three human checks cleared 2026-07-17** — see §31, §2, §15.
 
 ## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
 
@@ -791,6 +899,13 @@ Event protocol→struct migration is expected to be a small mechanical diff
 FoundationModels binary, not just compile one — compile-clean is no longer
 proof on this framework.
 
+Re-checked 2026-07-15 (OS respin 26A5378n, Xcode beta still 27A5194q):
+STILL SKEWED — the harness compiles and dies in dyld on the exact
+documented symbol (LanguageModelExecutorGenerationChannel.send generic).
+The basic surface remains fine (betacheck's fm probe compiles AND runs),
+so #27/#41 are unaffected. No new Xcode beta has shipped; nothing to do
+until one does.
+
 ## 34. Fold notes-scan into triage — ✅ DONE 2026-07-08 (`triage --notes`)
 
 PR #3 (antigravity dispatch #21) bundled two things: auto-triage on dispatch
@@ -806,3 +921,500 @@ JSON, and have the CLI create the items (audited, dry-run by default,
 source-note name in the notes field, dedupe against prior runs). That gives
 the notes→tasks loop (README §Notes-to-tasks) a no-loop on-demand path, same
 as inbox triage got.
+
+## Round 5 ideas (2026-07-12) — Spark parity + qwen-feedback triage
+
+Context: Google shipped Gemini Spark (I/O 2026; Mac app 2026-07-01) — a 24/7
+cloud-VM agent with a dedicated Gmail address as its interface, Chrome web
+actions, topic monitoring, and Workspace/third-party connectors. Comparing
+against it, this project already has the core (capture → triage → dispatch →
+report-back); the gaps are interface, proactivity, and the open web. Also
+folded in the keepers from qwen-feedback.md. Suggested order: #35 → #36 →
+#37 → #38 → #39; the rest as they get pulled by real use.
+
+## 35. Structured MCP output schemas — ✅ DONE 2026-07-12 (qwen #7; CRUD parity split out below)
+
+Every tool returns JSON as a bare text blob (`content[0].text`); agents parse
+untyped. The MCP SDK supports `outputSchema` + `structuredContent` per tool.
+The CLI already emits stable typed JSON, so this is near-mechanical: declare
+the schema in each `registerTool` call. Big agent-UX gain, zero Swift work.
+
+Shipped: `outputSchema` on every JSON-emitting tool (~30), derived from the
+Swift output structs; new `okJson()` returns structuredContent alongside the
+unchanged text content. Top-level-array outputs nest under a named key
+(tasks/events/...) since structuredContent must be an object. Free-form
+tools (shortcut_run, notify, run_log, ...) deliberately stay text-only.
+Verified via stdio smoke test against real CLI output.
+
+Remaining (split out, was "while in there") — ✅ DONE 2026-07-15: the small
+CRUD parity items (qwen #2/#3/#4). Shipped: `events show <id>` + MCP
+`event_show`; `add-batch` (JSON array via stdin or `--file`, items fail
+independently — output separates `created` from `failed` with index/title/
+error) + MCP `task_create_batch`, via a `createTask` helper shared with
+`add`; `list --search <q>` (case-insensitive substring over title+notes —
+plain Swift filter post-fetch, not NSPredicate, since reminders are already
+in memory) + MCP `task_list.search`. 46 tools. Verified live: batch with
+mixed good/bad items (bad date, bad list, bad priority), file + stdin +
+malformed-JSON paths, search over title and notes, event_show positive and
+unknown-id, MCP stdio smoke of all three.
+
+## 36. Recurrence — ✅ DONE 2026-07-13 (qwen #1; motivating case = recurring AGENT work)
+
+Long-standing gap, but the real payoff isn't chore-repeat CRUD: a recurring
+`[claude][auto]` reminder that regenerates on completion IS Spark's
+"scheduled routines" using the existing dispatcher unchanged — "every Monday
+7am, run the weekly-review agent." EventKit supports recurrence rules
+natively on both reminders and events. Design decision needed: expose the
+EKRecurrenceRule directly (`--recurrence "FREQ=WEEKLY;BYDAY=MO"`) vs. a
+simplified flag set. Watch the dispatcher dedupe: each generated occurrence
+must present as a fresh dispatchable task (externalId behavior across
+recurrence needs a spike first).
+
+Shipped: raw RRULE subset won the design call (`--recurrence
+"FREQ=WEEKLY;BYDAY=MO"`; FREQ/INTERVAL/BYDAY/BYMONTHDAY/UNTIL|COUNT —
+Recurrence.swift parses to EKRecurrenceRule and formats back, so TaskOut/
+EventOut `recurrence` round-trips). On `task add` (requires --due), `task
+update` (+ --clear-recurrence), `events add`, and the MCP tools/schemas.
+
+Spike findings (verified live 2026-07-13): completing a recurring reminder
+REUSES the object — same id/externalId, same title, completed flips back to
+false with due advanced to the next occurrence after now; the done
+occurrence is archived as a separate item with its own externalId. Two
+dispatcher landmines found and fixed: (1) the surviving [dispatched] tag
+would block every future occurrence — `complete` now sheds
+[dispatched]/[failed] when a series rolls over and reports `recurred:true`;
+(2) dispatch had NO due-date filter, so a rolled occurrence would re-run
+immediately in a loop — dispatch now skips tasks not yet due (dry-run shows
+"scheduled: not due until ..."; a due date on an agent task means "run at",
+not "by"). Together these make "every Monday 7am, run the weekly-review
+agent" work with zero dispatcher config. Not done: recurrence on `events
+update`/`delete` (needs EKSpan .futureEvents plumbing; .thisEvent today).
+
+## 37. Two-way email interface — ✅ DONE 2026-07-15 (Spark's killer feature, we're 70% there)
+
+Spark's dedicated Gmail address is its most-loved surface. Our half exists:
+the #12 Mail rule already turns matching inbound mail into [mail]-tagged
+reminders. Missing half is the REPLY: mail draft creation (AppleScript can
+`make new outgoing message`; NEVER auto-send — draft only, human hits send).
+Shape: `apple-tasks mail draft --to X --subject Y --body-file Z --reply-to
+<message-id>`; dispatcher prompt template gains "write your report as a
+reply draft." Then: email `you+agent@...` from any device → rule routes to
+dispatcher → result appears as a reply draft + ntfy push. Full assistant
+reachability with zero new UI and zero ToS risk (unlike iMessage).
+
+Shipped: `mail draft` (Mail.swift) — new (`--to`/`--subject`) or reply
+(`--reply-to`, RFC Message-ID from a [mail] task's notes or numeric scan
+id; Mail's native reply keeps threading; inbox-only lookup) with `--body`/
+`--body-file`. NO send path exists anywhere in the command. Dispatcher:
+[mail]-tagged tasks get a prompt line directing agents to report as a
+reply draft. MCP: mail_draft (44 tools). Verified live: new draft created
++ confirmed unsent in Drafts, clean error for unknown reply target.
+Caveats: reply positive-path untested on this Mac (inbox not syncing);
+scripted DELETION of local drafts doesn't stick (a Mail quirk that doesn't
+affect the feature — drafts are meant to persist for the human).
+
+## 38. Topic watches / standing monitors — ✅ DONE 2026-07-13 (Spark "stay up to date")
+
+`~/.config/apple-tasks/watches.json`: [{name, kind: search|rss|url, query,
+cadence}]. `apple-tasks watch scan` fetches each due watch, diffs against
+the usual watermark/state, emits {watch, ts, newItems} JSON; triage decides
+digest-worthy vs. noise; hits land in the morning digest (#8) with URLs via
+the url field (#19). Covers qwen #6 (web context) with the same primitive:
+a `web_fetch`/`web_search` CLI subcommand — note the gap is narrower than
+qwen implies (dispatched `claude -p` agents already have web access; the
+starved lanes are local Foundation Models triage and any future in-process
+#28 agent). Price watches, beta-release watches, "did X ship" watches.
+
+Shipped: `watch scan` / `watch list` (Watches.swift) with kinds `rss`
+(XMLParser, RSS 2.0 + Atom, seen-id dedupe capped at 500, first run seeds
+the set and surfaces only the last 24h) and `url` (SHA-256 body hash,
+"content changed" items, first run records a baseline). Per-watch
+cadenceMinutes (default 60) with lastFetch anchor in state.json watchState;
+--force overrides; a failed fetch reports per-watch and still advances
+cadence so a dead feed can't spam retries. Plus `web fetch <url>`
+(qwen #6): HTML → readable text with script/style/head stripped, {url,
+status, title, text, truncated}. MCP tools watch_scan / watch_list /
+web_fetch with full schemas. Descoped: `search` kind (no keyless search
+API worth shipping; a watch on a search-results URL covers some of it).
+Verified live: swift.org + ntfy release feeds baseline/dedupe/cadence,
+httpbin uuid change detection, MCP stdio smoke test.
+
+## 39. ntfy approvals — actionable human-in-the-loop — ✅ DONE 2026-07-13
+
+ntfy supports action buttons (view/http POST) on notifications. Upgrade the
+#24 push path: dispatcher (or an agent mid-run) posts "Agent wants to do X
+[Approve] [Reject]" with buttons hitting a tiny local endpoint (or an ntfy
+subscribe loop in `dispatch --watch`); the answer flips a tag / writes an
+approvals table row the agent polls. Turns [auto] from a binary pre-grant
+into a real approval protocol — the unlock for widening what unattended
+agents may do (send that draft, run that web action). Works from the watch.
+
+Shipped: no local endpoint (the phone can't reach the Mac) — buttons POST
+"approve <token>"/"deny <token>" to a REPLY topic (default
+"<topic>-approvals", override approvalsReplyTopic in notify.json) and the
+Mac polls it. `approve request` (ntfy JSON publish, priority 4, respects
+quietHours unless --force — suppressed requests still exist and are
+answerable), `approve check --wait-seconds N` (3s repolls; also expires
+overdue rows, default 240min), `approve answer` (Mac-side/human escape
+hatch), `approve list`. Approvals table in the audit DB; answer is a
+single-statement compare-and-set so first answer wins. MCP:
+approval_request/check/list — deliberately NO approval_answer tool (an
+agent answering itself defeats the protocol; the CLI answer path is
+visible in the audit caller column). Trust model: reply topic name is the
+secret, same as the main topic. Verified live against throwaway ntfy.sh
+topics: approve/deny button simulation, --wait pickup (~7s), double-answer
+rejected, expiry, quiet-hours suppression + --force, MCP smoke (43 tools).
+
+## 40. Web-action dispatcher lane — ✅ DONE 2026-07-15 (Spark acts through Chrome)
+
+A browser-capable agent template in agents.json for `[web]`-tagged tasks:
+same claim/timeout/run-log machinery, but the agent's MCP config includes a
+browser (claude-in-chrome / Playwright). Use cases: "check if the refund
+posted," "book the usual table." Safety posture: NEVER requireAutoTag-
+exempt; pair with #39 approvals for anything transactional. Zero Swift work
+— it's an agents.json entry + prompt template + a decision about what web
+tasks are allowed unattended (initial answer: none).
+
+Shipped as documentation (README "Dispatcher lanes: web actions"): a
+complete `[web]` agents.json entry (claude + Playwright MCP via inline
+--mcp-config, 20-min timeout, maxConcurrent 1) whose promptTemplate wires
+the #39 approval protocol into every transactional step (approve request →
+approve check --wait → proceed only on approved) and uses the #13
+{claimTag} placeholder. Decision recorded: unattended web WRITES allowance
+is none — read-only by default, approval button for everything else. No
+Swift/TS changes by design.
+
+## 41. Proactive suggestions pass — ✅ DONE 2026-07-15 (Spark proposes, we only react)
+
+`apple-tasks suggest`: feed calendar (next 7d), contacts birthdays, mail-scan
+headers, stale [read]/[dispatched] tasks, and audit-log activity to the local
+Foundation Models classifier (same harness as #27); emit PROPOSED tasks into
+a "Suggestions" section of the morning digest — never auto-create. Examples:
+"flight Thu, no calendar block for the drive," "Sarah's birthday in 3 days,"
+"this [read] task is 6 weeks stale — drop it?" Judgment in the model,
+application dry-run by default: same architecture rule as triage.
+
+Shipped (Suggest.swift): `suggest [--days 7] [--stale-weeks 4] [--max 8]
+[--no-contacts]` gathers events, birthdays within 14d (CNContactFetchRequest
+over birthday keys; feed degrades gracefully if Contacts is denied), stale
+open tasks ([read]/claim-tagged older than the cutoff, or long-overdue), and
+a 24h audit pulse (counts only, no bodies) → @Generable
+{kind: task|event|drop, title, reason, due?} via SystemLanguageModel.
+Nothing is ever created. `digest --suggest` appends the section best-effort
+(suggestError annotates instead of failing the unattended run). MCP tools:
+suggest + digest.suggest param (48 tools). mail-scan headers deliberately
+NOT fed in v1 (JXA latency dominates; revisit if wanted). Verified live:
+5 grounded proposals — today's birthday call, church travel block, dropping
+an 846-day-old overdue task, two this-week birthday gifts — each citing its
+signal line; prompt tuning note: the first "prefer empty over noise"
+instruction over-suppressed to zero suggestions, the shipped wording names
+the normally-worth-raising cases instead.
+
+## 42. Google Workspace via official MCP servers — ✅ LANE DONE 2026-07-15; gmail scan ✅ CODE SHIPPED 2026-07-17 (unverified live — awaiting OAuth onboarding decision)
+
+Google ships managed remote MCP servers (GA rollout from 2026-05-01) for
+Gmail, Calendar, Drive, Chat, People — auth inherits the user's own
+permissions. (History note: the unofficial `gws` Workspace CLI got its
+author, Justin Poehnelt, fired in June 2026 — Google is territorial here;
+anything we do stays personal-use, unbranded.) So DON'T build a google-mcp
+sibling; wire the official servers in:
+- **Dispatcher lane**: agent template for `[google]`-tagged tasks whose MCP
+  config loads Google's Gmail/Calendar servers (the `[gemini][calendar]`
+  example from #7 becomes real with zero code).
+- **Worth building ourselves**: the CAPTURE side only — official MCPs are
+  pull-tools for agents, not watermarked feeds. A `gmail scan` (Gmail API +
+  usual watermark/provenance, mirroring mail_scan's JSON shape) fixes the
+  known "Mail.app not syncing → mail_scan returns []" hole and makes Gmail
+  a first-class triage feed.
+- Cross-ecosystem loop for free: Gmail message → triage → tagged Reminder →
+  dispatched agent replies via official Gmail draft tool (pairs with #37).
+- Fallback if official servers are too locked down: taylorwilsdon/
+  google_workspace_mcp (most complete unofficial one).
+
+Lane shipped as documentation (README "Dispatcher lanes: Google
+Workspace"): [google] agents.json template loading the official remote MCP
+servers via a separate google-mcp.json, approval-protocol posture for
+transactional actions, don't-build-google-mcp decision recorded.
+
+**gmail scan CODE SHIPPED 2026-07-17** (`Sources/AppleTasks/Gmail.swift`):
+`gmail login` (PKCE + loopback-redirect OAuth, browser consent, tokens →
+`~/.config/apple-tasks/gmail/token.json` chmod 600, auto-refresh with
+rotation), `gmail scan` (watermarked via ScanState.gmailScanWatermark =
+newest internalDate ms; `after:` + strict-ms filter; mirrors mail_scan's
+shape + threadId/snippet; --query for extra search terms), `gmail show`
+(text/plain part, base64url-decoded, snippet fallback). Read-only scope
+only — no send path, matching the mail posture. MCP: `gmail_scan` /
+`gmail_show` (51 tools). Builds + typechecks clean; error chain verified
+(scan → "run gmail login" → login → console-setup hint). **NOT yet run
+against a live mailbox** — blocked on the OAuth onboarding decision below.
+
+**OPEN QUESTION (user, 2026-07-17): lower the setup barrier.** BYO Google
+Cloud project + OAuth client is too much friction for anyone but us.
+Options to weigh before first login:
+- **Ship a shared OAuth client id** in the repo: needs Google verification
+  for restricted scopes (gmail.readonly) — CASA security assessment,
+  $15k+/yr class of burden; unverified shared clients hit the 100-user cap
+  and scare-screens. Also the "secret" can't be secret in open source
+  (Google tolerates this for Desktop clients, but ToS-gray).
+- **Device flow**: not available for Gmail's restricted scopes.
+- **IMAP + app password instead**: `imap.gmail.com`, user enables 2FA and
+  mints an app password — no cloud project, no consent screen, ~1 minute
+  of setup, works for any IMAP provider not just Gmail. Loses labels/
+  threadId niceties; scan shape stays identical. Likely the real
+  barrier-killer; could live alongside the OAuth path or replace it.
+- **Status quo**: document BYO-credentials as the power-user path (already
+  in README).
+
+## 43. Quiet hours as a ContextGate time condition — ✅ DONE 2026-07-12 (qwen #5, reshaped)
+
+qwen suggested quiet-hours config on notify. Better home: a `time` condition
+in the existing #22 ContextGate (`"conditions": {"time": {"notBetween":
+["22:00","07:00"]}}`) — gates dispatch AND notify from one abstraction
+("don't run heavy agents at 2am" falls out of the same change). notify
+reads the same config; digest-priority pings can carry an override flag.
+
+Shipped: shared `TimeWindow` (ContextGate.swift) parses the notBetween pair
+(HH:mm local; start > end wraps midnight). Dispatch gains `conditions.time`
+— gated tasks stay queued ("gated: quiet hours 22:00–07:00"), malformed
+windows gate with a fix-it reason. notify gains `quietHours` in notify.json
+plus `--force` for priority pings; suppression still exits 0 and is audited,
+and an invalid window fails open (a typo must not mute pings).
+
+## 44. Consolidate watermark state into the audit DB — ✅ DONE 2026-07-15 (qwen #8)
+
+state.json (scan watermarks) and apple-tasks.db (audit/ledger) don't know
+about each other. Fold watermarks into a KV table in the SQLite DB so doctor
+reads one source of truth and JSON-vs-DB drift is impossible. Keep the
+ScanState API surface; swap the backing store. Migration: read state.json
+once, write rows, leave the file as a dead artifact (or delete after one
+verified run). Explicitly NOT doing qwen #9 (persistent Swift process to
+avoid execFile spawns) — spawn-per-call has no stale-daemon failure mode
+and current latency doesn't hurt.
+
+Shipped: `state` KV table in apple-tasks.db (get/setState on AuditDB,
+upsert via ON CONFLICT); ScanState keeps its exact API and JSON payload but
+reads/writes the single `scan_state` row. load() migrates a pre-existing
+state.json once (best-effort: if the DB write fails the file state is still
+returned so watermarks survive) and leaves the file as a dead artifact.
+save() now throws if the DB is unavailable rather than silently losing the
+watermark. Verified live: migration preserved all keys byte-for-byte
+(watchState included), file mtime untouched, and a subsequent
+`screenshots scan` advanced the DB row while the file stayed frozen.
+
+## 45. Clipboard watcher capture — ✅ DONE 2026-07-15 (cheap channel, phone-parity habit)
+
+`apple-tasks clipboard scan`: poll NSPasteboard changeCount on a timer (or
+per dispatch pass), emit new text clippings {ts, content} through the same
+triage path as #23 files. "Copy it to deal with later" beats screenshotting
+for text. Caveats: noisy channel — require opt-in run (no launchd by
+default), redact obvious secrets (password-manager pasteboard types mark
+themselves via org.nspasteboard.ConcealedType — skip those), never audit-log
+clipboard bodies.
+
+Shipped (Clipboard.swift): `clipboard scan [--max-chars]` + MCP
+`clipboard_scan` (47 tools). changeCount watermark in ScanState (now
+DB-backed via #44); at most one clipping per call since NSPasteboard has no
+history. Privacy rails beyond the sketch: the FIRST run only records a
+baseline (whatever was already copied — possibly a secret — never surfaces),
+Concealed AND Transient marker types are skipped, and a skipped clipping
+still advances the watermark so it can't resurface. Verified live: baseline,
+new-clipping emit, unchanged dedupe, concealed skip (JXA-planted
+ConcealedType), --max-chars truncation.
+
+## 46. Reminders attachments support — ✅ DONE 2026-07-15 (Agent Vision/File Context)
+
+Extend `apple-tasks` to support reading and writing attachments (`EKAttachment`) on reminders and calendar events.
+- **Why**: Currently, agents only get text. If the user attaches an image (e.g. a screenshot of a bug) or a PDF/text file to a reminder, the agent should be able to download and parse it.
+- **Implementation**: Parse the attachment data in `apple-tasks` and save it to a temporary directory in the agent's workdir during dispatch, passing the file path in the agent prompt.
+
+Shipped via the private helper (there is NO public EventKit attachment API —
+"EKAttachment" doesn't exist; verified against the macOS 27 SDK
+swiftinterface). Probed live: `REMReminder.attachments` (@dynamic → KVC),
+REMFileAttachment{fileURL,fileSize}, REMImageAttachment (subclass of file,
++width/height), REMURLAttachment{url}; write side
+addFileAttachmentWithURL:error: / addURLAttachmentWithURL: on the
+attachment context change item. Helper ops: read-only
+`{"attachmentsOf": [...]}` and write `attachFile`/`attachURL` (a file is
+COPIED into the Reminders group container, verified). CLI: `show
+--attachments`, `update --attach-file/--attach-url`; MCP: task_show
+attachments param, task_update attach_file/attach_url; dispatch prompts
+list attachment paths/URLs (skipped on dry runs). Two deviations from the
+sketch: no temp-dir copy into the workdir (agents run as the same user and
+read the store path directly; copying would leak files into repos), and the
+container path is TCC-protected — reading file CONTENT needs Full Disk
+Access on the reading process (metadata always works; doctor's FDA line
+covers it; the prompt tells agents to note unreadable files). Events
+attachments not done (EKEvent has no public surface either; reminders are
+the capture channel that matters).
+
+## 47. Subtask dependency modeling in the dispatcher — ✅ DONE 2026-07-15 (Checklist Swarms)
+
+Model complex task workflows natively using parent-child reminder relationships in [Dispatch.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift).
+- **Why**: If a parent task contains subtasks, the dispatcher shouldn't execute the parent task until all subtasks (which may be assigned to different agents) are completed.
+- **Implementation**: Before claiming/dispatching a task, check the status of its children in EventKit. Run children in sequence or in parallel according to their agent tags, and block the parent task until all subtasks resolve.
+
+Shipped. EventKit exposes NO parent/child relation, so the read went
+through the private helper: new read-only `{"parentsOf": [extIds]}` op
+returns extId → parent extId|null via `REMReminder.parentReminderID`
+(probed live 2026-07-15; the property is @dynamic, so the `--check` probe
+uses class_getProperty — instancesRespondToSelector is false before runtime
+resolution — and the read goes through KVC; `--check` now reports
+`subtaskRead`). Dispatcher: ONE lazy helper call per pass builds
+open-subtask counts per parent; a parent with open subtasks reports
+"gated: N open subtasks — stays queued" (same never-tagged semantics as
+context gates) while subtasks dispatch on their own agent tags. Helper
+missing/failed = no info, gate doesn't fire (dispatch proceeds as before).
+Verified live: parent gated with open child, child dispatchable, completing
+the child unblocked the parent next pass. Side findings: completing a
+subtask archives it out of EventKit view like recurring occurrences, and
+deleting a parent cascade-deletes its subtasks.
+
+## 48. User-activity and app-focus gating — ✅ DONE 2026-07-15 (Polite background execution)
+
+Extend the context-gated dispatch system in [ContextGate.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/ContextGate.swift) to respect user activity and focus.
+- **Why**: Running heavy tasks (like local LLM classification or multi-dependency builds) while the user is actively coding or in a meeting can cause CPU lag and locking conflicts.
+- **Implementation**: Add conditions like `idleMinutes` or `blockingApps` to `conditions` in `agents.json`. Swift can check system idle time via `CGEventSource.secondsSinceLastEventType(.combinedSessionState)` and check if heavy apps are running or focused via `NSWorkspace.shared.runningApplications`.
+
+Shipped: `conditions.idleMinutes` (CGEventSource combined-session idle with
+the kCGAnyInputEventType raw value — no Swift case exists for it) and
+`conditions.blockingApps` (case-insensitive exact match against running
+apps' bundle ids AND localized names, probed once per pass and cached).
+Both run in the cheap-gate tier before power/location. Verified live via a
+temp echo-agent config: active user gated ("user active (idle 0.2 min <
+15 min)"), running Finder gated by bundle id, non-running app passed
+through to "would dispatch". Same stays-queued semantics as every gate.
+
+## 49. Raycast extension & menubar integration — SHELVED 2026-07-15 (user call)
+
+Shelved: the fast-control-plane use cases (task search, run logs,
+approvals, manual dispatch) are expected to be covered by the Spotlight
+donations (#31) and Siri/App Intents surfaces (#2/#29) instead of a
+third-party launcher. Revisit only if a keyboard-driven surface still
+feels missing after those mature on the betas.
+
+Provide a Raycast extension or a lightweight macOS menu bar app for managing `apple-tasks`.
+- **Why**: Reminders.app is a great task view, but developer workflows benefit from a keyboard-driven search and command interface.
+- **Implementation**: Since the Swift CLI communicates strictly in structured JSON, build a Raycast extension in TypeScript that queries open tasks, displays run logs, handles human-in-the-loop approvals, and allows triggering manual dispatches.
+
+## 50. Two-way GitHub/Linear issue sync — ✅ GITHUB DONE 2026-07-15 (Linear not planned)
+
+A command to sync external tracker issues directly to a dedicated Plan list.
+- **Why**: Many developer tasks originate in team tools rather than personal Siri captures.
+- **Implementation**: Add `apple-tasks sync-github --repo owner/repo` or a background worker. It fetches issues assigned to you, creates them in Reminders with appropriate agent/repo tags, links the URL property, and synchronizes status (completing the reminder closes the issue on GitHub, and vice versa).
+
+Shipped (GitHubSync.swift): `sync-github --repo owner/repo [--list]
+[--tag]... [--assignee @me|all] [--limit] [--close-issues] [--dry-run]`,
+shelling to the authenticated `gh` CLI (keyless; auth/pagination are gh's
+problem). Issue URL in the task url field (#19) is the dedupe key; notes
+carry `github:owner/repo#N` + truncated body; created tasks always get
+[github] + any --tag extras. Outbound closes (completed reminder → close
+issue, with a comment) are OPT-IN via --close-issues — mutating a shared
+tracker by side effect shouldn't be a default. MCP `github_sync` (49
+tools; dry_run defaults TRUE from MCP, matching dispatch_run's posture).
+Verified live against acollier88/apple-mcp: inbound create (3 real open
+issues → tagged tasks with url/notes/native tags, then removed — test
+artifacts), closed-issue → reminder-completed transition, dry-run
+read-only pass. Outbound --close-issues path is code-complete but
+deliberately NOT exercised (external write); first real run should be
+human-supervised. Linear: not planned — no Linear account in play.
+
+## 51. BYOM — bring your own model endpoint — ✅ DONE 2026-07-17 (user's idea)
+
+Plug any OpenAI-compatible endpoint + API key (homelab ollama/LM Studio/
+vLLM, LiteLLM, OpenRouter, …) into the lanes, the way a wrapper script
+points `claude` at an on-network agent — but configured in agents.json,
+no script.
+
+Shipped (Llm.swift + Dispatch/Triage wiring):
+- `apple-tasks llm` — dumb bridge: one prompt (flag or stdin) → POST
+  `/chat/completions` → print the reply. Profiles from agents.json
+  (`--agent <tag>`), llm.json (`--profile`), or flags. No tools, no
+  state — deliberately: the CLI stays dumb, agents make judgment calls.
+- agents.json `Agent.llm` block (endpoint/model/apiKey/apiKeyEnv/system/
+  maxTokens/temperature): a lane with `llm` and no `command` dispatches
+  through the bridge via synthesized argv `llm --agent <tag> -p {prompt}` —
+  the bridge re-reads agents.json, so keys never hit argv/ps. Works as a
+  triage classifier seat too (prompt-in/JSON-out).
+- agents.json `Agent.env` dict: per-agent environment overlay (dispatch +
+  triage runners) — API keys/`ANTHROPIC_BASE_URL`-style endpoint overrides
+  for CLI lanes without wrapper scripts.
+- Documented limits: no tool use (classifier + generate-only tasks;
+  success = endpoint answered, reply lives in the run log), no
+  conversation state.
+- Verified end-to-end against a local mock OpenAI server: bridge honored
+  agents.json profile (auth header, model, system, max_tokens), and a real
+  `dispatch --agent byom` run claimed the task, ran the synthesized
+  bridge command, logged the reply, exit 0 → succeeded.
+
+**Model seats (the actual point, clarified by user 2026-07-17):** every
+place apple-tasks itself consults a model can now pick its backend —
+local (on-device), a CLI lane, or a BYOM llm lane:
+- triage classifier: already seat-selectable (`--agent` /
+  `"triage": {"agent"}`); BYOM lanes just work through commandTemplate.
+- suggest + digest --suggest: NEW `suggest --agent <lane>` flag and
+  agents.json `"suggest": {"agent": ...}` default (SeatConfig); external
+  path shares the exact instructions text with the @Generable session and
+  parses via Triage.parseJSONArray. MCP `suggest` tool gained `agent`.
+  Verified via mock endpoint: flag path and config-default path both
+  produce parsed suggestions from real gathered signals.
+- NOT LLM seats: screenshots OCR (Vision) and audio transcription
+  (Speech) — deterministic frameworks, stay on-device.
+
+## 52. Model-preference tiers ("fast" / "thinking" / "complex") — TODO (user's idea 2026-07-17)
+
+Hermes-style ordered model preferences: config maps task categories to
+preference arrays, e.g. `"modelPrefs": {"fast": ["local", "homelab-7b"],
+"thinking": ["homelab-32b", "claude"], "complex": ["claude"]}` (entries =
+agents.json lanes / llm profiles / "local" for the on-device model). When
+a seat doesn't name a provider — triage's classifier, `[auto]` tasks
+without an agent tag, digest/suggest generation — resolve the category,
+walk the list, and fall back on connection/auth failure to the next entry.
+Categories could come from the seat (triage = "fast" by default) or from
+an agent judgment call (a classifier already routes tasks; it can pick the
+tier too, keeping the CLI dumb). Builds directly on #51's profiles; the
+fallback walk belongs in the bridge/dispatcher, the tier *choice* belongs
+to agents. Design questions: per-seat defaults vs a tag (`[fast]`)?
+does dispatch retry a failed lane on the next preference, and how does
+that interact with maxRetries?
+
+## 53. Bookmarks: categorize/review + follow-up research tag — C ✅ DONE 2026-07-17; A/B still MAYBE (user's capture 2026-07-16)
+
+From the user's Reminder capture: "Safari/Chrome bookmark categorize/
+reviewer to sort and tag; maybe tangental: a follow-up or read-later list
+on bookmarks — a specific reminder tag that would prompt the agent to
+research." Two pieces:
+
+**A. `bookmarks scan` — capture feed** (mirrors reading-list scan):
+watermarked scan over Safari (`~/Library/Safari/Bookmarks.plist`, binary
+plist, needs Full Disk Access — same as Reading List) and Chrome
+(`~/Library/Application Support/Google/Chrome/*/Bookmarks`, plain JSON,
+`date_added`). Emits `{title, url, folder, added, browser}`. New-bookmark
+detection via the usual ScanState watermark.
+
+**B. Categorize/review — propose-only**: feed the scan to a model seat
+(#51: local/CLI/BYOM all work) that proposes folder/tag organization —
+same posture as `suggest`: PROPOSALS ONLY. Writing browser bookmark files
+back is deliberately out: Safari rewrites its plist and iCloud-syncs it
+(corruption risk), Chrome clobbers file edits while running. If the human
+wants applied organization, it lives on our side of the fence: tasks
+tagged per category, or a digest/note report.
+
+**C. `[research]` follow-up lane — ✅ SHIPPED 2026-07-17**: a `[research]`
+prompt line in dispatch (beside the `[mail]`/`[pr]` lines): investigate
+the task's URL/topic and report back, do not code; the reminder's url
+field is rendered into the prompt when set; read via `apple-tasks web
+fetch` (or the agent's own web tools); findings → Apple Note
+"Research: <task title>" (answer first, then detail + sources); one-line
+conclusion appended to task notes. Verified via echo-mock dispatch: URL,
+note title, and task-id-bearing commands all render. Usage: tag a task
+`[research]` + agent tag + `--url`. Watches stay separate (recurring
+monitors vs one-shot deep-dive). When/if A ships, its follow-up folder
+feeds this lane.
+
+Open questions before building: is Reading List (already shipped) close
+enough for the read-later half — is the marginal value bookmarks-folder
+capture, or the research lane? Does Chrome matter or is Safari enough?
+The research prompt line (C) is cheap and standalone — it could ship
+first without any bookmark scanning at all (tag any task `[research]`
+with a URL).
+

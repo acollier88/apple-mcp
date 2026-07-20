@@ -52,6 +52,25 @@ final class AuditDB {
         exec("ALTER TABLE dispatches ADD COLUMN run_log_path TEXT")
         exec("ALTER TABLE dispatches ADD COLUMN worktree TEXT")
         exec("ALTER TABLE dispatches ADD COLUMN summary TEXT")
+        exec("""
+        CREATE TABLE IF NOT EXISTS state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """)
+        exec("""
+        CREATE TABLE IF NOT EXISTS approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            task_id TEXT,
+            question TEXT NOT NULL,
+            requested_at TEXT NOT NULL,
+            expires_at TEXT,
+            answered_at TEXT,
+            status TEXT NOT NULL,
+            answered_via TEXT
+        )
+        """)
     }
 
     private func exec(_ sql: String) {
@@ -308,6 +327,105 @@ final class AuditDB {
                 status: col(7) ?? "",
                 exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8)),
                 runLogPath: col(9), worktree: col(10), summary: col(11)))
+        }
+        return rows
+    }
+
+    // MARK: State KV (scan watermarks; IDEAS #44)
+
+    func getState(_ key: String) -> String? {
+        guard db != nil else { return nil }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT value FROM state WHERE key = ?", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+    }
+
+    @discardableResult
+    func setState(_ key: String, _ value: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, value, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    // MARK: Approvals (IDEAS #39)
+
+    struct ApprovalRow: Codable {
+        let id: Int
+        let token: String
+        let taskId: String?
+        let question: String
+        let requestedAt: String
+        let expiresAt: String?
+        let answeredAt: String?
+        let status: String        // pending | approved | denied | expired
+        let answeredVia: String?  // "ntfy" | "cli"
+    }
+
+    func createApproval(token: String, taskId: String?, question: String, expiresAt: String?) {
+        guard db != nil else { return }
+        var stmt: OpaquePointer?
+        let sql = "INSERT INTO approvals (token, task_id, question, requested_at, expires_at, status) VALUES (?,?,?,?,?,'pending')"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        for (index, value) in [token, taskId, question, Self.now(), expiresAt].enumerated() {
+            if let value {
+                sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
+            } else {
+                sqlite3_bind_null(stmt, Int32(index + 1))
+            }
+        }
+        sqlite3_step(stmt)
+    }
+
+    /// Flip a pending approval to a final status. Single-statement
+    /// compare-and-set: false when the row is missing or already answered,
+    /// so a late ntfy tap can't overwrite a CLI answer (first answer wins).
+    func answerApproval(token: String, status: String, via: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE approvals SET status = ?, answered_at = ?, answered_via = ? WHERE token = ? AND status = 'pending'"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        for (index, value) in [status, Self.now(), via, token].enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
+        }
+        return sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) == 1
+    }
+
+    func approvalRows(token: String? = nil, status: String? = nil, limit: Int = 50) -> [ApprovalRow] {
+        guard db != nil else { return [] }
+        var sql = """
+        SELECT id, token, task_id, question, requested_at, expires_at, answered_at, status, answered_via \
+        FROM approvals WHERE 1=1
+        """
+        var binds: [String] = []
+        if let token { sql += " AND token = ?"; binds.append(token) }
+        if let status { sql += " AND status = ?"; binds.append(status) }
+        sql += " ORDER BY id DESC LIMIT \(limit)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        for (index, bind) in binds.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), bind, -1, SQLITE_TRANSIENT)
+        }
+        var rows: [ApprovalRow] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            func col(_ i: Int32) -> String? {
+                sqlite3_column_text(stmt, i).map { String(cString: $0) }
+            }
+            rows.append(ApprovalRow(
+                id: Int(sqlite3_column_int64(stmt, 0)),
+                token: col(1) ?? "", taskId: col(2), question: col(3) ?? "",
+                requestedAt: col(4) ?? "", expiresAt: col(5), answeredAt: col(6),
+                status: col(7) ?? "", answeredVia: col(8)))
         }
         return rows
     }

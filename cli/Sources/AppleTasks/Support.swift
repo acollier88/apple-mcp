@@ -12,6 +12,7 @@ enum AppleTasksError: Error, CustomStringConvertible {
     case eventNotFound(String)
     case invalidDate(String)
     case invalidTag(String)
+    case invalidInput(String)
     case noSource
     case saveFailed(String)
     case automationFailed(String)
@@ -34,6 +35,8 @@ enum AppleTasksError: Error, CustomStringConvertible {
             return "Could not parse date '\(s)'. Use yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."
         case .invalidTag(let t):
             return "Invalid tag '\(t)'. Tags cannot contain spaces or brackets; use kebab-case (e.g. sign-in)."
+        case .invalidInput(let why):
+            return "Invalid input: \(why)"
         case .noSource:
             return "No writable Reminders source found to create a list in."
         case .saveFailed(let why):
@@ -169,12 +172,26 @@ struct TaskOut: Codable {
     let completedAt: String?
     let createdAt: String?
     let url: String?
+    /// RRULE-subset string (same shape --recurrence accepts); nil = one-shot.
+    let recurrence: String?
     /// Set by add/update only: whether tags were also mirrored to native
     /// Reminders tags via the private helper. Omitted when not attempted.
     var nativeTags: Bool?
     /// Set by update only: whether a --parent/--clear-parent subtask change
     /// was applied via the private helper. Omitted when not attempted.
     var subtask: Bool?
+    /// Set by complete only: true when completing a recurring task rolled it
+    /// to the next occurrence (the JSON shows the NEW occurrence, still open).
+    var recurred: Bool?
+    /// Set by show --attachments only (IDEAS #46).
+    var attachments: [AttachmentOut]?
+    /// Set by show --section only (IDEAS #26): section display name, if any.
+    var section: String?
+    /// Set by update --section only: whether the assign succeeded.
+    var sectionApplied: Bool?
+    /// Set by update --attach-file/--attach-url only: whether the attach
+    /// succeeded (private helper; best-effort like nativeTags).
+    var attached: Bool?
 
     init(_ r: EKReminder) {
         let raw = r.title ?? ""
@@ -192,12 +209,24 @@ struct TaskOut: Codable {
         completedAt = Dates.formatTimestamp(r.completionDate)
         createdAt = Dates.formatTimestamp(r.creationDate)
         url = r.url?.absoluteString
+        recurrence = (r.recurrenceRules?.first).map(Recurrence.format)
     }
 }
 
 struct ListOut: Codable {
     let id: String
     let name: String
+}
+
+/// IDEAS #46: one reminder attachment, read via the private helper.
+/// File content at fileURL lives in the Reminders group container — reading
+/// it requires Full Disk Access on the READING process (doctor reports FDA).
+struct AttachmentOut: Codable {
+    let kind: String   // file | image | url | other
+    let uti: String?
+    let fileURL: String?
+    let fileSize: Int?
+    let url: String?
 }
 
 struct EventOut: Codable {
@@ -212,6 +241,8 @@ struct EventOut: Codable {
     let location: String?
     let notes: String?
     let url: String?
+    /// RRULE-subset string (same shape --recurrence accepts); nil = one-shot.
+    let recurrence: String?
 
     init(_ e: EKEvent) {
         let raw = e.title ?? ""
@@ -228,6 +259,7 @@ struct EventOut: Codable {
         location = e.location
         notes = e.notes
         url = e.url?.absoluteString
+        recurrence = (e.recurrenceRules?.first).map(Recurrence.format)
     }
 }
 

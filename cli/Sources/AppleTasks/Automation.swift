@@ -84,10 +84,91 @@ enum NativeTags {
             externalId: childExternalId, what: "subtask")
     }
 
-    /// Detach `externalId` from its parent reminder.
+    /// Detach `externalId` from its parent reminder (the helper re-files it
+    /// into its list in the same save, so it stays EventKit-visible).
     static func clearParent(externalId: String?) -> Bool? {
         run(["externalId": externalId ?? "", "clearParent": true],
             externalId: externalId, what: "subtask detach")
+    }
+
+    /// IDEAS #26: assign the reminder to a section in its list by display
+    /// name (created case-insensitively if missing). Best-effort like mirror.
+    static func setSection(externalId: String?, name: String) -> Bool? {
+        run(["externalId": externalId ?? "", "section": name],
+            externalId: externalId, what: "section assign")
+    }
+
+    /// IDEAS #26: section display name per externalId (nil value = none).
+    static func sections(externalIds: [String]) -> [String: String?]? {
+        guard !externalIds.isEmpty,
+              let outData = runRead(["sectionsOf": externalIds]),
+              let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any],
+              let sections = obj["sections"] as? [String: Any] else { return nil }
+        var result: [String: String?] = [:]
+        for (key, value) in sections { result[key] = value as? String }
+        return result
+    }
+
+    /// IDEAS #47: map each externalId to its parent reminder's externalId
+    /// (nil value = top-level) via the private helper's read-only parentsOf
+    /// op. Returns nil when the helper is missing or fails — dependency
+    /// gating then degrades to "no info" and dispatch proceeds.
+    static func parents(externalIds: [String]) -> [String: String?]? {
+        guard !externalIds.isEmpty,
+              let outData = runRead(["parentsOf": externalIds]),
+              let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any],
+              let parents = obj["parents"] as? [String: Any] else { return nil }
+        var result: [String: String?] = [:]
+        for (key, value) in parents { result[key] = value as? String }
+        return result
+    }
+
+    /// IDEAS #46: list attachments per externalId via the helper's read-only
+    /// attachmentsOf op. nil = helper missing/failed.
+    static func attachments(externalIds: [String]) -> [String: [AttachmentOut]]? {
+        struct Response: Decodable {
+            let ok: Bool
+            let attachments: [String: [AttachmentOut]]
+        }
+        guard !externalIds.isEmpty,
+              let outData = runRead(["attachmentsOf": externalIds]),
+              let response = try? JSONDecoder().decode(Response.self, from: outData)
+        else { return nil }
+        return response.attachments
+    }
+
+    /// IDEAS #46: attach a file (copied into the Reminders store) and/or a
+    /// URL to a reminder. Best-effort like mirror: false + stderr warning on
+    /// failure, nil when the helper isn't installed.
+    static func attach(externalId: String?, file: String?, url: String?) -> Bool? {
+        var payload: [String: Any] = ["externalId": externalId ?? ""]
+        if let file { payload["attachFile"] = file }
+        if let url { payload["attachURL"] = url }
+        return run(payload, externalId: externalId, what: "attachment")
+    }
+
+    /// Run a read-only helper op; returns stdout on exit 0, nil otherwise.
+    private static func runRead(_ payload: [String: Any]) -> Data? {
+        guard let helper = helperURL else { return nil }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let process = Process()
+            process.executableURL = helper
+            let stdin = Pipe()
+            let stdout = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = stdout
+            process.standardError = Pipe()
+            try process.run()
+            stdin.fileHandleForWriting.write(data)
+            stdin.fileHandleForWriting.closeFile()
+            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            return outData
+        } catch {
+            return nil
+        }
     }
 
     /// Shared helper invocation: JSON payload on stdin, exit 0 = success.
@@ -122,29 +203,55 @@ enum NativeTags {
     }
 }
 
-// MARK: - Scan watermark state (~/.config/apple-tasks/state.json)
+// MARK: - Scan watermark state (KV row in the audit DB; IDEAS #44)
+//
+// Historically ~/.config/apple-tasks/state.json; now the 'scan_state' row in
+// apple-tasks.db carries the same JSON payload, so doctor and the ledger read
+// one source of truth. A pre-existing state.json is migrated on first load
+// and then left behind as a dead artifact.
 
 struct ScanState: Codable {
     var notesScanWatermark: String?
     var screenshotsScanWatermark: String?
     var filesScanWatermark: String?
+    var audioScanWatermark: String?
+    var readingListScanWatermark: String?
+    /// Per-watch scan state (IDEAS #38), keyed by watch name.
+    var watchState: [String: WatchRecord]?
+    /// NSPasteboard.changeCount at the last clipboard scan (IDEAS #45).
+    var clipboardChangeCount: Int?
+    /// Gmail internalDate (epoch ms) of the newest message seen (IDEAS #42).
+    var gmailScanWatermark: String?
 
-    static var url: URL {
+    static let dbKey = "scan_state"
+
+    /// Legacy file location, read once for migration only.
+    static var legacyURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/apple-tasks/state.json")
     }
 
     static func load() -> ScanState {
-        guard let data = try? Data(contentsOf: url),
-              let state = try? JSONDecoder().decode(ScanState.self, from: data)
-        else { return ScanState() }
-        return state
+        if let json = AuditDB.shared.getState(dbKey),
+           let state = try? JSONDecoder().decode(ScanState.self, from: Data(json.utf8)) {
+            return state
+        }
+        // Migrate best-effort: if the DB write fails the file state is still
+        // returned, so scans keep their watermarks and save() retries later.
+        if let data = try? Data(contentsOf: legacyURL),
+           let state = try? JSONDecoder().decode(ScanState.self, from: data) {
+            try? state.save()
+            return state
+        }
+        return ScanState()
     }
 
     func save() throws {
-        try FileManager.default.createDirectory(
-            at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(self)
-        try data.write(to: Self.url)
+        guard let json = String(data: data, encoding: .utf8),
+              AuditDB.shared.setState(Self.dbKey, json)
+        else {
+            throw AppleTasksError.saveFailed("could not persist scan state to \(AuditDB.url.path)")
+        }
     }
 }

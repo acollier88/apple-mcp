@@ -171,7 +171,7 @@ struct TaskEntity {
 }
 
 @available(macOS 27.0, *)
-struct TaskEntityQuery: EntityStringQuery {
+struct TaskEntityQuery: EntityStringQuery, IndexedEntityQuery {
     func entities(for identifiers: [String]) async throws -> [TaskEntity] {
         try allTasks().filter { identifiers.contains($0.id) }
     }
@@ -184,7 +184,17 @@ struct TaskEntityQuery: EntityStringQuery {
         try Array(allTasks().prefix(10))
     }
 
-    private func allTasks() throws -> [TaskEntity] {
+    func reindexEntities(for identifiers: [String], indexDescription: CSSearchableIndexDescription) async throws {
+        let tasks = try await entities(for: identifiers)
+        try await CSSearchableIndex.default().indexAppEntities(tasks, priority: 0)
+    }
+
+    func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
+        let tasks = try allTasks()
+        try await CSSearchableIndex.default().indexAppEntities(tasks, priority: 0)
+    }
+
+    func allTasks() throws -> [TaskEntity] {
         struct Task: Decodable {
             let id: String
             let title: String
@@ -351,7 +361,12 @@ extension TaskEntity: IndexedEntity {
 @available(macOS 27.0, *)
 enum SpotlightDonation {
     static func donateOpenTasks() async {
-        guard let tasks = try? await TaskEntityQuery().suggestedEntities() else { return }
+        await donateAllOpenTasks()
+    }
+
+    static func donateAllOpenTasks() async {
+        guard let tasks = try? TaskEntityQuery().allTasks() else { return }
         try? await CSSearchableIndex.default().indexAppEntities(tasks, priority: 0)
     }
+
 }

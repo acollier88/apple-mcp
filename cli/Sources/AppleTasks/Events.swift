@@ -5,7 +5,7 @@ import Foundation
 struct Events: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Manage Calendar events (same [tag] title convention as tasks).",
-        subcommands: [EventsList.self, EventsAdd.self, EventsUpdate.self, EventsDelete.self],
+        subcommands: [EventsList.self, EventsShow.self, EventsAdd.self, EventsUpdate.self, EventsDelete.self],
         defaultSubcommand: EventsList.self
     )
 }
@@ -50,6 +50,22 @@ struct EventsList: AsyncParsableCommand {
     }
 }
 
+struct EventsShow: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "show",
+        abstract: "Show a single event by id."
+    )
+
+    @Argument(help: "Event id.")
+    var id: String
+
+    func run() async throws {
+        let store = Store()
+        try await store.requestEventAccess()
+        emit(EventOut(try store.event(id: id)))
+    }
+}
+
 struct EventsAdd: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "add",
@@ -79,6 +95,9 @@ struct EventsAdd: AsyncParsableCommand {
 
     @Option(help: "URL to attach (use for PR/artifact links).")
     var url: String?
+
+    @Option(help: "Repeat rule. \(Recurrence.helpText)")
+    var recurrence: String?
 
     @Argument(help: "Event title (without tag prefix).")
     var title: String
@@ -112,6 +131,7 @@ struct EventsAdd: AsyncParsableCommand {
         } else {
             event.endDate = startDate.addingTimeInterval(TimeInterval((duration ?? 60) * 60))
         }
+        if let recurrence { event.addRecurrenceRule(try Recurrence.parse(recurrence)) }
 
         try store.save(event)
         let out = EventOut(event)

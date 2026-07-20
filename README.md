@@ -66,6 +66,8 @@ docs/                Architecture, roadmap, design notes
 ## Conventions (shared)
 
 - **A plan = a Reminders list. A task = a reminder in it.**
+- **Calendar events use the same `[tag]` convention** as tasks.
 - **Tags** are leading `[tag]` title prefixes: `[claude][repo2] Add MFA`.
+  Only leading bracket groups count; the CLI/MCP parse them out of titles.
 - The CLI stays dumb and JSON-speaking; agents make judgment calls.
 - Local config lives in `~/.config/apple-tasks/` (never committed).

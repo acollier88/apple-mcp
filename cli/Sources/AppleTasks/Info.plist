@@ -20,5 +20,7 @@
     <string>apple-tasks reads this Mac's location so agents can act with location context (whereami).</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>apple-tasks reads this Mac's location so agents can act with location context (whereami).</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>apple-tasks transcribes voice recordings into task titles and notes using on-device Speech Recognition.</string>
 </dict>
 </plist>

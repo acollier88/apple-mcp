@@ -47,7 +47,13 @@ struct Dispatches: AsyncParsableCommand {
 struct AgentsConfig: Codable {
     struct Agent: Codable {
         /// Command argv; "{prompt}" is replaced with the rendered prompt.
-        let command: [String]
+        /// Optional when `llm` is set (a BYOM lane needs no command).
+        let command: [String]?
+        /// BYOM (IDEAS #51): an OpenAI-compatible endpoint profile. A lane
+        /// with `llm` and no `command` runs the built-in `llm` bridge —
+        /// plain completions, no tool use, so it suits classifier seats
+        /// (triage) and generate-only tasks.
+        let llm: LlmCommand.Profile?
         let promptTemplate: String?
         /// Run in a fresh git worktree of the workdir (output = a branch, not
         /// edits to the main checkout). Requires the workdir to be a git repo.
@@ -56,6 +62,19 @@ struct AgentsConfig: Codable {
         let timeoutMinutes: Int?
         /// Max simultaneous runs for THIS agent (default: no per-agent cap).
         let maxConcurrent: Int?
+        /// Extra environment variables for the agent process (IDEAS #51) —
+        /// endpoint overrides, API keys — merged over the inherited env.
+        let env: [String: String]?
+
+        /// The argv template for this lane ({prompt} not yet substituted),
+        /// or nil when neither `command` nor `llm` is configured. BYOM lanes
+        /// call back into this binary's `llm` bridge with only the tag —
+        /// the bridge re-reads agents.json, so keys never hit the argv.
+        func commandTemplate(tag: String) -> [String]? {
+            if let command { return command }
+            guard llm != nil else { return nil }
+            return [AgentsConfig.selfBinary, "llm", "--agent", tag, "-p", "{prompt}"]
+        }
         /// Context gates (IDEAS #22): all must pass or the task stays queued
         /// (no claim, no [failed]) and is retried next pass.
         let conditions: Conditions?
@@ -68,6 +87,17 @@ struct AgentsConfig: Codable {
         let power: String?
         /// Skip dispatch while the 1-minute load average exceeds this.
         let maxLoad: Double?
+        /// Quiet hours (IDEAS #43): stay queued while local time is inside
+        /// `{"notBetween": ["22:00", "07:00"]}` (wraps midnight when
+        /// start > end). Same shape as notify's `quietHours`.
+        let time: TimeWindow?
+        /// Stay queued until the user has been idle (no keyboard/mouse input)
+        /// for at least this many minutes (IDEAS #48).
+        let idleMinutes: Double?
+        /// Stay queued while any of these apps are running. Each entry
+        /// matches a bundle id ("us.zoom.xos") or app name ("Keynote"),
+        /// case-insensitive exact match (IDEAS #48).
+        let blockingApps: [String]?
     }
 
     struct Place: Codable {
@@ -84,12 +114,20 @@ struct AgentsConfig: Codable {
         let inbox: String?
     }
 
+    /// A model seat's default backend (IDEAS #51): "local" for the
+    /// on-device model, or any agents.json lane (CLI or BYOM llm).
+    struct SeatConfig: Codable {
+        let agent: String?
+    }
+
     var agents: [String: Agent]
     /// Named places for `conditions.location` gates.
     var places: [String: Place]?
     /// When present, run a one-shot inbox triage (see Triage.swift) at the
     /// start of every dispatch cycle, before scanning for dispatchable tasks.
     var triage: TriageConfig?
+    /// Default backend for the `suggest` seat (also digest --suggest).
+    var suggest: SeatConfig?
     /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
     var maxConcurrent: Int?
     /// Repo/project tag -> working directory.
@@ -108,6 +146,15 @@ struct AgentsConfig: Codable {
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/apple-tasks/agents.json")
+    }
+
+    /// Path of the running binary, for BYOM lanes to call back into. A bare
+    /// argv[0] (PATH lookup) is left as-is — runners exec via /usr/bin/env,
+    /// which re-resolves it the same way.
+    static var selfBinary: String {
+        let arg0 = CommandLine.arguments[0]
+        guard arg0.contains("/") else { return arg0 }
+        return URL(fileURLWithPath: arg0).standardizedFileURL.path
     }
 
     static func load() throws -> AgentsConfig {
@@ -129,8 +176,44 @@ struct AgentsConfig: Codable {
     apple-tasks update {id} --url "<link>"
     then mark it done by running:
     apple-tasks complete {id}
-    and remove the dispatched marker: apple-tasks update {id} --remove-tag dispatched
+    and remove the dispatched marker: apple-tasks update {id} --remove-tag {claimTag}
     """
+}
+
+// IDEAS #13: multi-Mac claim protocol. Tasks sync via iCloud but each Mac
+// has its own ledger, so the human-visible claim tags are hostname-scoped
+// ([dispatched:mbp]) and a dispatcher only reaps/retries its OWN claims —
+// another Mac's [dispatched:x]/[failed:x] is respected as theirs. Bare
+// legacy [dispatched]/[failed] tags are treated as this machine's.
+enum ClaimTags {
+    static let host: String = {
+        var buf = [CChar](repeating: 0, count: 256)
+        gethostname(&buf, buf.count)
+        let raw = String(cString: buf)
+        let label = raw.split(separator: ".").first.map(String.init) ?? raw
+        let cleaned = label.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        return cleaned.isEmpty ? "mac" : cleaned
+    }()
+
+    static var dispatched: String { "dispatched:\(host)" }
+    static var failed: String { "failed:\(host)" }
+
+    static func isDispatched(_ tag: String) -> Bool {
+        let l = tag.lowercased()
+        return l == "dispatched" || l.hasPrefix("dispatched:")
+    }
+
+    static func isFailed(_ tag: String) -> Bool {
+        let l = tag.lowercased()
+        return l == "failed" || l.hasPrefix("failed:")
+    }
+
+    /// This machine's claim: hostname-scoped or bare legacy.
+    static func isOwn(_ tag: String) -> Bool {
+        let l = tag.lowercased()
+        return l == "dispatched" || l == "failed"
+            || l == "dispatched:\(host)" || l == "failed:\(host)"
+    }
 }
 
 struct Dispatch: AsyncParsableCommand {
@@ -291,6 +374,24 @@ struct Dispatch: AsyncParsableCommand {
         var specsPerAgent: [String: Int] = [:]
         let gates = GateContext() // probes cached across candidates this pass
 
+        // IDEAS #47: open-subtask counts per parent externalId, via ONE
+        // private-helper call, computed lazily when the first candidate
+        // reaches the dependency gate. nil helper/failure = no info, and
+        // the gate simply doesn't fire.
+        var openChildren: [String: Int]?
+        func openSubtaskCount(_ externalId: String?) -> Int {
+            guard let externalId else { return 0 }
+            if openChildren == nil {
+                var counts: [String: Int] = [:]
+                let openIds = reminders.compactMap { $0.calendarItemExternalIdentifier }
+                if let parents = NativeTags.parents(externalIds: openIds) {
+                    for case let parent?? in parents.values { counts[parent, default: 0] += 1 }
+                }
+                openChildren = counts
+            }
+            return openChildren?[externalId] ?? 0
+        }
+
         for reminder in reminders {
             let parsed = Tags.parse(reminder.title ?? "")
             let lowerTags = Set(parsed.tags.map { $0.lowercased() })
@@ -300,10 +401,31 @@ struct Dispatch: AsyncParsableCommand {
                   let agent = config.agents[agentTag] else { continue }
             if let onlyAgent, agentTag != onlyAgent.lowercased() { continue }
             if requireAuto && !lowerTags.contains("auto") { continue }
-            if lowerTags.contains("dispatched") { continue }
+            // Any Mac's claim blocks re-dispatch (IDEAS #13).
+            if parsed.tags.contains(where: ClaimTags.isDispatched) { continue }
+
+            // Not due yet: stays queued until its due time. This is what
+            // makes recurrence useful for agent work (IDEAS #36) — completing
+            // a recurring task rolls it to the next occurrence, and without
+            // this check the fresh occurrence would re-dispatch immediately
+            // instead of at its scheduled time. Undated tasks dispatch as
+            // always; a due date on an agent task means "run at", not "by".
+            if let comps = reminder.dueDateComponents,
+               let dueDate = Calendar.current.date(from: comps),
+               dueDate > Date() {
+                if dryRun {
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                                  cwd: nil, action: "scheduled: not due until \(Dates.formatDue(reminder.dueDateComponents) ?? "?") — stays queued",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                }
+                continue
+            }
 
             var retryAttempt: Int?
-            if lowerTags.contains("failed") {
+            if let failedTag = parsed.tags.first(where: ClaimTags.isFailed) {
+                // Another Mac's failure is its claim to retry (IDEAS #13) —
+                // this ledger has no attempt history for it anyway.
+                guard ClaimTags.isOwn(failedTag) else { continue }
                 let maxRetries = config.maxRetries ?? 0
                 guard maxRetries > 0 else { continue }
                 let (attempts, lastFailure) = AuditDB.shared.failedAttempts(taskId: taskId)
@@ -333,6 +455,18 @@ struct Dispatch: AsyncParsableCommand {
                 continue
             }
 
+            // Subtask dependency gate (IDEAS #47): a parent stays queued
+            // until every open subtask completes — subtasks dispatch on
+            // their own agent tags like any other task.
+            let subtasksOpen = openSubtaskCount(reminder.calendarItemExternalIdentifier)
+            if subtasksOpen > 0 {
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                              cwd: nil,
+                                              action: "gated: \(subtasksOpen) open subtask\(subtasksOpen == 1 ? "" : "s") — stays queued",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            }
+
             let cwd = parsed.tags.lazy
                 .compactMap { config.workdirs?[$0.lowercased()] }
                 .first
@@ -343,6 +477,7 @@ struct Dispatch: AsyncParsableCommand {
                 .replacingOccurrences(of: "{list}", with: reminder.calendar?.title ?? "")
                 .replacingOccurrences(of: "{title}", with: parsed.title)
                 .replacingOccurrences(of: "{notes}", with: reminder.notes ?? "(none)")
+                .replacingOccurrences(of: "{claimTag}", with: ClaimTags.dispatched)
             if agent.worktree == true {
                 prompt += "\nYou are in a dedicated git worktree on your own branch. " +
                     "Commit your work to the current branch; do not switch branches."
@@ -350,7 +485,38 @@ struct Dispatch: AsyncParsableCommand {
             if lowerTags.contains("pr") {
                 prompt += "\nThis task requires a Pull Request. When finished, push your branch to origin with 'git push -u origin HEAD' and open a PR with 'gh pr create' (title + a body describing the change and how you verified). Run these commands to associate it: apple-tasks update \(taskId) --url \"<PR url>\""
             }
-            let argv = agent.command.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+            if lowerTags.contains("mail") {
+                prompt += "\nThis task came from an email (From/Subject/Message-ID are in the task notes). Write your outcome as a reply DRAFT the human will review and send — never send mail yourself: apple-tasks mail draft --reply-to \"<Message-ID from the notes>\" --body-file <your report> (or --body \"...\")."
+            }
+            // [research] (IDEAS #53): one-shot deep-dive on a saved link or
+            // topic; findings land in an Apple Note the human reads later.
+            if lowerTags.contains("research") {
+                let researchURL = reminder.url.map { "\nURL to research: \($0.absoluteString)" } ?? ""
+                prompt += "\nThis is a RESEARCH task: investigate the URL/topic and report back — do not code.\(researchURL)\nRead pages with: apple-tasks web fetch \"<url>\" (repeat for obviously relevant linked pages; use your own web tools instead if you have them). Write your findings as an Apple Note: apple-tasks notes create --title \"Research: \(parsed.title)\" \"<findings as HTML>\" — lead with a 2-3 sentence answer, then supporting detail and source URLs. Then record a one-line conclusion on the task: apple-tasks update \(taskId) --append-notes \"<one-line conclusion + note title>\"."
+            }
+            // Attachments (IDEAS #46): hand the agent the real paths. Reading
+            // file content needs Full Disk Access on the agent process; the
+            // helper call is skipped on dry runs to keep them cheap.
+            if !dryRun, let ext = reminder.calendarItemExternalIdentifier,
+               let attachments = NativeTags.attachments(externalIds: [ext])?[ext],
+               !attachments.isEmpty {
+                prompt += "\nAttachments on this task (read file paths for context; if a file is unreadable your process lacks Full Disk Access — note that in your outcome):"
+                for attachment in attachments.prefix(10) {
+                    if let path = attachment.fileURL {
+                        prompt += "\n- \(attachment.kind): \(path)"
+                    } else if let url = attachment.url {
+                        prompt += "\n- url: \(url)"
+                    }
+                }
+            }
+            guard let template = agent.commandTemplate(tag: agentTag) else {
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                              cwd: nil,
+                                              action: "skipped: agent '\(agentTag)' has neither \"command\" nor \"llm\" in agents.json",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            }
+            let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
 
             if dryRun {
                 let action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
@@ -370,8 +536,8 @@ struct Dispatch: AsyncParsableCommand {
             // Mark dispatched (visible everywhere via tag + native mirror);
             // a retry sheds its [failed] tag here. Written after the claim so
             // a crash between the two can't strand the tag with no ledger row.
-            var tags = parsed.tags.filter { $0.lowercased() != "failed" }
-            tags.append("dispatched")
+            var tags = parsed.tags.filter { !ClaimTags.isFailed($0) }
+            tags.append(ClaimTags.dispatched)
             reminder.title = Tags.compose(tags: tags, title: parsed.title)
             do {
                 try store.save(reminder)
@@ -379,7 +545,7 @@ struct Dispatch: AsyncParsableCommand {
                 AuditDB.shared.finishDispatch(id: ledgerId, status: "aborted", exitCode: -1)
                 throw error
             }
-            _ = NativeTags.mirror(tags: ["dispatched"], externalId: reminder.calendarItemExternalIdentifier)
+            _ = NativeTags.mirror(tags: [ClaimTags.dispatched], externalId: reminder.calendarItemExternalIdentifier)
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
                                   taskId: taskId, list: reminder.calendar?.title,
                                   detail: "\(agentTag): \(parsed.title)"
@@ -425,7 +591,8 @@ struct Dispatch: AsyncParsableCommand {
             specs.append(RunSpec(ledgerId: ledgerId, taskId: taskId, title: parsed.title,
                                  agentTag: agentTag, argv: argv, repo: cwd, runCwd: runCwd,
                                  worktree: worktreePath, branch: branchName,
-                                 timeoutMinutes: agent.timeoutMinutes, logPath: logURL.path))
+                                 timeoutMinutes: agent.timeoutMinutes, env: agent.env,
+                                 logPath: logURL.path))
             specsPerAgent[agentTag, default: 0] += 1
         }
 
@@ -490,6 +657,7 @@ struct Dispatch: AsyncParsableCommand {
         let worktree: String?
         let branch: String?
         let timeoutMinutes: Int?
+        let env: [String: String]?
         let logPath: String
     }
 
@@ -517,6 +685,7 @@ struct Dispatch: AsyncParsableCommand {
         process.arguments = spec.argv
         if let runCwd = spec.runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
         var env = ProcessInfo.processInfo.environment
+        for (name, value) in spec.env ?? [:] { env[name] = value }
         env["APPLE_TASKS_CALLER"] = "agent:\(spec.agentTag)"
         process.environment = env
         if let logHandle {
@@ -576,18 +745,19 @@ struct Dispatch: AsyncParsableCommand {
         try? store.save(current)
     }
 
-    /// Swap [dispatched] for [failed] on the task, re-fetching first because
-    /// the agent may have edited it meanwhile.
+    /// Swap this Mac's [dispatched] claim for its [failed] tag, re-fetching
+    /// first because the agent may have edited it meanwhile. Another Mac's
+    /// claim tags are never touched (IDEAS #13).
     private func markFailed(store: Store, taskId: String) async {
         guard let current = try? await store.reminder(id: taskId) else { return }
         var (tags, title) = Tags.parse(current.title ?? "")
-        tags.removeAll { $0.lowercased() == "dispatched" }
-        if !tags.contains(where: { $0.lowercased() == "failed" }) {
-            tags.append("failed")
+        tags.removeAll { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
+        if !tags.contains(where: { ClaimTags.isFailed($0) && ClaimTags.isOwn($0) }) {
+            tags.append(ClaimTags.failed)
         }
         current.title = Tags.compose(tags: tags, title: title)
         try? store.save(current)
-        _ = NativeTags.mirror(tags: ["failed"], externalId: current.calendarItemExternalIdentifier)
+        _ = NativeTags.mirror(tags: [ClaimTags.failed], externalId: current.calendarItemExternalIdentifier)
     }
 
     private static func gitOutput(_ args: [String], repo: String) -> String? {

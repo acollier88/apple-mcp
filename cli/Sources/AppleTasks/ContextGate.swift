@@ -1,11 +1,52 @@
+import AppKit
+import CoreGraphics
 import CoreLocation
 import Foundation
 
 // IDEAS #22: context-gated dispatch. Per-agent `conditions` in agents.json
-// (location / power / maxLoad) are checked before a task is claimed; a task
-// that fails a gate stays queued untouched — no ledger row, no [dispatched]
-// or [failed] tag — and is simply reconsidered on the next pass. All checks
-// are reads; nothing here needs new permissions.
+// (location / power / maxLoad / time) are checked before a task is claimed;
+// a task that fails a gate stays queued untouched — no ledger row, no
+// [dispatched] or [failed] tag — and is simply reconsidered on the next
+// pass. All checks are reads; nothing here needs new permissions.
+
+// MARK: - shared time window (IDEAS #43)
+
+/// Local-time window shared by the dispatch `time` gate and notify's
+/// `quietHours`: `{"notBetween": ["22:00", "07:00"]}`. Times are HH:mm,
+/// 24-hour, local; start > end wraps midnight, so ["22:00", "07:00"]
+/// means "blocked overnight". Start == end is an empty window (never in).
+struct TimeWindow: Codable {
+    let notBetween: [String]
+
+    enum Check {
+        /// Now is inside the window; payload is "HH:mm–HH:mm" for reports.
+        case inside(String)
+        case outside
+        /// Unusable config; payload says how to fix it.
+        case invalid(String)
+    }
+
+    func check(now: Date = Date()) -> Check {
+        guard notBetween.count == 2,
+              let start = Self.minutesSinceMidnight(notBetween[0]),
+              let end = Self.minutesSinceMidnight(notBetween[1]) else {
+            return .invalid("notBetween needs [\"HH:mm\", \"HH:mm\"], got \(notBetween)")
+        }
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: now)
+        let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        let inside = start <= end
+            ? minute >= start && minute < end   // same-day window
+            : minute >= start || minute < end   // wraps midnight
+        return inside ? .inside("\(notBetween[0])–\(notBetween[1])") : .outside
+    }
+
+    private static func minutesSinceMidnight(_ time: String) -> Int? {
+        let parts = time.split(separator: ":")
+        guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]),
+              (0...23).contains(hour), (0...59).contains(minute) else { return nil }
+        return hour * 60 + minute
+    }
+}
 
 /// Per-run cache for gate probes, so N candidate tasks cost at most one
 /// pmset call and one location fix per dispatch pass.
@@ -37,6 +78,25 @@ final class GateContext {
         return result
     }
 
+    /// Seconds since the last keyboard/mouse input, session-wide (IDEAS #48).
+    /// kCGAnyInputEventType is the ~0 raw value — there is no Swift case.
+    func idleSeconds() -> Double {
+        CGEventSource.secondsSinceLastEventType(
+            .combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
+    private var cachedRunningApps: [String]?
+
+    /// Lowercased bundle ids + localized names of running apps (IDEAS #48).
+    func runningApps() -> [String] {
+        if let cachedRunningApps { return cachedRunningApps }
+        let apps = NSWorkspace.shared.runningApplications.flatMap {
+            [$0.bundleIdentifier, $0.localizedName].compactMap { $0?.lowercased() }
+        }
+        cachedRunningApps = apps
+        return apps
+    }
+
     private var locationError: String?
 
     /// One-shot location fix (whereami plumbing, app-helper fallback included).
@@ -57,6 +117,25 @@ final class GateContext {
     /// stays queued. Cheap checks run first; the location fix is only
     /// attempted when a location condition exists.
     func gateReason(_ conditions: AgentsConfig.Conditions, config: AgentsConfig) async -> String? {
+        if let time = conditions.time {
+            switch time.check() {
+            case .inside(let window): return "quiet hours \(window)"
+            case .invalid(let why): return "bad time condition: \(why)"
+            case .outside: break
+            }
+        }
+        if let idleMinutes = conditions.idleMinutes {
+            let idle = idleSeconds() / 60
+            if idle < idleMinutes {
+                return String(format: "user active (idle %.1f min < %.0f min)", idle, idleMinutes)
+            }
+        }
+        if let blockingApps = conditions.blockingApps, !blockingApps.isEmpty {
+            let running = Set(runningApps())
+            if let hit = blockingApps.first(where: { running.contains($0.lowercased()) }) {
+                return "blocking app running: \(hit)"
+            }
+        }
         if let maxLoad = conditions.maxLoad {
             var loads = [0.0, 0.0, 0.0]
             getloadavg(&loads, 3)

@@ -20,8 +20,8 @@ struct MailMessageOut: Codable {
 
 struct Mail: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Read Mail.app inbox (read-only; via Apple Events).",
-        subcommands: [MailScan.self, MailShow.self],
+        abstract: "Read Mail.app inbox and create drafts (via Apple Events; drafts are NEVER sent).",
+        subcommands: [MailScan.self, MailShow.self, MailDraft.self],
         defaultSubcommand: MailScan.self
     )
 }
@@ -71,6 +71,130 @@ struct MailScan: AsyncParsableCommand {
         let raw = try OSA.runJXA(Self.script, args: [sinceMs, String(limit)])
         let headers = try JSONDecoder().decode([MailHeaderOut].self, from: Data(raw.utf8))
         emit(headers)
+    }
+}
+
+// IDEAS #37: the reply half of the two-way email interface. Agents write
+// their report as a DRAFT — this command has no send path at all; the
+// human reviews in Mail (any device, drafts sync) and hits send.
+struct MailDraft: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "draft",
+        abstract: """
+        Create a draft in Mail.app — never sends. Either a new message \
+        (--to + --subject) or a reply (--reply-to <message-id>, threading \
+        preserved). Body from --body or --body-file.
+        """
+    )
+
+    @Option(help: "Recipient address (repeatable). Required unless --reply-to.")
+    var to: [String] = []
+
+    @Option(help: "Subject. Required for new drafts; replies default to Re: <original>.")
+    var subject: String?
+
+    @Option(help: "Body text.")
+    var body: String?
+
+    @Option(name: .customLong("body-file"), help: "Read the body from this file (for long reports).")
+    var bodyFile: String?
+
+    @Option(name: .customLong("reply-to"), help: "Draft a reply to this message: an RFC Message-ID (from a [mail] task's notes) or a numeric id from 'mail scan'.")
+    var replyTo: String?
+
+    struct Out: Codable {
+        let drafted: Bool
+        let mode: String        // "new" | "reply"
+        let to: [String]
+        let subject: String
+        /// Reply mode: the id of the message being replied to.
+        let inReplyTo: String?
+    }
+
+    // New draft: build an outgoing message, add recipients, save → Drafts.
+    private static let newDraftScript = """
+    function run(argv) {
+        const [subject, content] = [argv[0], argv[1]];
+        const recipients = JSON.parse(argv[2]);
+        const Mail = Application('Mail');
+        const msg = Mail.OutgoingMessage({ subject: subject, content: content, visible: false });
+        Mail.outgoingMessages.push(msg);
+        for (const addr of recipients) {
+            msg.toRecipients.push(Mail.ToRecipient({ address: addr }));
+        }
+        msg.save();
+        return JSON.stringify({ subject: subject, to: recipients });
+    }
+    """
+
+    // Reply draft: locate the original (RFC message-id or numeric id), use
+    // Mail's native reply so threading headers and recipients are correct,
+    // then set the body and save. openingWindow:false keeps it headless.
+    private static let replyDraftScript = """
+    function run(argv) {
+        const [rawId, content, subjectOverride] = [argv[0], argv[1], argv[2]];
+        const Mail = Application('Mail');
+        const cleanId = rawId.replace(/^<|>$/g, "");
+        let matched = /^[0-9]+$/.test(cleanId)
+            ? Mail.inbox.messages.whose({ id: Number(cleanId) })
+            : Mail.inbox.messages.whose({ messageId: cleanId });
+        if (matched.length === 0) return "";
+        const original = matched[0];
+        const draft = Mail.reply(original, { openingWindow: false });
+        draft.content = content;
+        if (subjectOverride) draft.subject = subjectOverride;
+        draft.save();
+        return JSON.stringify({
+            subject: draft.subject(),
+            to: draft.toRecipients.address(),
+            inReplyTo: String(original.id()),
+        });
+    }
+    """
+
+    func run() async throws {
+        var content = body
+        if let bodyFile {
+            let path = NSString(string: bodyFile).expandingTildeInPath
+            guard let fileText = try? String(contentsOfFile: path, encoding: .utf8) else {
+                throw AppleTasksError.saveFailed("could not read --body-file \(path)")
+            }
+            content = fileText
+        }
+        guard let content, !content.isEmpty else {
+            throw AppleTasksError.saveFailed("a draft needs a body: pass --body or --body-file")
+        }
+
+        struct ScriptOut: Codable {
+            let subject: String
+            let to: [String]
+            var inReplyTo: String?
+        }
+        let result: ScriptOut
+        if let replyTo {
+            let raw = try OSA.runJXA(Self.replyDraftScript, args: [replyTo, content, subject ?? ""])
+            guard !raw.isEmpty else {
+                throw AppleTasksError.automationFailed(
+                    "no inbox message matching '\(replyTo)' (archived/deleted messages aren't searched)")
+            }
+            result = try JSONDecoder().decode(ScriptOut.self, from: Data(raw.utf8))
+        } else {
+            guard !to.isEmpty else {
+                throw AppleTasksError.saveFailed("a new draft needs --to (or use --reply-to for a reply)")
+            }
+            guard let subject, !subject.isEmpty else {
+                throw AppleTasksError.saveFailed("a new draft needs --subject")
+            }
+            let recipientsJSON = String(data: try JSONEncoder().encode(to), encoding: .utf8)!
+            let raw = try OSA.runJXA(Self.newDraftScript, args: [subject, content, recipientsJSON])
+            result = try JSONDecoder().decode(ScriptOut.self, from: Data(raw.utf8))
+        }
+
+        let out = Out(drafted: true, mode: replyTo == nil ? "new" : "reply",
+                      to: result.to, subject: result.subject, inReplyTo: result.inReplyTo)
+        AuditDB.shared.record(command: "mail draft",
+                              detail: "\(out.mode): \(out.subject) → \(out.to.joined(separator: ", "))")
+        emit(out)
     }
 }
 
