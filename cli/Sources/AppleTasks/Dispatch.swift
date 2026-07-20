@@ -687,6 +687,9 @@ struct Dispatch: AsyncParsableCommand {
         var env = ProcessInfo.processInfo.environment
         for (name, value) in spec.env ?? [:] { env[name] = value }
         env["APPLE_TASKS_CALLER"] = "agent:\(spec.agentTag)"
+        // GUI apps and launchd do not source ~/.zshrc — bare `agent` / `claude`
+        // live in ~/.local/bin or Homebrew. Prepend those so /usr/bin/env finds them.
+        env["PATH"] = Self.agentSearchPath(existing: env["PATH"])
         process.environment = env
         if let logHandle {
             process.standardOutput = logHandle
@@ -789,5 +792,28 @@ struct Dispatch: AsyncParsableCommand {
         } catch {
             return -1
         }
+    }
+
+    /// PATH for spawned agents: user install dirs first, then whatever the
+    /// parent process had (Terminal may already include them; AgentTasks.app
+    /// and launchd usually do not).
+    static func agentSearchPath(existing: String?) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let prefix = [
+            "\(home)/.local/bin",
+            "\(home)/.cursor/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+        ]
+        let existingParts = (existing ?? "")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        var seen = Set<String>()
+        var parts: [String] = []
+        for p in prefix + existingParts + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
+            if seen.insert(p).inserted { parts.append(p) }
+        }
+        return parts.joined(separator: ":")
     }
 }

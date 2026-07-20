@@ -273,7 +273,7 @@ Any argv template works; these are the lanes the example config ships:
 
 | Tag | Binary | Notes |
 |-----|--------|--------|
-| `cursor` | [`agent`](https://cursor.com/docs/cli/overview) (Cursor Agent CLI) | `-p --force --trust --approve-mcps --sandbox disabled`. Auth: `agent login` or `CURSOR_API_KEY`. |
+| `cursor` | [`agent`](https://cursor.com/docs/cli/overview) (Cursor Agent CLI) | `-p --force --trust --approve-mcps --sandbox disabled`. Auth: `agent login` or `CURSOR_API_KEY`. Install puts the binary in `~/.local/bin` (not on the default GUI/launchd PATH) — the dispatcher prepends that dir automatically. |
 | `claude` | `claude` | `-p --permission-mode acceptEdits` |
 | `antigravity` | `agy` | sandbox + skip-permissions |
 | `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
