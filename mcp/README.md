@@ -1,36 +1,35 @@
 # apple-tasks MCP server
 
-A thin MCP (Model Context Protocol) server over the `apple-tasks` Swift CLI.
-Every tool shells out to the CLI binary — the server adds no state and no
-logic of its own beyond argument mapping and output schemas. Build and
-concepts (tags, plans, dispatcher, capture channels) are documented in the
-[repo README](../README.md).
+> **Product 1 of 2** — thin MCP wrapper over the [`../cli`](../cli) Swift binary.
+> See [../docs/architecture.md](../docs/architecture.md).
+
+Agents talk to this server; every tool shells out to `apple-tasks` with
+`APPLE_TASKS_CALLER=mcp`. No business logic lives here. Build, tags, dispatcher,
+and capture concepts are documented in [`../cli/README.md`](../cli/README.md).
 
 ## Setup
 
 ```bash
-cd mcp && bun install
+# from repo root
+make            # build cli/.build/release/apple-tasks
+make mcp        # bun install
 ```
 
-Register with Claude Code:
+Register with Claude Code (use an absolute path):
 
 ```bash
-claude mcp add apple-tasks -- bun /Users/andrewcollier/Code/apple-mcp/mcp/src/server.ts
+claude mcp add apple-tasks -- bun /absolute/path/to/apple-mcp/mcp/src/server.ts
 ```
 
-The server invokes the Swift binary at `.build/release/apple-tasks`
-(relative to the repo). Environment:
+Env overrides:
 
-- `APPLE_TASKS_BIN` — override the CLI binary path.
-- `APPLE_TASKS_FINDMY_PYTHON` — override the FindMy sidecar's Python
-  (auto-detects `~/.config/apple-tasks/findmy/venv`).
-- The server passes `APPLE_TASKS_CALLER=mcp` so every mutation is
-  attributed to MCP in the audit log.
+| Variable | Purpose |
+|----------|---------|
+| `APPLE_TASKS_BIN` | Path to the `apple-tasks` binary (default: `../cli/.build/release/apple-tasks`) |
+| `APPLE_TASKS_FINDMY_PYTHON` | Python for the Find My sidecar (auto-detects `~/.config/apple-tasks/findmy/venv`) |
 
-macOS permissions (Reminders, Calendar, Contacts, Location, Automation,
-Full Disk Access) are granted **per host process** — granting your terminal
-does not grant your MCP host. Run the `doctor` tool to see what the current
-host actually has.
+TCC grants are **per host process**. If tools fail after working in Terminal,
+run the `doctor` tool from the MCP host.
 
 ## Structured output
 
@@ -103,8 +102,8 @@ dispatch from agent-spawned sessions), `dispatch_list`, `run_log` — a
 supervisor agent can reap, retry, and read failure logs over MCP.
 
 **Location** — `whereami` (this Mac, CoreLocation), `findmy_devices` /
-`findmy_locate` (AirTags via the optional FindMy.py sidecar — setup in the
-repo README).
+`findmy_locate` (AirTags via the optional FindMy.py sidecar — setup in
+[`../cli/README.md`](../cli/README.md)).
 
 **Triage & digest** — `triage_inbox` (classify + route untagged inbox
 items; dry-run by default), `digest` (agent activity + dispatch outcomes +
@@ -118,8 +117,8 @@ NOTHING is auto-created, apply accepted proposals via task_create).
 mirroring `mail_scan`'s shape + `threadId`/`snippet`; first call looks back
 24h), `gmail_show` (one message with plain-text body). Read-only OAuth scope
 — **no send path exists**; replies belong to the `[google]` dispatcher lane.
-Needs a one-time `apple-tasks gmail login` from a terminal (setup in the
-repo README).
+Needs a one-time `apple-tasks gmail login` from a terminal (setup in
+[`../cli/README.md`](../cli/README.md)).
 
 **GitHub** — `github_sync` (two-way issue sync via the gh CLI: assigned
 open issues → [github]-tagged tasks with URL dedupe, closed issues
@@ -128,3 +127,5 @@ reminders; `dry_run` defaults TRUE from MCP).
 
 **Introspection** — `audit_log` (who did what, when, as whom), `doctor`
 (permission + config diagnostics).
+
+Full behavioral docs live in [`../cli/README.md`](../cli/README.md).

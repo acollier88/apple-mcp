@@ -6,6 +6,8 @@
 --
 -- Install (compiles + copies to Mail's sandboxed scripts dir):
 --   make mail-rule
+-- Override the CLI path with APPLE_TASKS_BIN (same as MCP / AgentTasks).
+-- make mail-rule substitutes @APPLE_TASKS_BIN_DEFAULT@ with the checkout path.
 -- Mail must be running for rules to fire; that's the one caveat vs the
 -- polling mail_scan. All values pass through `quoted form of` — never
 -- interpolated raw into the shell.
@@ -16,15 +18,23 @@
 -- fails to compile on macOS 27 beta 3 even though the sdef still declares
 -- the terms. The codes are stable; revisit when the beta heals.
 
-property appleTasksBin : "/Users/andrewcollier/Code/apple-mcp/.build/release/apple-tasks"
+property appleTasksBinDefault : "@APPLE_TASKS_BIN_DEFAULT@"
 property inboxList : "Reminders"
+
+on appleTasksBin()
+	try
+		set envBin to system attribute "APPLE_TASKS_BIN"
+		if envBin is not "" then return envBin
+	end try
+	return appleTasksBinDefault
+end appleTasksBin
 
 on captureMessage(theSender, theSubject, theMessageId)
 	set theTitle to theSubject
 	if theTitle is "" then set theTitle to "(no subject)"
 	set theNotes to "From: " & theSender & linefeed & "Subject: " & theSubject
 	if theMessageId is not "" then set theNotes to theNotes & linefeed & "Message-ID: " & theMessageId
-	do shell script "APPLE_TASKS_CALLER=mail-rule " & quoted form of appleTasksBin & ¬
+	do shell script "APPLE_TASKS_CALLER=mail-rule " & quoted form of my appleTasksBin() & ¬
 		" add --list " & quoted form of inboxList & ¬
 		" --tag mail --notes " & quoted form of theNotes & ¬
 		" " & quoted form of theTitle

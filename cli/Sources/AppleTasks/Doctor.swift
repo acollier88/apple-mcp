@@ -91,7 +91,7 @@ struct Doctor: AsyncParsableCommand {
             .filter { $0.hasSuffix(".plist") || $0.hasSuffix(".json") }
             .count
         guard session || accessories > 0 else {
-            return "not configured (run: sidecar/findmy-sidecar.py login)"
+            return "not configured (run: tools/findmy/findmy-sidecar.py login)"
         }
         return "session \(session ? "present" : "MISSING"), \(accessories) accessories"
     }

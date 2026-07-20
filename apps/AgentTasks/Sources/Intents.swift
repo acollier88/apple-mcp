@@ -2,7 +2,16 @@ import AppIntents
 import Foundation
 
 enum CLI {
-    static let defaultBinary = "/Users/andrewcollier/Code/apple-mcp/.build/release/apple-tasks"
+    /// Resolve the monorepo CLI build (apps/AgentTasks → ../../cli/.build/release).
+    /// Override with APPLE_TASKS_BIN when the app is installed outside the checkout.
+    static var defaultBinary: String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Sources
+            .deletingLastPathComponent() // AgentTasks
+            .deletingLastPathComponent() // apps
+            .deletingLastPathComponent() // repo root
+        return repoRoot.appendingPathComponent("cli/.build/release/apple-tasks").path
+    }
 
     static func run(_ args: [String]) throws -> String {
         let process = Process()

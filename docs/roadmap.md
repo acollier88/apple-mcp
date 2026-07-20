@@ -1,8 +1,13 @@
 # Ideas / Roadmap
 
-Extensions for broader Apple-ecosystem integration. Architecture rule for all of
-them: the Swift CLI stays dumb, fast, and JSON-speaking; agents (via MCP) make
-every judgment call.
+Living backlog for this monorepo. Two products share one queue — see
+[`architecture.md`](architecture.md):
+
+1. **`cli/` + `mcp/`** — agent-facing API  
+2. **`apps/AgentTasks`** — human / Siri ops app that shells to the CLI  
+
+Architecture rule: the Swift CLI stays dumb, fast, and JSON-speaking; agents
+(via MCP) make every judgment call.
 
 ## 7. Agent dispatcher — closing the loop (CORE SLICE ✅ BUILT 2026-06-09)
 
@@ -266,7 +271,7 @@ ntfy/Pushover; never script Messages.app for bot traffic.
    `--no-native-tags` opt-out; `[tag]` prefix stays source of truth; verified
    `nativeTags: true` on macOS 27.0 beta. Still worth copying from remctl:
    `doctor` command (TCC is per-host-process), verify-after-write.
-2. **App Intents wrapper spike — ✅ BUILT 2026-06-09** (`spikes/AgentTasksApp`,
+2. **App Intents wrapper spike — ✅ BUILT 2026-06-09** (`apps/AgentTasks`,
    built with Xcode 26.5 SDK — the new iOS 27 schemas/Testing framework need
    the Xcode 27 beta, still TODO). No Xcode project: `build.sh` compiles with
    swiftc + `-emit-const-values-path` + a const-gather protocols file derived
@@ -282,7 +287,7 @@ ntfy/Pushover; never script Messages.app for bot traffic.
    `@AppEnum(schema: .reminders.listType/.locationTriggerEvent)`). Schema
    shape is compiler-enforced; notably **`tags: Set<String>` is first-class**
    in Apple's schema — the [tag] convention maps directly. Full entity graph in
-   `spikes/AgentTasksApp/Sources/SchemaIntents.swift`; metadata confirms
+   `apps/AgentTasks/Sources/SchemaIntents.swift`; metadata confirms
    `assistantDefinedSchemas: [{domain: reminders, name: CreateReminderIntent}]`.
    Build uses DEVELOPER_DIR=Xcode-beta automatically. Other schema intents
    available to adopt later: updateReminder, deleteReminders, createList,
@@ -381,7 +386,7 @@ script creates a tagged reminder ([mail][triage]) with subject + sender in
 notes. Push beats our polling `mail_scan` for latency, and the triage agent
 already knows what to do with inbox items. Caveat: Mail must be running.
 
-Shipped: scripts/mail-rule-capture.applescript (installed via `make
+Shipped: tools/mail-rule-capture.applescript (installed via `make
 mail-rule`; attach manually in Mail Settings > Rules). Creates [mail]-tagged
 reminders with From/Subject/Message-ID notes; triage now treats items whose
 only tags are provenance tags ([mail]) as candidates and preserves those
@@ -439,7 +444,7 @@ SiriKit-only in private SiriFindMy.framework — not Shortcuts actions, so the
 shortcut_run bridge can't reach them. Voice already works ("Hey Siri, where's
 my iPhone") — no MCP needed for that.
 
-**✅ BUILT 2026-06-10** as `sidecar/findmy-sidecar.py` on
+**✅ BUILT 2026-06-10** as `tools/findmy/findmy-sidecar.py` on
 [FindMy.py](https://github.com/malmeloo/FindMy.py) (v0.9.x): subcommands
 `login` (interactive-only — refuses non-TTY; Apple ID + 2FA via
 LocalAnisetteProvider; session → `~/.config/apple-tasks/findmy/account.json`
@@ -714,7 +719,7 @@ Next for AgentTasksApp:
 
 ### Notes domain — shipped (2026-07-08)
 
-`spikes/AgentTasksApp/Sources/NotesSchemaIntents.swift`: `NoteEntity`,
+`apps/AgentTasks/Sources/NotesSchemaIntents.swift`: `NoteEntity`,
 `NoteFolderEntity`, `NoteAccountEntity`, `CreateNoteIntent` (schemas
 `.notes.note`/`.notes.folder`/`.notes.account`/`.notes.createNote`).
 `CreateNoteIntent.perform()` shells to the existing `apple-tasks notes
@@ -859,7 +864,7 @@ Script it as `make betacheck` so it's one command on upgrade morning.
 **Scripted 2026-07-07**: `make betacheck` runs doctor → private `--check` →
 `whereami` → `list --status open` smoke → `swift build -c release`, with a
 PASS/FAIL line per step and stop-on-first-failure, then (per §33) compiles
-AND dyld-runs `spikes/ClaudeLanguageModel/SchemaProbe.swift` when present.
+AND dyld-runs `research/ClaudeLanguageModel/SchemaProbe.swift` when present.
 Still manual: `findmy_devices` (network-dependent) and the AgentTasksApp
 rebuild (needs Xcode, not in the SwiftPM build).
 
@@ -875,7 +880,7 @@ persists, #30 Extensions still dormant. Still needing a human at the Mac:
 ## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
 
 Found 2026-07-07 while building the ClaudeLanguageModel spike (docs/
-claude-language-model-spike.md, spikes/ClaudeLanguageModel/). The macOS beta 3
+claude-language-model-spike.md, research/ClaudeLanguageModel/). The macOS beta 3
 runtime (26A5378j) ships a NEWER FoundationModels than the newest Xcode beta
 SDK (27A5194q): code compiles against the SDK, then dies in dyld at launch.
 Confirmed skews (via `dyld_info -exports` + swift-demangle):
