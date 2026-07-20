@@ -20,9 +20,17 @@
     <string>AgentTasks reads and writes Reminders to manage the agent task queue.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
     <string>AgentTasks reads and writes Reminders to manage the agent task queue.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>AgentTasks reads and writes Calendar events so agents can schedule and time-block tasks.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>AgentTasks reads and writes Calendar events so agents can schedule and time-block tasks.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>AgentTasks reads Contacts (never edits) so agents can resolve people in tasks and triage.</string>
     <key>NSLocationUsageDescription</key>
     <string>AgentTasks reads this Mac's location so agents can act with location context (whereami).</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>AgentTasks reads this Mac's location so agents can act with location context (whereami).</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>AgentTasks transcribes voice recordings for the agent inbox using on-device Speech Recognition.</string>
 </dict>
 </plist>

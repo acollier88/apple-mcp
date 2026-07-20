@@ -120,6 +120,9 @@ struct ContentView: View {
             DispatchesTab(refreshToken: $refreshToken)
                 .tabItem { Label("Dispatches", systemImage: "bolt.horizontal.circle") }
                 .tag(1)
+            PermissionsSettingsTab()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(2)
         }
         .frame(minWidth: 640, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
     }
