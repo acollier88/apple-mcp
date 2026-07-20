@@ -27,9 +27,12 @@ clean:
 # Mail-rule capture: compile + install the AppleScript Mail rules invoke.
 # Attach manually: Mail > Settings > Rules > Add Rule > Run AppleScript.
 MAIL_SCRIPTS_DIR = $(HOME)/Library/Application Scripts/com.apple.mail
-mail-rule:
+mail-rule: cli
 	mkdir -p "$(MAIL_SCRIPTS_DIR)"
-	osacompile -o "$(MAIL_SCRIPTS_DIR)/apple-tasks-capture.scpt" tools/mail-rule-capture.applescript
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+	sed 's|@APPLE_TASKS_BIN_DEFAULT@|$(CURDIR)/$(RELEASE_DIR)/apple-tasks|g' \
+		tools/mail-rule-capture.applescript > "$$tmp"; \
+	osacompile -o "$(MAIL_SCRIPTS_DIR)/apple-tasks-capture.scpt" "$$tmp"
 	@echo "installed: $(MAIL_SCRIPTS_DIR)/apple-tasks-capture.scpt"
 	@echo "attach it: Mail > Settings > Rules > Add Rule > Run AppleScript > apple-tasks-capture"
 
