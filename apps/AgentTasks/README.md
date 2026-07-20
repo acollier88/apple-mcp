@@ -42,11 +42,16 @@ SDK). Prefer Xcode-beta when present — `build.sh` sets `DEVELOPER_DIR` for you
 ```bash
 # from repo root
 make            # build the CLI the app shells to
-make app        # → apps/AgentTasks/build/AgentTasks.app + LaunchServices register
+make app        # → /Applications/AgentTasks.app (replaces any existing install)
 
 # or
 cd apps/AgentTasks && ./build.sh
 ```
+
+`build.sh` always installs into **`/Applications/AgentTasks.app`**, quitting a
+running copy first, then re-registers Launch Services so Siri/Shortcuts pick
+up the new binary. A build-tree copy remains at `build/AgentTasks.app` for
+inspection only.
 
 First launch prompts for Reminders (and other) TCC for **this app’s** process —
 separate from Terminal / your MCP host. Run `apple-tasks doctor` from each host

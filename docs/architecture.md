@@ -86,7 +86,7 @@ Documented fully in [`cli/README.md`](../cli/README.md):
 ```bash
 make                 # CLI + private helper → cli/.build/release/
 make mcp             # bun install in mcp/
-make app             # build + register AgentTasks.app
+make app             # build → /Applications/AgentTasks.app (replaces existing)
 make install-agent   # LaunchAgent: apple-tasks dispatch on an interval
 make install-digest  # LaunchAgent: morning digest --note --push
 make betacheck

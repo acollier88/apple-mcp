@@ -61,7 +61,20 @@ xcrun appintentsmetadataprocessor \
 echo "== signing (ad hoc) =="
 codesign --force --deep -s - "$APP"
 
-echo "== registering with LaunchServices =="
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$PWD/$APP"
+# Replace the installed app so Spotlight/Siri/Dock always see this build.
+INSTALL_APP=/Applications/AgentTasks.app
+echo "== installing to $INSTALL_APP =="
+# Quit a running copy so we can replace the bundle (best-effort).
+osascript -e 'tell application "AgentTasks" to quit' >/dev/null 2>&1 || true
+sleep 0.5
+rm -rf "$INSTALL_APP"
+ditto "$APP" "$INSTALL_APP"
+codesign --force --deep -s - "$INSTALL_APP"
 
-echo "done: $PWD/$APP"
+echo "== registering with LaunchServices =="
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -f "$INSTALL_APP"
+# Drop the build-tree copy from the LS database so it doesn't compete.
+"$LSREGISTER" -u "$PWD/$APP" 2>/dev/null || true
+
+echo "done: $INSTALL_APP (build tree: $PWD/$APP)"

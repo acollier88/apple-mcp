@@ -29,7 +29,7 @@ Full picture: [`docs/architecture.md`](docs/architecture.md).
 ```bash
 make                 # → cli/.build/release/apple-tasks (+ private helper)
 make mcp             # bun install for the MCP server
-make app             # build & register AgentTasks.app (optional)
+make app             # build → /Applications/AgentTasks.app (replaces existing)
 make install-agent   # LaunchAgent: dispatch every 5 min (seeds examples/agents.json)
 ```
 
