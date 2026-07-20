@@ -1,4 +1,5 @@
 import AppIntents
+import Darwin
 import Foundation
 
 enum CLI {
@@ -13,7 +14,9 @@ enum CLI {
         return repoRoot.appendingPathComponent("cli/.build/release/apple-tasks").path
     }
 
-    static func run(_ args: [String]) throws -> String {
+    /// Shell out to apple-tasks. `timeout` (seconds) kills a hung process; nil waits forever
+    /// (fine for short reads). Dispatch uses a generous timeout so a stuck agent can't freeze the app.
+    static func run(_ args: [String], timeout: TimeInterval? = nil) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath:
             ProcessInfo.processInfo.environment["APPLE_TASKS_BIN"] ?? defaultBinary)
@@ -23,7 +26,26 @@ enum CLI {
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
-        process.waitUntilExit()
+
+        if let timeout {
+            let deadline = Date().addingTimeInterval(timeout)
+            while process.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            if process.isRunning {
+                process.terminate()
+                for _ in 0..<25 where process.isRunning {
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                throw NSError(domain: "AgentTasks", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey:
+                                "apple-tasks \(args.first ?? "") timed out after \(Int(timeout))s"])
+            }
+        } else {
+            process.waitUntilExit()
+        }
+
         guard process.terminationStatus == 0 else {
             let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw NSError(domain: "AgentTasks", code: 1,

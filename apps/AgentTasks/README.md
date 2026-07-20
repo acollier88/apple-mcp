@@ -4,9 +4,10 @@
 > It does **not** reimplement Reminders access. Every action shells out to the
 > [`apple-tasks` CLI](../../cli/). See [../../docs/architecture.md](../../docs/architecture.md).
 
-macOS app that exposes the agent task queue to Siri, Shortcuts, and Spotlight
-via App Intents. Use it to triage the inbox, ask what agents did, and create
-tagged tasks by voice — the same queue agents consume over MCP.
+macOS app that exposes the agent task queue to Siri, Shortcuts, and Spotlight,
+and provides a small **ops console** window for activity + dispatch control.
+Use it when CLI agent sessions (e.g. Cursor `agent`) don’t show up in the IDE —
+run logs and the ledger live here (and in `~/.config/apple-tasks/`).
 
 ```
 "Hey Siri, triage my inbox in AgentTasks"
@@ -14,16 +15,24 @@ tagged tasks by voice — the same queue agents consume over MCP.
 "Hey Siri, remind me to … in AgentTasks"
 ```
 
+## Ops console (window)
+
+| Tab | What it shows | Actions |
+|-----|---------------|---------|
+| **Activity** | Audit log (`apple-tasks log`) | Filter by command type, caller (agents/mcp/launchd/…), failures; Triage Inbox |
+| **Dispatches** | Ledger (`apple-tasks dispatches`) | Status filter; **Dry Run** / **Dispatch Now**; **Open Log** for a run |
+
+**Dispatch Now** is the same as `apple-tasks dispatch` / the LaunchAgent from
+`make install-agent` — it can launch agents and consume their budgets. Prefer
+Dry Run first. Optional `APPLE_TASKS_BIN` overrides the CLI path.
+
 ## Relationship to the CLI / MCP
 
 | Concern | Lives in |
 |---------|----------|
 | EventKit reads/writes, dispatch, triage apply, audit DB | `cli/` (`apple-tasks`) |
 | Agent tool surface | `mcp/` |
-| Siri / Shortcuts / Spotlight / activity UI | **this app** |
-
-Set `APPLE_TASKS_BIN` if the CLI isn’t at the monorepo default
-(`../../cli/.build/release/apple-tasks` relative to this package’s Sources).
+| Siri / Shortcuts / Spotlight / ops UI | **this app** |
 
 ## Build
 
@@ -45,11 +54,11 @@ if something mysteriously fails.
 
 ## What’s included
 
+- **Ops console** — Activity + Dispatches tabs (`Sources/OpsConsole.swift`).
 - **Reminders domain schemas** — create / update / delete reminders & lists
   (`Sources/SchemaIntents.swift`), mapped onto the CLI’s `[tag]` convention.
 - **Notes domain** — create note via `apple-tasks notes create`
-  (`Sources/NotesSchemaIntents.swift`). Calendar domain was attempted and
-  descoped; see [roadmap #29](../../docs/roadmap.md).
+  (`Sources/NotesSchemaIntents.swift`).
 - **Custom intents** — Check Agent Tasks, Add Agent Task, Triage Inbox,
   Agent Status (digest-style spoken summary).
 - **Spotlight** — open tasks donated as `IndexedEntity` on launch.
@@ -59,13 +68,7 @@ There is no Xcode project: `build.sh` compiles with `swiftc`, runs
 
 ## Kicking off work
 
-This app is the **human front door**. Unattended agent runs are started by the
-CLI’s `dispatch` (cron / launchd / `dispatch_run` over MCP), not by a second
-runtime inside the app:
-
 1. Capture (Siri → this app, or plain Reminders / iOS Shortcut).
-2. Triage (`triage` intent here, or `apple-tasks triage` / MCP `triage_inbox`).
-3. Dispatch (`apple-tasks dispatch` on a schedule, or a supervisor agent via MCP).
-
-Wire always-on dispatch with `make install-agent` from the repo root (LaunchAgent
-every 5 minutes). Keep this app for voice and visibility.
+2. Triage (button / intent here, or `apple-tasks triage` / MCP `triage_inbox`).
+3. Dispatch — **Dispatches → Dispatch Now**, `make install-agent` (interval),
+   or a supervisor agent via MCP `dispatch_run`.
