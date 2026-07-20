@@ -16,9 +16,35 @@ struct QueueTask: Codable, Identifiable, Hashable {
     let completed: Bool
     let url: String?
 
+    /// Known agent lanes — prefer these over repo tags when labeling the row.
+    static let knownAgents: Set<String> = [
+        "cursor", "claude", "antigravity", "triage", "agy", "codex", "gemini", "byom",
+    ]
+
     var stableId: String { externalId ?? id }
 
     var agentTag: String? {
+        if let known = tags.first(where: { Self.knownAgents.contains($0.lowercased()) }) {
+            return known
+        }
+        return tags.first { t in
+            let l = t.lowercased()
+            return l != "auto"
+                && !l.hasPrefix("dispatched")
+                && !l.hasPrefix("failed")
+                && !l.hasPrefix("personal")
+                && !l.hasPrefix("mail")
+                && !l.hasPrefix("pr")
+        }
+    }
+
+    /// True when no task tag maps to agents.json workdirs (dispatch worktree will fail).
+    var needsWorkdir: Bool {
+        WorkdirsStore.matchingTag(in: tags) == nil
+    }
+
+    /// Best tag to bind when the user picks a folder (orphan repo-like tag, if any).
+    var orphanRepoTag: String? {
         tags.first { t in
             let l = t.lowercased()
             return l != "auto"
@@ -27,6 +53,8 @@ struct QueueTask: Codable, Identifiable, Hashable {
                 && !l.hasPrefix("personal")
                 && !l.hasPrefix("mail")
                 && !l.hasPrefix("pr")
+                && !Self.knownAgents.contains(l)
+                && WorkdirsStore.matchingTag(in: [t]) == nil
         }
     }
 
@@ -56,6 +84,7 @@ struct QueueTab: View {
     @State private var showAdd = false
     @State private var filterAgent: String? = nil // nil = all agents
     @State private var showFailed = true
+    @State private var workdirs: [WorkdirsStore.Entry] = []
 
     private var agentFilters: [String] {
         Array(Set(tasks.compactMap(\.agentTag))).sorted()
@@ -182,8 +211,10 @@ struct QueueTab: View {
                         QueueTaskRow(
                             task: task,
                             isBusy: busyIds.contains(task.stableId),
+                            needsWorkdir: WorkdirsStore.matchingTag(in: task.tags, workdirs: workdirs) == nil,
                             onComplete: { Task { await complete(task) } },
-                            onFail: { Task { await fail(task) } }
+                            onFail: { Task { await fail(task) } },
+                            onSetFolder: { Task { await setFolder(for: task) } }
                         )
                     }
                 }
@@ -196,6 +227,7 @@ struct QueueTab: View {
     private func refresh() async {
         guard !isLoading else { return }
         isLoading = true
+        workdirs = WorkdirsStore.load()
         do {
             let json = try await Task.detached {
                 try CLI.run(["list", "--tag", "auto", "--status", "open"], timeout: 45)
@@ -212,6 +244,43 @@ struct QueueTab: View {
                 self.isLoading = false
                 self.caption = "Queue failed: \(error.localizedDescription)"
             }
+        }
+    }
+
+    @MainActor
+    private func setFolder(for task: QueueTask) async {
+        let key = task.stableId
+        guard !busyIds.contains(key) else { return }
+        guard let url = WorkdirsStore.pickDirectory() else { return }
+        busyIds.insert(key)
+        caption = "Saving workdir…"
+        do {
+            let preferred = task.orphanRepoTag ?? WorkdirsStore.tagFromDirectoryName(url.path)
+            let entry = try WorkdirsStore.upsert(tag: preferred, path: url.path)
+            if !task.tags.contains(where: { $0.caseInsensitiveCompare(entry.tag) == .orderedSame }) {
+                _ = try await Task.detached {
+                    try CLI.run(["update", key, "--add-tag", entry.tag], timeout: 30)
+                }.value
+            }
+            // Clear failed so a retry can pick it up once the workdir exists.
+            if task.isFailed {
+                var args = ["update", key, "--add-tag", "auto"]
+                for tag in task.tags where tag.lowercased() == "failed"
+                    || tag.lowercased().hasPrefix("failed:") {
+                    args += ["--remove-tag", tag]
+                }
+                _ = try? await Task.detached {
+                    try CLI.run(args, timeout: 30)
+                }.value
+            }
+            workdirs = WorkdirsStore.load()
+            busyIds.remove(key)
+            caption = "Workdir [\(entry.tag)] → \(entry.path)"
+            refreshToken += 1
+            await refresh()
+        } catch {
+            busyIds.remove(key)
+            caption = "Set folder failed: \(error.localizedDescription)"
         }
     }
 
@@ -275,8 +344,10 @@ struct QueueTab: View {
 struct QueueTaskRow: View {
     let task: QueueTask
     let isBusy: Bool
+    let needsWorkdir: Bool
     let onComplete: () -> Void
     let onFail: () -> Void
+    let onSetFolder: () -> Void
     @State private var isHovered = false
     @State private var confirmFail = false
 
@@ -304,6 +375,11 @@ struct QueueTaskRow: View {
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.red)
                         }
+                        if needsWorkdir {
+                            Text("no workdir")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
                         Text(task.list)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -311,6 +387,11 @@ struct QueueTaskRow: View {
                     Text(task.title)
                         .font(.subheadline.weight(.medium))
                         .lineLimit(2)
+                    if needsWorkdir {
+                        Text("Set a folder so dispatch can create a worktree (missing agents.json workdirs entry).")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                     if let due = task.due {
                         Text("due \(due)")
                             .font(.caption2)
@@ -327,6 +408,11 @@ struct QueueTaskRow: View {
                 Spacer()
                 if isBusy {
                     ProgressView().controlSize(.small)
+                }
+                if needsWorkdir {
+                    Button("Set Folder…", action: onSetFolder)
+                        .disabled(isBusy)
+                        .help("Pick a directory and register it in agents.json workdirs")
                 }
                 Button("Complete", action: onComplete)
                     .disabled(isBusy)
@@ -359,6 +445,8 @@ struct QueueTaskRow: View {
 
 // MARK: - Add Task
 
+private let addTaskOtherRepo = "__other__"
+
 struct AddTaskSheet: View {
     let onCreated: () -> Void
     let onCancel: () -> Void
@@ -367,7 +455,11 @@ struct AddTaskSheet: View {
     @State private var listName = "Code Tasks"
     @State private var lists: [PlanList] = []
     @State private var agent = "cursor"
-    @State private var repo = "apple-mcp"
+    @State private var workdirs: [WorkdirsStore.Entry] = []
+    /// Selected workdir tag, or `addTaskOtherRepo` for a new folder.
+    @State private var repoSelection = ""
+    @State private var customTag = ""
+    @State private var customPath = ""
     @State private var notes = ""
     @State private var priority = "none"
     @State private var includeAuto = true
@@ -376,6 +468,23 @@ struct AddTaskSheet: View {
 
     private let agents = ["cursor", "claude", "antigravity"]
     private let priorities = ["none", "low", "medium", "high"]
+
+    private var isOther: Bool { repoSelection == addTaskOtherRepo }
+
+    private var resolvedRepoTag: String {
+        if isOther {
+            return WorkdirsStore.sanitizeTag(customTag)
+        }
+        return repoSelection
+    }
+
+    private var resolvedRepoPath: String? {
+        if isOther {
+            let p = customPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            return p.isEmpty ? nil : p
+        }
+        return workdirs.first(where: { $0.tag == repoSelection })?.path
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -401,7 +510,35 @@ struct AddTaskSheet: View {
                 Picker("Agent", selection: $agent) {
                     ForEach(agents, id: \.self) { Text($0).tag($0) }
                 }
-                TextField("Repo / workdir tag", text: $repo, prompt: Text("apple-mcp"))
+                Picker("Repository", selection: $repoSelection) {
+                    ForEach(workdirs) { entry in
+                        Text("\(entry.tag) — \(shortPath(entry.path))").tag(entry.tag)
+                    }
+                    Text("Other folder…").tag(addTaskOtherRepo)
+                }
+                if isOther {
+                    HStack {
+                        TextField("Workdir tag", text: $customTag, prompt: Text("my-repo"))
+                        Button("Choose Folder…") {
+                            chooseFolder()
+                        }
+                    }
+                    if !customPath.isEmpty {
+                        Text(customPath)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    } else {
+                        Text("Pick a directory to register in agents.json workdirs.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                } else if let path = resolvedRepoPath {
+                    Text(path)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 Toggle("Tag [auto] (dispatchable)", isOn: $includeAuto)
                 Picker("Priority", selection: $priority) {
                     ForEach(priorities, id: \.self) { Text($0).tag($0) }
@@ -426,22 +563,57 @@ struct AddTaskSheet: View {
                 Button("Create") {
                     Task { await create() }
                 }
-                .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                .disabled(!canCreate || isSaving)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(16)
         }
-        .frame(minWidth: 480, minHeight: 420)
-        .onAppear { Task { await loadLists() } }
+        .frame(minWidth: 520, minHeight: 480)
+        .onAppear {
+            workdirs = WorkdirsStore.load()
+            if repoSelection.isEmpty {
+                repoSelection = workdirs.first?.tag ?? addTaskOtherRepo
+            }
+            Task { await loadLists() }
+        }
+        .onChange(of: repoSelection) { _, new in
+            if new == addTaskOtherRepo, customPath.isEmpty {
+                // Nudge the user to pick a folder when they choose Other.
+            }
+        }
+    }
+
+    private var canCreate: Bool {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return false }
+        if isOther {
+            return !resolvedRepoTag.isEmpty && resolvedRepoPath != nil
+        }
+        return !repoSelection.isEmpty && repoSelection != addTaskOtherRepo
     }
 
     private var previewTitle: String {
         var tags = [agent]
-        let repoTag = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let repoTag = resolvedRepoTag
         if !repoTag.isEmpty { tags.append(repoTag) }
         if includeAuto { tags.append("auto") }
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return tags.map { "[\($0)]" }.joined() + " " + (t.isEmpty ? "…" : t)
+    }
+
+    private func shortPath(_ path: String) -> String {
+        path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
+    }
+
+    @MainActor
+    private func chooseFolder() {
+        guard let url = WorkdirsStore.pickDirectory(startingAt: customPath.isEmpty ? nil : customPath) else {
+            return
+        }
+        customPath = url.path
+        if customTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            customTag = WorkdirsStore.tagFromDirectoryName(url.path)
+        }
     }
 
     private func loadLists() async {
@@ -464,14 +636,25 @@ struct AddTaskSheet: View {
 
     private func create() async {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard canCreate else { return }
         isSaving = true
         error = nil
         do {
-            _ = try await Task.detached { [listName, agent, repo, notes, priority, includeAuto] in
-                var args = ["add", "--list", listName, "--tag", agent]
-                let repoTag = repo.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !repoTag.isEmpty { args += ["--tag", repoTag] }
+            let repoTag: String
+            if isOther {
+                guard let path = resolvedRepoPath else {
+                    throw NSError(domain: "AgentTasks", code: 4,
+                                  userInfo: [NSLocalizedDescriptionKey: "Choose a folder first"])
+                }
+                let entry = try WorkdirsStore.upsert(tag: resolvedRepoTag, path: path)
+                repoTag = entry.tag
+                await MainActor.run { self.workdirs = WorkdirsStore.load() }
+            } else {
+                repoTag = repoSelection
+            }
+
+            _ = try await Task.detached { [listName, agent, notes, priority, includeAuto] in
+                var args = ["add", "--list", listName, "--tag", agent, "--tag", repoTag]
                 if includeAuto { args += ["--tag", "auto"] }
                 if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     args += ["--notes", notes]
