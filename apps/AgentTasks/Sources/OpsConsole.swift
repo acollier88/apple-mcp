@@ -114,17 +114,20 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
+            QueueTab(refreshToken: $refreshToken)
+                .tabItem { Label("Queue", systemImage: "tray.full") }
+                .tag(0)
             ActivityTab(refreshToken: refreshToken)
                 .tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }
-                .tag(0)
+                .tag(1)
             DispatchesTab(refreshToken: $refreshToken)
                 .tabItem { Label("Dispatches", systemImage: "bolt.horizontal.circle") }
-                .tag(1)
+                .tag(2)
             PermissionsSettingsTab()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(2)
+                .tag(3)
         }
-        .frame(minWidth: 640, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
+        .frame(minWidth: 680, maxWidth: .infinity, minHeight: 500, maxHeight: .infinity)
     }
 }
 

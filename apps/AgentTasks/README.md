@@ -19,6 +19,7 @@ run logs and the ledger live here (and in `~/.config/apple-tasks/`).
 
 | Tab | What it shows | Actions |
 |-----|---------------|---------|
+| **Queue** | Open `[auto]` tasks | Filter by agent; **Add Task**; **Complete** / **Fail** |
 | **Activity** | Audit log (`apple-tasks log`) | Filter by command type, caller (agents/mcp/launchd/…), failures; Triage Inbox |
 | **Dispatches** | Ledger (`apple-tasks dispatches`) | Status filter; **Dry Run** / **Dispatch Now**; **Open Log** for a run |
 | **Settings** | TCC status for this app | **Prompt for Permissions** (Reminders, Calendars, Contacts, Location, Speech) |
