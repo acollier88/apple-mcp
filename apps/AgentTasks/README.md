@@ -67,4 +67,5 @@ runtime inside the app:
 2. Triage (`triage` intent here, or `apple-tasks triage` / MCP `triage_inbox`).
 3. Dispatch (`apple-tasks dispatch` on a schedule, or a supervisor agent via MCP).
 
-Wire launchd/cron to the CLI binary; keep this app for voice and visibility.
+Wire always-on dispatch with `make install-agent` from the repo root (LaunchAgent
+every 5 minutes). Keep this app for voice and visibility.

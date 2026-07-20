@@ -26,10 +26,10 @@ notes + self-complete instructions) → ledger succeeded → re-dispatch deduped
 Live config has claude wired (`claude -p {prompt} --permission-mode
 acceptEdits`) — UNTESTED with a real claude run yet; start with --dry-run.
 
-**Remaining for next session**: `--watch` mode (EKEventStoreChanged or poll
-loop) + launchd plist; per-agent concurrency (v1 is fully sequential);
-model-tag → flag mapping; notify on completion/failure. (Timeout handling and
-run-log capture landed with hardening — see #10.)
+**Remaining for next session**: EKEventStoreChanged `--watch` (optional —
+`make install-agent` LaunchAgent interval dispatch covers the always-on
+path); model-tag → flag mapping. Per-agent concurrency, notify, timeouts,
+and run logs landed with hardening (#10 / dispatcher-v2).
 
 ### Original design sketch (2026-06-09 afternoon)
 

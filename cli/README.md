@@ -263,7 +263,42 @@ The first task tag matching a `workdirs` key sets the agent's working
 directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
 `apple-tasks dispatch --dry-run` first.
-`--watch`/launchd mode is on the roadmap ([docs/roadmap.md](../docs/roadmap.md) #7).
+
+Starter config (includes **cursor**, claude, antigravity, triage):
+[`examples/agents.json`](../examples/agents.json).
+
+### Supported agent CLIs
+
+Any argv template works; these are the lanes the example config ships:
+
+| Tag | Binary | Notes |
+|-----|--------|--------|
+| `cursor` | [`agent`](https://cursor.com/docs/cli/overview) (Cursor Agent CLI) | `-p --force --trust --approve-mcps --sandbox disabled`. Auth: `agent login` or `CURSOR_API_KEY`. |
+| `claude` | `claude` | `-p --permission-mode acceptEdits` |
+| `antigravity` | `agy` | sandbox + skip-permissions |
+| `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
+| *(BYOM)* | — | `"llm": { … }` OpenAI-compatible profile (no tools) |
+
+Prefer apple-tasks `"worktree": true` over Cursor's own `-w` so ledger/GC stay authoritative.
+
+### Always-on dispatch (launchd)
+
+```bash
+make install-agent              # every 5 min; seeds agents.json if missing
+make install-agent INTERVAL=120 # every 2 min
+make uninstall-agent
+
+make install-digest             # daily 07:00 digest --note --push
+make install-digest HOUR=7 MINUTE=30
+make uninstall-digest
+```
+
+`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch` with a
+PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` usually
+live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
+before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
+`~/.config/apple-tasks/logs/dispatch.*.log`. `doctor` reports
+`launchAgent` / `cursorAgent` / `agentsConfig`.
 
 The optional `triage` block runs the [on-demand inbox
 triage](#on-demand-triage-no-loop) at the start of every dispatch cycle:
@@ -470,8 +505,10 @@ apple-tasks digest --note --push  # + one-line summary to your ntfy topic
 
 Schedule it for coffee time (cron/launchd):
 
-```cron
-0 7 * * * /path/to/cli/.build/release/apple-tasks digest --note --push
+```bash
+make install-digest   # preferred — LaunchAgent at 07:00
+# or cron:
+# 0 7 * * * /path/to/cli/.build/release/apple-tasks digest --note --push
 ```
 
 Open Notes on your phone over breakfast and see what your agents did
@@ -489,7 +526,7 @@ You can create an iOS Shortcut to capture agent tasks directly from your iPhone,
 Create a new Shortcut in the iOS **Shortcuts** app named **"Agent Task"**:
 
 1. **List** (Define the available agents):
-   - Add items: `claude`, `antigravity` (or whatever agents you have configured).
+   - Add items: `cursor`, `claude`, `antigravity` (or whatever agents you have configured).
 2. **Choose from List**:
    - Prompt: `Agent?`
    - Select: `List` (from the previous step).
@@ -503,8 +540,8 @@ Create a new Shortcut in the iOS **Shortcuts** app named **"Agent Task"**:
    - Input Type: `Text`
 6. **Text** (Compose the final reminder title):
    - Type: `[Chosen Item][Chosen Item 2][auto] Provided Input`
-   - *Example flow*: If you select `claude` and `apple-mcp`, and type `Fix typos in readme`, this block will compile to:
-     `[claude][apple-mcp][auto] Fix typos in readme`
+   - *Example flow*: If you select `cursor` and `apple-mcp`, and type `Fix typos in readme`, this block will compile to:
+     `[cursor][apple-mcp][auto] Fix typos in readme`
 7. **Add New Reminder**:
    - Add: `Text` (the composed text from the previous step)
    - To: `Code Tasks` (or your configured Reminders list)

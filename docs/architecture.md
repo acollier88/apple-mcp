@@ -81,8 +81,10 @@ Documented fully in [`cli/README.md`](../cli/README.md):
 ## Build entrypoints
 
 ```bash
-make          # CLI + private helper → cli/.build/release/
-make mcp      # bun install in mcp/
-make app      # build + register AgentTasks.app
+make                 # CLI + private helper → cli/.build/release/
+make mcp             # bun install in mcp/
+make app             # build + register AgentTasks.app
+make install-agent   # LaunchAgent: apple-tasks dispatch on an interval
+make install-digest  # LaunchAgent: morning digest --note --push
 make betacheck
 ```
