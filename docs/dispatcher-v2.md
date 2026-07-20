@@ -1,6 +1,6 @@
 # Dispatcher v2 — architecture
 
-Design for evolving `apple-tasks dispatch` (Sources/AppleTasks/Dispatch.swift)
+Design for evolving `apple-tasks dispatch` (cli/Sources/AppleTasks/Dispatch.swift)
 from the v1 sequential loop to a concurrent, result-aware dispatcher. Grounded
 in a read of v1 as of 2026-07-07; line references are to that revision.
 

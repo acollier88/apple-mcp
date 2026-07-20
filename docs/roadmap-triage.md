@@ -1,7 +1,7 @@
 # Roadmap triage — 2026-07-07
 
-Ruthless pass over IDEAS.md's open items (post dispatcher-v2). Numbers refer
-to IDEAS.md sections. Grounding: dispatcher v2 landed today (atomic claim,
+Ruthless pass over docs/roadmap.md's open items (post dispatcher-v2). Numbers refer
+to docs/roadmap.md sections. Grounding: dispatcher v2 landed today (atomic claim,
 concurrency, result trailers, worktree GC, notify), the FoundationModels
 executor seam is runtime-blocked (§33), and Fable-tier design time is best
 spent on specs cheaper models can execute.
@@ -75,7 +75,7 @@ re-dispatch; only top-level MCP sessions may.
 ### 2. ntfy push notify (#24)
 
 Goal: report-back that reaches your phone off-Mac.
-Files: `Sources/AppleTasks/Dispatch.swift` (notify helper), new
+Files: `cli/Sources/AppleTasks/Dispatch.swift` (notify helper), new
 `~/.config/apple-tasks/notify.json` (`{"ntfy": {"topic": "...", "server":
 "https://ntfy.sh"}}`, gitignored), `mcp/src/server.ts` (`notify` tool gains
 `push: bool`), README.
@@ -121,7 +121,7 @@ Key insight vs §33: the runtime skew hits the CUSTOM-provider seam
 **expected to run on beta 3 despite §33**. First step is a 20-line probe
 binary (session + trivial @Generable round-trip, dyld-run it — per the
 §32 drill update, compile-clean is not proof).
-Files: new `Sources/AppleTasks/Triage.swift`; probe in `spikes/`.
+Files: new `cli/Sources/AppleTasks/Triage.swift`; probe in `research/`.
 - `@Generable struct Classification { kind: task|event|noise; tags:
   [String]; due: String?; title: String }`.
 - Input: `--from notes|mail|inbox` (reuses existing scan/list code paths),

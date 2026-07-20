@@ -1,4 +1,5 @@
 # Swift / SwiftPM
+cli/.build/
 .build/
 *.dSYM/
 
@@ -6,9 +7,9 @@
 node_modules/
 mcp/dist/
 
-# App build outputs (regenerate with spikes/AgentTasksApp/build.sh)
-spikes/AgentTasksApp/build/
-spikes/ClaudeLanguageModel/build/
+# App build outputs (regenerate with apps/AgentTasks/build.sh)
+apps/AgentTasks/build/
+research/ClaudeLanguageModel/build/
 
 # macOS
 .DS_Store

@@ -124,7 +124,7 @@ Open questions for the build:
 
 ## Status
 
-`spikes/ClaudeLanguageModel/ClaudeLanguageModel.swift` typechecks clean against
+`research/ClaudeLanguageModel/ClaudeLanguageModel.swift` typechecks clean against
 the beta 3 SDK (`swiftc -typecheck -target arm64-apple-macos27.0`): full
 `LanguageModel` + `LanguageModelExecutor` conformance with transcript folding
 (alternating-role coalescing incl. thinking-signature replay), SSE → channel
@@ -135,7 +135,7 @@ event translation, and Anthropic error mapping. Not yet exercised live.
 `@Guide` descriptions and `.range` → `minimum`/`maximum`, plus harmless
 `title`/`x-order` extras). The executor's `input_schema` encoding works as-is.
 
-**Blocked (IDEAS.md #33)**: the live round-trip harness (`Harness.swift`,
+**Blocked (docs/roadmap.md #33)**: the live round-trip harness (`Harness.swift`,
 compiles clean) dies in dyld — the beta 3 OS runtime ships a newer
 FoundationModels than SDK 27A5194q declares. `…GenerationChannel.Event` is a
 protocol in the SDK but a concrete struct at runtime, so `channel.send` can't
@@ -150,5 +150,5 @@ guided generation + vision.
 `AgentTasksApp` already exposes TaskEntity/intents. A `LanguageModelSession`
 constructed with `ClaudeLanguageModel` + `Tool` wrappers around the apple-tasks
 CLI verbs = an in-process Claude agent with native Reminders/Calendar/Notes
-tools, no MCP hop, streaming into SwiftUI. This is IDEAS.md's Foundation Models
+tools, no MCP hop, streaming into SwiftUI. This is docs/roadmap.md's Foundation Models
 integration idea, now confirmed buildable on public API.

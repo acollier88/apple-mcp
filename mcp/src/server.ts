@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 
 const BIN =
   process.env.APPLE_TASKS_BIN ??
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.build/release/apple-tasks");
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../cli/.build/release/apple-tasks");
 
 async function cli(args: string[], timeoutMs = 30_000): Promise<string> {
   try {
@@ -853,7 +853,7 @@ server.registerTool(
 );
 
 const FINDMY_SIDECAR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)), "../../sidecar/findmy-sidecar.py");
+  path.dirname(fileURLToPath(import.meta.url)), "../../tools/findmy/findmy-sidecar.py");
 // Prefer the dedicated venv (created per sidecar setup docs), else system python.
 const FINDMY_VENV_PYTHON = path.join(
   process.env.HOME ?? "", ".config/apple-tasks/findmy/venv/bin/python3");
@@ -880,7 +880,7 @@ server.registerTool(
     description:
       "List Find My accessories configured for the FindMy.py sidecar (AirTags/OpenHaystack tags whose " +
       "pairing files are in ~/.config/apple-tasks/findmy/accessories/). Requires one-time interactive " +
-      "setup: 'python3 sidecar/findmy-sidecar.py login'. Returns {error, hint} JSON when unconfigured.",
+      "setup: 'python3 tools/findmy/findmy-sidecar.py login'. Returns {error, hint} JSON when unconfigured.",
     inputSchema: {},
   },
   async () => {
