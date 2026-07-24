@@ -831,6 +831,10 @@ Re-checked 2026-07-15: still backend-disabled as of the July 13 public
 beta per press coverage (EU DMA talks unresolved; OpenAI weighing legal
 options over Siri placement). Status quo — keep watching.
 
+Re-checked 2026-07-23 (beta 4, released 2026-07-20): beta 4 coverage
+(MacRumors/9to5Mac) is all Siri voices/UI; no mention of the Extensions
+backend flipping on. Status quo — keep watching.
+
 ## 31. Spotlight "Search or Ask" — make our Siri index donations continuous — ✅ DONE (2026-07-08)
 
 Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
@@ -877,7 +881,16 @@ persists, #30 Extensions still dormant. Still needing a human at the Mac:
 #2 real-device Siri conversational test, #15 FindMy login.
 **All three human checks cleared 2026-07-17** — see §31, §2, §15.
 
-## 33. FoundationModels executor seam — SDK/OS skew on beta 3 (WATCH)
+**Drill run 2026-07-23** (beta 4: OS 26A5378n → 26A5388g, Xcode
+27A5194q → 27A5228h): all 7 steps PASS. Gotcha: the OS update dropped
+Xcode entirely (xcode-select fell back to CommandLineTools, which lack
+the FoundationModelsMacros plugin — CLI build fails there); reinstalled
+Xcode beta to /Applications/Xcode-beta.app. One schema drift:
+`createList.name` must now be non-optional (fixed in SchemaIntents.swift),
+AgentTasksApp otherwise rebuilt clean. #33 executor skew HEALED (see §33),
+#30 Extensions still dormant.
+
+## 33. FoundationModels executor seam — skew HEALED on beta 4 (live round-trip pending)
 
 Found 2026-07-07 while building the ClaudeLanguageModel spike (docs/
 claude-language-model-spike.md, research/ClaudeLanguageModel/). The macOS beta 3
@@ -905,6 +918,15 @@ documented symbol (LanguageModelExecutorGenerationChannel.send generic).
 The basic surface remains fine (betacheck's fm probe compiles AND runs),
 so #27/#41 are unaffected. No new Xcode beta has shipped; nothing to do
 until one does.
+
+Re-checked 2026-07-23 (beta 4: OS 26A5388g, Xcode beta 27A5228h, SDK
+26A5388f): **HEALED**. The harness compiles against the new SDK with no
+source changes (the anticipated Event protocol→struct migration never
+surfaced as a compile diff) and dyld-launches clean — no symbol crash.
+One deprecation fixed: `LanguageModelCapabilities(capabilities:)` →
+`LanguageModelCapabilities(_:)`. Remaining: a live Claude round-trip
+(`ANTHROPIC_API_KEY=... research/ClaudeLanguageModel/build/harness`) to
+validate the transcript mapping end-to-end.
 
 ## 34. Fold notes-scan into triage — ✅ DONE 2026-07-08 (`triage --notes`)
 
