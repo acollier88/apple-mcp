@@ -1440,3 +1440,31 @@ The research prompt line (C) is cheap and standalone — it could ship
 first without any bookmark scanning at all (tag any task `[research]`
 with a URL).
 
+
+## 54. Scratch lane — repo-less dispatch — ✅ DONE 2026-07-23 (user's idea)
+
+"Most create-task paths require a repo tag. Shouldn't certain things
+(calendar debrief, research, notify-me tasks) not require a repo and run
+in a tmp space?" — correct: the repo requirement was three accidental
+layers (all example lanes set `worktree: true`, which hard-failed without
+a workdir tag; the app's Add Task sheet required picking a repository;
+the Queue console flagged unmapped tasks as broken), while the dispatcher
+core happily ran cwd-less tasks in whatever directory it inherited.
+
+Shipped: a task whose tags match no `workdirs` entry now runs in a
+throwaway per-dispatch scratch directory
+(`~/.config/apple-tasks/scratch/<ledgerId>`, sibling of runs/ and
+worktrees/) regardless of the lane's `worktree` flag — the worktree
+isolates *repo edits*; with no repo, scratch IS the isolation. The prompt
+tells the agent no repository is associated and to deliver via
+apple-tasks (notes create / notify / update --append-notes), not files.
+Dry runs label these "(scratch — no workdir tag)". The app's Repository
+picker gained a first-class "None — scratch" option and the queue row's
+"no workdir" warning became an informational "scratch" badge (Set Folder
+remains as an affordance for tasks that SHOULD have a repo).
+
+Not done: scratch dirs accumulate like run logs (no reaper); harmless
+until an agent writes something big — add cleanup to the worktree reaper
+if it ever matters. Scratch adds no *safety* (the agent process keeps
+its normal account access); containment is the virtualization discussion
+in polish.md, not this.

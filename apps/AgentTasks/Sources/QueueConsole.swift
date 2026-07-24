@@ -376,9 +376,9 @@ struct QueueTaskRow: View {
                                 .foregroundStyle(.red)
                         }
                         if needsWorkdir {
-                            Text("no workdir")
+                            Text("scratch")
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(.secondary)
                         }
                         Text(task.list)
                             .font(.caption)
@@ -388,9 +388,9 @@ struct QueueTaskRow: View {
                         .font(.subheadline.weight(.medium))
                         .lineLimit(2)
                     if needsWorkdir {
-                        Text("Set a folder so dispatch can create a worktree (missing agents.json workdirs entry).")
+                        Text("No repo tag — dispatch runs this in a throwaway scratch dir. Set a folder if it should work in a repo.")
                             .font(.caption2)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.secondary)
                     }
                     if let due = task.due {
                         Text("due \(due)")
@@ -446,6 +446,7 @@ struct QueueTaskRow: View {
 // MARK: - Add Task
 
 private let addTaskOtherRepo = "__other__"
+private let addTaskNoRepo = "__none__"
 
 struct AddTaskSheet: View {
     let onCreated: () -> Void
@@ -470,8 +471,10 @@ struct AddTaskSheet: View {
     private let priorities = ["none", "low", "medium", "high"]
 
     private var isOther: Bool { repoSelection == addTaskOtherRepo }
+    private var isNoRepo: Bool { repoSelection == addTaskNoRepo }
 
     private var resolvedRepoTag: String {
+        if isNoRepo { return "" }
         if isOther {
             return WorkdirsStore.sanitizeTag(customTag)
         }
@@ -511,10 +514,16 @@ struct AddTaskSheet: View {
                     ForEach(agents, id: \.self) { Text($0).tag($0) }
                 }
                 Picker("Repository", selection: $repoSelection) {
+                    Text("None — scratch (research, debriefs, notify-me)").tag(addTaskNoRepo)
                     ForEach(workdirs) { entry in
                         Text("\(entry.tag) — \(shortPath(entry.path))").tag(entry.tag)
                     }
                     Text("Other folder…").tag(addTaskOtherRepo)
+                }
+                if isNoRepo {
+                    Text("Dispatch runs this in a throwaway scratch directory; the agent delivers via notes/notifications, not code.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 if isOther {
                     HStack {
@@ -641,7 +650,9 @@ struct AddTaskSheet: View {
         error = nil
         do {
             let repoTag: String
-            if isOther {
+            if isNoRepo {
+                repoTag = "" // scratch task: dispatch runs it in a throwaway dir
+            } else if isOther {
                 guard let path = resolvedRepoPath else {
                     throw NSError(domain: "AgentTasks", code: 4,
                                   userInfo: [NSLocalizedDescriptionKey: "Choose a folder first"])
@@ -654,7 +665,8 @@ struct AddTaskSheet: View {
             }
 
             _ = try await Task.detached { [listName, agent, notes, priority, includeAuto] in
-                var args = ["add", "--list", listName, "--tag", agent, "--tag", repoTag]
+                var args = ["add", "--list", listName, "--tag", agent]
+                if !repoTag.isEmpty { args += ["--tag", repoTag] }
                 if includeAuto { args += ["--tag", "auto"] }
                 if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     args += ["--notes", notes]
