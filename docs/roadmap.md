@@ -1360,7 +1360,22 @@ local (on-device), a CLI lane, or a BYOM llm lane:
 - NOT LLM seats: screenshots OCR (Vision) and audio transcription
   (Speech) — deterministic frameworks, stay on-device.
 
-## 52. Model-preference tiers ("fast" / "thinking" / "complex") — TODO (user's idea 2026-07-17)
+## 52. Model-preference tiers ("fast" / "thinking" / "complex") — PARTIAL (auto pool 2026-08-14)
+
+**Shipped:** `[auto]` with no agent tag walks `modelPrefs.auto` (default
+`hermes`, `cursor`, `claude`, `antigravity`) and takes the first available
+worker. Named lane tags still pin. `triage` / `local` / `doctor` are
+excluded. Availability = command/llm, under cap, gates pass, worktree
+lanes need a workdir tag. Repo-tagged tasks prefer worktree lanes.
+Exhausted pool stays queued. Claim stamps the chosen lane so retries pin.
+
+**Still TODO:** Hermes-style category arrays `"fast"` / `"thinking"` /
+`"complex"` for seats that don't name a provider (triage classifier,
+digest/suggest). Walk on connection/auth failure to the next entry.
+Budget-tracker bandwidth as an availability signal for premium lanes
+(see plan after this ship). Design questions remaining: per-seat
+defaults vs a tag (`[fast]`)? does a *failed* run retry the next
+preference, and how does that interact with maxRetries?
 
 Hermes-style ordered model preferences: config maps task categories to
 preference arrays, e.g. `"modelPrefs": {"fast": ["local", "homelab-7b"],
@@ -1373,9 +1388,7 @@ Categories could come from the seat (triage = "fast" by default) or from
 an agent judgment call (a classifier already routes tasks; it can pick the
 tier too, keeping the CLI dumb). Builds directly on #51's profiles; the
 fallback walk belongs in the bridge/dispatcher, the tier *choice* belongs
-to agents. Design questions: per-seat defaults vs a tag (`[fast]`)?
-does dispatch retry a failed lane on the next preference, and how does
-that interact with maxRetries?
+to agents.
 
 ## 53. Bookmarks: categorize/review + follow-up research tag — C ✅ DONE 2026-07-17; A/B still MAYBE (user's capture 2026-07-16)
 

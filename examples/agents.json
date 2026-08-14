@@ -50,6 +50,41 @@
       "worktree": false,
       "timeoutMinutes": 5,
       "maxConcurrent": 1
+    },
+    "hermes": {
+      "command": [
+        "hermes",
+        "-z",
+        "{prompt}",
+        "--provider",
+        "ollama-launch",
+        "-m",
+        "qwen3.6-35b",
+        "--yolo",
+        "--accept-hooks",
+        "-t",
+        "homeassistant,hermes-cli"
+      ],
+      "promptTemplate": "You have been dispatched a task from AgentTasks (Apple Reminders).\nTask id: {id}\nList: {list}\nTitle: {title}\nNotes: {notes}\nYou are the House teammate. Prefer Home Assistant tools (ha_list_entities, ha_get_state, ha_call_service). Turning lights off is allowed unattended. For climate, locks, covers, alarms, or anything irreversible: apple-tasks approve request first and wait for approved. Never print tokens or .env values.\nDo the work described by the task. When finished, record a 1-3 sentence outcome summary: apple-tasks update {id} --append-notes \"<what you did>\"\nIf your work produced a PR, commit, or file, link it:\napple-tasks update {id} --url \"<link>\"\nthen mark it done by running:\napple-tasks complete {id}\nand remove the dispatched marker: apple-tasks update {id} --remove-tag {claimTag}\n",
+      "worktree": false,
+      "timeoutMinutes": 20,
+      "maxConcurrent": 1
+    },
+    "doctor": {
+      "command": [
+        "agent",
+        "-p",
+        "{prompt}",
+        "--force",
+        "--trust",
+        "--approve-mcps",
+        "--sandbox",
+        "disabled"
+      ],
+      "promptTemplate": "You have been dispatched a task from AgentTasks (Apple Reminders).\nTask id: {id}\nList: {list}\nTitle: {title}\nNotes: {notes}\nThis is a HOME DOCTOR pass (local Cloud Doctor). Inspect, do not wander:\n1. apple-tasks doctor\n2. apple-tasks dispatches --status failed\n3. Read ~/.hermes/gateway_state.json and ~/.hermes/cron/jobs.json (never print secrets or .env values)\nClassify each issue as transient (one-off timeout, single 5xx) or salient (auth 403, HA reconnect failed, TCC deny, missing binary).\nLook at this task's notes for the same salient signature from earlier passes.\nPolicy:\n- transient: append-notes, then complete this task so recurrence continues\n- salient first time: apple-tasks notify --push, append-notes with a one-line signature, complete\n- same salient signature already in notes: high confidence — if the fix is apple-mcp code, open a PR on the current worktree; if it is Hermes/HA config, create a [hermes][auto] follow-up task with the exact fix. Then complete this doctor task.\nDo not change Home Assistant entities on a doctor pass. Never rotate or print HASS_TOKEN / API keys.\nWhen finished, record a 1-3 sentence outcome summary: apple-tasks update {id} --append-notes \"<what you did>\"\nIf your work produced a PR, commit, or file, link it:\napple-tasks update {id} --url \"<link>\"\nthen mark it done by running:\napple-tasks complete {id}\nand remove the dispatched marker: apple-tasks update {id} --remove-tag {claimTag}\n",
+      "worktree": true,
+      "timeoutMinutes": 15,
+      "maxConcurrent": 1
     }
   },
   "triage": {
@@ -64,5 +99,8 @@
   "retryBackoffMinutes": 30,
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
-  "notifyOn": "failure"
+  "notifyOn": "failure",
+  "modelPrefs": {
+    "auto": ["hermes", "cursor", "claude", "antigravity"]
+  }
 }

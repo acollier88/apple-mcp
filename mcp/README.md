@@ -97,9 +97,10 @@ the query contains `@`), `contact_show`.
 Shortcuts can do), `notify` (macOS banner; `push: true` also sends via
 ntfy — respects the quiet-hours window in `notify.json`).
 
-**Dispatcher ops** — `dispatch_run` (dry-run by default; refuses recursive
-dispatch from agent-spawned sessions), `dispatch_list`, `run_log` — a
-supervisor agent can reap, retry, and read failure logs over MCP.
+**Dispatcher ops** — `dispatch_run` (dry-run by default; `[auto]` with no
+lane tag walks any available worker; refuses recursive dispatch from
+agent-spawned sessions), `dispatch_list`, `run_log` — a supervisor agent
+can reap, retry, and read failure logs over MCP.
 
 **Location** — `whereami` (this Mac, CoreLocation), `findmy_devices` /
 `findmy_locate` (AirTags via the optional FindMy.py sidecar — setup in
@@ -126,6 +127,6 @@ complete their reminders, `close_issues: true` closes issues for completed
 reminders; `dry_run` defaults TRUE from MCP).
 
 **Introspection** — `audit_log` (who did what, when, as whom), `doctor`
-(permission + config diagnostics).
+(permission + config diagnostics, including Hermes gateway / cron / Home Assistant).
 
 Full behavioral docs live in [`../cli/README.md`](../cli/README.md).

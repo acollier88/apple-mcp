@@ -1,0 +1,16 @@
+{
+  "id": "home-doctor",
+  "name": "Home Doctor",
+  "description": "Daily Cloud Doctor pass: inspect apple-tasks + Hermes + Home Assistant, notify on salient failures, PR or [hermes] follow-up only when the same signature repeats. EventKit has no hourly recurrence — daily at 08:00 is the standing schedule.",
+  "title": "Home Doctor: inspect Hermes, Home Assistant, and failed dispatches",
+  "notes": "Inspect only. Policy is injected by dispatch for [doctor] tasks.\n\nRead apple-tasks doctor, apple-tasks dispatches --status failed, ~/.hermes/gateway_state.json, and ~/.hermes/cron/jobs.json.\nNever print secrets or .env values. Do not toggle Home Assistant entities on this pass.\nComplete the task when the inspect finishes so the daily series rolls forward.",
+  "list": "Code Tasks",
+  "agent": "doctor",
+  "workdir": "apple-mcp",
+  "tags": [],
+  "priority": "none",
+  "includeAuto": true,
+  "dueTime": "08:00",
+  "dueOffsetDays": 0,
+  "recurrence": "FREQ=DAILY"
+}

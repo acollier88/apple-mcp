@@ -4,7 +4,7 @@ Starter configs — copy into `~/.config/apple-tasks/`, never commit your real o
 
 | File | Purpose |
 |------|---------|
-| `agents.json` | Dispatcher lanes: **cursor** (Cursor Agent CLI), claude, antigravity/agy, triage |
+| `agents.json` | Dispatcher lanes: **cursor**, **hermes** (House / Home Assistant), **doctor** (Home Doctor), claude, antigravity/agy, triage. `modelPrefs.auto` is the pool for `[auto]` with no provider tag. |
 
 ```bash
 mkdir -p ~/.config/apple-tasks

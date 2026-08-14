@@ -26,6 +26,7 @@ struct QueueTask: Codable, Identifiable, Hashable {
     /// Known agent lanes — prefer these over repo tags when labeling the row.
     static let knownAgents: Set<String> = [
         "cursor", "claude", "antigravity", "triage", "agy", "codex", "gemini", "byom",
+        "hermes", "doctor", "auto",
     ]
 
     var stableId: String { externalId ?? id }
@@ -535,7 +536,7 @@ struct AddTaskSheet: View {
     @State private var isSaving = false
     @State private var error: String?
 
-    private let agents = ["cursor", "claude", "antigravity"]
+    private let agents = ["auto", "cursor", "claude", "antigravity", "hermes"]
     private let priorities = ["none", "low", "medium", "high"]
 
     private var isOther: Bool { repoSelection == addTaskOtherRepo }
@@ -788,7 +789,8 @@ struct AddTaskSheet: View {
     }
 
     private var previewTitle: String {
-        var tags = [agent]
+        var tags: [String] = []
+        if agent.lowercased() != "auto" { tags.append(agent) }
         let repoTag = resolvedRepoTag
         if !repoTag.isEmpty { tags.append(repoTag) }
         if includeAuto { tags.append("auto") }
@@ -804,7 +806,9 @@ struct AddTaskSheet: View {
         title = recipe.title
         if let notes = recipe.notes { self.notes = notes }
         if let list = recipe.list, !list.isEmpty { listName = list }
-        if let agent = recipe.agent, agents.contains(agent) { self.agent = agent }
+        if let agent = recipe.agent, agents.contains(agent) || agent.lowercased() == "auto" {
+            self.agent = agent
+        }
         if let priority = recipe.priority, priorities.contains(priority) {
             self.priority = priority
         }
@@ -928,7 +932,8 @@ struct AddTaskSheet: View {
             }
             let addJSON = try await Task.detached {
                 [listName, agent, notes, priority, includeAuto, repoTag, trimmed, due, recurrence] in
-                var args = ["add", "--list", listName, "--tag", agent, "--tag", repoTag]
+                var args = ["add", "--list", listName, "--tag", repoTag]
+                if agent.lowercased() != "auto" { args += ["--tag", agent] }
                 if includeAuto { args += ["--tag", "auto"] }
                 if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     args += ["--notes", notes]

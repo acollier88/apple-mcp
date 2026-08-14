@@ -231,9 +231,15 @@ Every mutation is recorded to `~/.config/apple-tasks/apple-tasks.db` with
 timestamp and caller (`mcp`, `agent:<tag>`, or the parent process). Inspect
 with `apple-tasks log` / `apple-tasks dispatches`, or the `audit_log` MCP tool.
 
-`apple-tasks dispatch` finds open tasks tagged with a configured agent AND
-`[auto]`, marks them `[dispatched]`, and launches the agent with a prompt
-containing the task details and self-complete instructions. Config at
+`apple-tasks dispatch` finds open tasks tagged `[auto]`, marks them
+`[dispatched]`, and launches an agent with a prompt containing the task
+details and self-complete instructions. A leading tag that matches an
+`agents.json` lane (`[cursor]`, `[hermes]`, …) **pins** that provider.
+`[auto]` with no lane tag walks `modelPrefs.auto` and takes the first
+**available** worker (command/llm present, under `maxConcurrent`, gates
+pass; `worktree: true` lanes need a workdir tag). Classifier/ops lanes
+(`triage`, `local`, `doctor`) are never in the auto pool. If nothing is
+available the task stays queued — it is not `[failed]`. Config at
 `~/.config/apple-tasks/agents.json`:
 
 ```json
@@ -255,7 +261,8 @@ containing the task details and self-complete instructions. Config at
   "retryBackoffMinutes": 30,
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
-  "notifyOn": "failure"
+  "notifyOn": "failure",
+  "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] }
 }
 ```
 
@@ -264,7 +271,7 @@ directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
 `apple-tasks dispatch --dry-run` first.
 
-Starter config (includes **cursor**, claude, antigravity, triage):
+Starter config (includes **cursor**, **hermes**, **doctor**, claude, antigravity, triage):
 [`examples/agents.json`](../examples/agents.json).
 
 ### Supported agent CLIs
@@ -274,6 +281,8 @@ Any argv template works; these are the lanes the example config ships:
 | Tag | Binary | Notes |
 |-----|--------|--------|
 | `cursor` | [`agent`](https://cursor.com/docs/cli/overview) (Cursor Agent CLI) | `-p --force --trust --approve-mcps --sandbox disabled`. Auth: `agent login` or `CURSOR_API_KEY`. Install puts the binary in `~/.local/bin` (not on the default GUI/launchd PATH) — the dispatcher prepends that dir automatically. |
+| `hermes` | [`hermes`](https://github.com/nousresearch/hermes-agent) | House lane: `hermes -z` pinned to the local `ollama-launch` provider + Home Assistant toolset. `worktree: false` (no git). Tag `[hermes][auto]`. |
+| `doctor` | `agent` (same CLI as cursor) | Home Doctor: inspect `apple-tasks doctor` + Hermes gateway/cron, notify on salient failures, PR or `[hermes]` follow-up only on repeat. `worktree: true`, 15 min. Tag `[doctor][apple-mcp][auto]`. Recurrence is daily — EventKit has no hourly FREQ. |
 | `claude` | `claude` | `-p --permission-mode acceptEdits` |
 | `antigravity` | `agy` | sandbox + skip-permissions |
 | `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
@@ -294,11 +303,12 @@ make uninstall-digest
 ```
 
 `install-agent` writes a LaunchAgent that runs `apple-tasks dispatch` with a
-PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` usually
+PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` / `hermes` usually
 live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
 before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
 `~/.config/apple-tasks/logs/dispatch.*.log`. `doctor` reports
-`launchAgent` / `cursorAgent` / `agentsConfig`.
+`launchAgent` / `cursorAgent` / `hermes` / `hermesGateway` / `hermesCron` /
+`homeAssistant` / `agentsConfig`.
 
 The optional `triage` block runs the [on-demand inbox
 triage](#on-demand-triage-no-loop) at the start of every dispatch cycle:
@@ -311,6 +321,10 @@ is reported but never blocks the dispatch pass.
 Hardening features (all verified end-to-end; see [docs/dispatcher-v2.md](../docs/dispatcher-v2.md) for
 the design):
 
+- **Auto pool** (`modelPrefs.auto`, default hermes → cursor → claude →
+  antigravity) — `[auto]` with no provider tag walks available workers.
+  Named lane tags still pin. Repo-tagged tasks prefer `worktree: true`
+  lanes. Exhausted pool stays queued, never `[failed]`.
 - **Context gates** (per-agent `conditions`: `location` — a named entry in
   `places`, checked against a whereami fix; `power` — `"ac"`/`"battery"` via
   pmset; `maxLoad` — 1-min load average cap) — a task failing a gate stays

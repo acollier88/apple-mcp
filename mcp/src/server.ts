@@ -1491,8 +1491,9 @@ server.registerTool(
   "dispatch_run",
   {
     description:
-      "Run the agent dispatcher: scan open agent-tagged [auto] tasks, launch configured agents, reap stale " +
-      "runs, GC worktrees. dry_run defaults to TRUE (reports what would run, launches nothing); a real run " +
+      "Run the agent dispatcher: scan open [auto] tasks, launch configured agents, reap stale " +
+      "runs, GC worktrees. A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto " +
+      "(any available worker). dry_run defaults to TRUE (reports what would run, launches nothing); a real run " +
       "(dry_run: false) spawns agent processes, waits for them, and consumes their session budgets. " +
       "reap_only reaps + GCs without dispatching.",
     inputSchema: {
@@ -1788,8 +1789,8 @@ server.registerTool(
   {
     description:
       "Diagnose apple-tasks setup for THIS host process: Reminders/Calendar permission status, " +
-      "private native-tags helper availability, notes-scan watermark. TCC grants are per-host-process, " +
-      "so run this when tools fail unexpectedly.",
+      "dispatcher config, Hermes gateway / cron / Home Assistant, private native-tags helper, " +
+      "notes-scan watermark. TCC grants are per-host-process, so run this when tools fail unexpectedly.",
     inputSchema: {},
     // DoctorOut (Sources/AppleTasks/Doctor.swift)
     outputSchema: {
@@ -1811,6 +1812,13 @@ server.registerTool(
       notesScanWatermark: z.string().optional(),
       speech: z.string(),
       fullDiskAccess: z.string(),
+      agentsConfig: z.string(),
+      cursorAgent: z.string(),
+      launchAgent: z.string(),
+      hermes: z.string(),
+      hermesGateway: z.string(),
+      hermesCron: z.string(),
+      homeAssistant: z.string(),
       automationNote: z.string(),
     },
   },

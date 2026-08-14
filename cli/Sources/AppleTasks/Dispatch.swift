@@ -142,6 +142,10 @@ struct AgentsConfig: Codable {
     var keepFailedWorktreeDays: Int?
     /// macOS notification on run finish: "failure" (default) | "all" | "none".
     var notifyOn: String?
+    /// Hermes-style preference lists (IDEAS #52). `auto` is the ordered pool
+    /// for tasks tagged `[auto]` with no matching agent tag. Other keys
+    /// (`fast` / `thinking` / `complex`) are reserved for later seats.
+    var modelPrefs: [String: [String]]?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -178,6 +182,37 @@ struct AgentsConfig: Codable {
     apple-tasks complete {id}
     and remove the dispatched marker: apple-tasks update {id} --remove-tag {claimTag}
     """
+
+    /// Lanes never chosen for `[auto]`-only routing (classifiers / ops).
+    static let autoPoolExcluded: Set<String> = ["triage", "local", "doctor"]
+
+    /// Default walk when `modelPrefs.auto` is absent: local House first, then premium.
+    static let autoPoolDefaultOrder = ["hermes", "cursor", "claude", "antigravity"]
+
+    /// Worker lanes that `[auto]` with no provider tag may take, in preference order.
+    /// `preferWorktree` puts `worktree: true` lanes first so a repo-tagged task
+    /// prefers an isolated coding agent over House (hermes).
+    func autoPool(preferWorktree: Bool = false) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        let seeds: [String]
+        if let listed = modelPrefs?["auto"], !listed.isEmpty {
+            seeds = listed
+        } else {
+            seeds = Self.autoPoolDefaultOrder + agents.keys.sorted()
+        }
+        for raw in seeds {
+            let t = raw.lowercased()
+            guard agents[t] != nil,
+                  !Self.autoPoolExcluded.contains(t),
+                  seen.insert(t).inserted else { continue }
+            out.append(t)
+        }
+        guard preferWorktree else { return out }
+        let isolated = out.filter { agents[$0]?.worktree == true }
+        let rest = out.filter { agents[$0]?.worktree != true }
+        return isolated + rest
+    }
 }
 
 // IDEAS #13: multi-Mac claim protocol. Tasks sync via iCloud but each Mac
@@ -219,9 +254,10 @@ enum ClaimTags {
 struct Dispatch: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: """
-        Find open agent-tagged tasks and launch the configured agent for each. \
-        Config: ~/.config/apple-tasks/agents.json. Dedupe via the dispatch \
-        ledger + a [dispatched] tag. v1 runs tasks sequentially.
+        Find open [auto] tasks and launch a configured agent for each. \
+        A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto \
+        (any available worker). Config: ~/.config/apple-tasks/agents.json. \
+        Dedupe via the dispatch ledger + a [dispatched] tag.
         """
     )
 
@@ -397,12 +433,21 @@ struct Dispatch: AsyncParsableCommand {
             let lowerTags = Set(parsed.tags.map { $0.lowercased() })
             let taskId = reminder.calendarItemExternalIdentifier ?? reminder.calendarItemIdentifier
 
-            guard let agentTag = parsed.tags.first(where: { config.agents[$0.lowercased()] != nil })?.lowercased(),
-                  let agent = config.agents[agentTag] else { continue }
-            if let onlyAgent, agentTag != onlyAgent.lowercased() { continue }
+            // Named lane tag pins that provider. `[auto]` with no matching
+            // agent tag walks modelPrefs.auto (any available worker).
+            let namedAgent = parsed.tags.first(where: {
+                config.agents[$0.lowercased()] != nil
+            })?.lowercased()
+            let fromAutoPool = namedAgent == nil && lowerTags.contains("auto")
+            if namedAgent == nil && !fromAutoPool { continue }
+            if let onlyAgent {
+                guard let namedAgent, namedAgent == onlyAgent.lowercased() else { continue }
+            }
             if requireAuto && !lowerTags.contains("auto") { continue }
             // Any Mac's claim blocks re-dispatch (IDEAS #13).
             if parsed.tags.contains(where: ClaimTags.isDispatched) { continue }
+
+            let reportAgent = namedAgent ?? "auto"
 
             // Not due yet: stays queued until its due time. This is what
             // makes recurrence useful for agent work (IDEAS #36) — completing
@@ -414,7 +459,7 @@ struct Dispatch: AsyncParsableCommand {
                let dueDate = Calendar.current.date(from: comps),
                dueDate > Date() {
                 if dryRun {
-                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
                                                   cwd: nil, action: "scheduled: not due until \(Dates.formatDue(reminder.dueDateComponents) ?? "?") — stays queued",
                                                   exitCode: nil, runLog: nil, worktree: nil))
                 }
@@ -439,28 +484,12 @@ struct Dispatch: AsyncParsableCommand {
 
             if AuditDB.shared.hasActiveDispatch(taskId: taskId) { continue }
 
-            // Per-agent cap: ledger 'running' rows + specs already queued this
-            // pass. A full agent is skipped; the next dispatch picks it up.
-            if let cap = agent.maxConcurrent,
-               AuditDB.shared.activeDispatchCount(agent: agentTag)
-                   + specsPerAgent[agentTag, default: 0] >= cap { continue }
-
-            // Context gates (IDEAS #22): a failed gate leaves the task
-            // queued untouched — reconsidered next pass, never [failed].
-            if let conditions = agent.conditions,
-               let reason = await gates.gateReason(conditions, config: config) {
-                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
-                                              cwd: nil, action: "gated: \(reason) — stays queued",
-                                              exitCode: nil, runLog: nil, worktree: nil))
-                continue
-            }
-
             // Subtask dependency gate (IDEAS #47): a parent stays queued
             // until every open subtask completes — subtasks dispatch on
             // their own agent tags like any other task.
             let subtasksOpen = openSubtaskCount(reminder.calendarItemExternalIdentifier)
             if subtasksOpen > 0 {
-                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
                                               cwd: nil,
                                               action: "gated: \(subtasksOpen) open subtask\(subtasksOpen == 1 ? "" : "s") — stays queued",
                                               exitCode: nil, runLog: nil, worktree: nil))
@@ -471,6 +500,57 @@ struct Dispatch: AsyncParsableCommand {
                 .compactMap { config.workdirs?[$0.lowercased()] }
                 .first
                 .map { NSString(string: $0).expandingTildeInPath }
+
+            let pool: [String]
+            if let namedAgent {
+                pool = [namedAgent]
+            } else {
+                pool = config.autoPool(preferWorktree: cwd != nil)
+            }
+
+            var skipNotes: [String] = []
+            var agentTag: String?
+            var agent: AgentsConfig.Agent?
+            for tag in pool {
+                guard let candidate = config.agents[tag] else { continue }
+                if let reason = await Self.laneSkipReason(
+                    tag: tag, agent: candidate, cwd: cwd,
+                    specsPerAgent: specsPerAgent, gates: gates, config: config
+                ) {
+                    skipNotes.append("\(tag): \(reason)")
+                    continue
+                }
+                agentTag = tag
+                agent = candidate
+                break
+            }
+            guard let agentTag, let agent else {
+                if let namedAgent, let note = skipNotes.first {
+                    let reason = Self.stripLanePrefix(note)
+                    if reason == "at cap" { continue }
+                    if reason.hasPrefix("gated:") {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: namedAgent,
+                                                      cwd: cwd, action: "\(reason) — stays queued",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    } else if reason == "no command or llm" {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: namedAgent,
+                                                      cwd: nil,
+                                                      action: "skipped: agent '\(namedAgent)' has neither \"command\" nor \"llm\" in agents.json",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    } else {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: namedAgent,
+                                                      cwd: cwd, action: "queued: \(reason) — stays queued",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    }
+                    continue
+                }
+                let why = skipNotes.isEmpty ? "auto pool empty" : skipNotes.joined(separator: "; ")
+                reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: "auto",
+                                              cwd: cwd,
+                                              action: "queued: no available provider (\(why)) — stays queued",
+                                              exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            }
 
             var prompt = (agent.promptTemplate ?? AgentsConfig.defaultPromptTemplate)
                 .replacingOccurrences(of: "{id}", with: taskId)
@@ -519,7 +599,8 @@ struct Dispatch: AsyncParsableCommand {
             let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
 
             if dryRun {
-                let action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
+                var action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
+                if fromAutoPool { action += " via \(agentTag) (auto pool)" }
                 reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
                                               cwd: cwd, action: action, exitCode: nil,
                                               runLog: nil, worktree: nil))
@@ -537,6 +618,11 @@ struct Dispatch: AsyncParsableCommand {
             // a retry sheds its [failed] tag here. Written after the claim so
             // a crash between the two can't strand the tag with no ledger row.
             var tags = parsed.tags.filter { !ClaimTags.isFailed($0) }
+            // Stamp the chosen lane so retries and the human-visible title
+            // pin the provider that actually ran (leftmost matching tag wins).
+            if fromAutoPool, !tags.contains(where: { $0.lowercased() == agentTag }) {
+                tags.insert(agentTag, at: 0)
+            }
             tags.append(ClaimTags.dispatched)
             reminder.title = Tags.compose(tags: tags, title: parsed.title)
             do {
@@ -666,6 +752,38 @@ struct Dispatch: AsyncParsableCommand {
         let status: String // succeeded | failed | timeout | spawn failed
         let exitCode: Int32?
         let spawnError: String?
+    }
+
+    /// nil = this lane can take the task this pass.
+    private static func laneSkipReason(
+        tag: String,
+        agent: AgentsConfig.Agent,
+        cwd: String?,
+        specsPerAgent: [String: Int],
+        gates: GateContext,
+        config: AgentsConfig
+    ) async -> String? {
+        guard agent.commandTemplate(tag: tag) != nil else {
+            return "no command or llm"
+        }
+        if let cap = agent.maxConcurrent,
+           AuditDB.shared.activeDispatchCount(agent: tag)
+               + specsPerAgent[tag, default: 0] >= cap {
+            return "at cap"
+        }
+        if let conditions = agent.conditions,
+           let reason = await gates.gateReason(conditions, config: config) {
+            return "gated: \(reason)"
+        }
+        if agent.worktree == true, cwd == nil {
+            return "worktree needs a workdir tag"
+        }
+        return nil
+    }
+
+    private static func stripLanePrefix(_ note: String) -> String {
+        guard let idx = note.firstIndex(of: ":") else { return note }
+        return String(note[note.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
     }
 
     /// Runs one agent process to completion. No EventKit, no AuditDB — safe
