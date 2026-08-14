@@ -262,7 +262,8 @@ available the task stays queued — it is not `[failed]`. Config at
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
   "notifyOn": "failure",
-  "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] }
+  "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] },
+  "autoBudget": "skipRed"
 }
 ```
 
@@ -325,6 +326,14 @@ the design):
   antigravity) — `[auto]` with no provider tag walks available workers.
   Named lane tags still pin. Repo-tagged tasks prefer `worktree: true`
   lanes. Exhausted pool stays queued, never `[failed]`.
+- **Budget bandwidth** (`autoBudget`: `"skipRed"` default, `"skipYellow"`,
+  `"off"`) — `[auto]`-only walks read `~/.config/budget-tracker/latest.json`
+  (15 min max age; missing/stale = fail open). Cursor and Antigravity each
+  have **two independent percentage lanes** (`combine: "any"`): Cursor
+  models vs Other models, Gemini vs Claude+GPT — the provider is skipped
+  only when every lane is over the threshold. Claude session+weekly is
+  stacked (`combine: "all"`). Named tags ignore bandwidth. Yellow sorts
+  after green when still eligible.
 - **Context gates** (per-agent `conditions`: `location` — a named entry in
   `places`, checked against a whereami fix; `power` — `"ac"`/`"battery"` via
   pmset; `maxLoad` — 1-min load average cap) — a task failing a gate stays

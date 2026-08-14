@@ -102,5 +102,6 @@
   "notifyOn": "failure",
   "modelPrefs": {
     "auto": ["hermes", "cursor", "claude", "antigravity"]
-  }
+  },
+  "autoBudget": "skipRed"
 }

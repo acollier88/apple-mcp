@@ -146,6 +146,9 @@ struct AgentsConfig: Codable {
     /// for tasks tagged `[auto]` with no matching agent tag. Other keys
     /// (`fast` / `thinking` / `complex`) are reserved for later seats.
     var modelPrefs: [String: [String]]?
+    /// How `[auto]`-only routing treats Budget Tracker bandwidth:
+    /// `"skipRed"` (default) | `"skipYellow"` | `"off"`. Named lane tags ignore this.
+    var autoBudget: String?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -409,6 +412,8 @@ struct Dispatch: AsyncParsableCommand {
         var specs: [RunSpec] = []
         var specsPerAgent: [String: Int] = [:]
         let gates = GateContext() // probes cached across candidates this pass
+        let budgetMode = AutoBudgetMode.parse(config.autoBudget)
+        let bandwidth: BudgetBandwidth? = budgetMode == .off ? nil : BudgetBandwidth.load()
 
         // IDEAS #47: open-subtask counts per parent externalId, via ONE
         // private-helper call, computed lazily when the first candidate
@@ -505,7 +510,9 @@ struct Dispatch: AsyncParsableCommand {
             if let namedAgent {
                 pool = [namedAgent]
             } else {
-                pool = config.autoPool(preferWorktree: cwd != nil)
+                var walk = config.autoPool(preferWorktree: cwd != nil)
+                if let bandwidth { walk = bandwidth.ordered(walk) }
+                pool = walk
             }
 
             var skipNotes: [String] = []
@@ -515,7 +522,8 @@ struct Dispatch: AsyncParsableCommand {
                 guard let candidate = config.agents[tag] else { continue }
                 if let reason = await Self.laneSkipReason(
                     tag: tag, agent: candidate, cwd: cwd,
-                    specsPerAgent: specsPerAgent, gates: gates, config: config
+                    specsPerAgent: specsPerAgent, gates: gates, config: config,
+                    fromAutoPool: fromAutoPool, bandwidth: bandwidth, budgetMode: budgetMode
                 ) {
                     skipNotes.append("\(tag): \(reason)")
                     continue
@@ -761,7 +769,10 @@ struct Dispatch: AsyncParsableCommand {
         cwd: String?,
         specsPerAgent: [String: Int],
         gates: GateContext,
-        config: AgentsConfig
+        config: AgentsConfig,
+        fromAutoPool: Bool,
+        bandwidth: BudgetBandwidth?,
+        budgetMode: AutoBudgetMode
     ) async -> String? {
         guard agent.commandTemplate(tag: tag) != nil else {
             return "no command or llm"
@@ -777,6 +788,10 @@ struct Dispatch: AsyncParsableCommand {
         }
         if agent.worktree == true, cwd == nil {
             return "worktree needs a workdir tag"
+        }
+        if fromAutoPool, let bandwidth,
+           let reason = bandwidth.skipReason(agentTag: tag, mode: budgetMode) {
+            return reason
         }
         return nil
     }
