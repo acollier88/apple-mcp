@@ -26,7 +26,7 @@ struct QueueTask: Codable, Identifiable, Hashable {
     /// Known agent lanes — prefer these over repo tags when labeling the row.
     static let knownAgents: Set<String> = [
         "cursor", "claude", "antigravity", "triage", "agy", "codex", "gemini", "byom",
-        "hermes", "doctor", "auto",
+        "hermes", "doctor", "heal", "auto",
     ]
 
     var stableId: String { externalId ?? id }

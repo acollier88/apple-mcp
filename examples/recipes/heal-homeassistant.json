@@ -1,0 +1,13 @@
+{
+  "id": "heal-homeassistant",
+  "name": "Heal Home Assistant",
+  "description": "Host-ops heal: start the home-lab compose stack and re-probe HA. Created automatically by doctor --enqueue-heals when the HA HTTP API is down.",
+  "title": "Heal Home Assistant API",
+  "notes": "heal-signature: homeassistant\n\nHA is the `homeassistant` Docker service in ~/Documents/home-lab/compose.yaml (port 8123).\ncd ~/Documents/home-lab && docker compose ps && docker compose up -d\nRe-probe with apple-tasks doctor. If HASS_URL is the wrong origin, set it in ~/.hermes/.env (do not print or rotate HASS_TOKEN) and restart the Hermes gateway.\nNever toggle Home Assistant entities. Never print tokens. Do not call dispatch_run.",
+  "list": "Code Tasks",
+  "agent": "heal",
+  "workdir": "home-lab",
+  "tags": [],
+  "priority": "high",
+  "includeAuto": true
+}

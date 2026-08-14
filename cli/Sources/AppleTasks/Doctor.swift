@@ -24,9 +24,12 @@ struct DoctorOut: Codable {
     let hermes: String
     let hermesGateway: String
     let hermesCron: String
+    let hermesHaLink: String
     let homeAssistant: String
     let budget: String
     let automationNote: String
+    let issues: [DoctorIssue]
+    let heals: HealReport?
 
     struct PrivateHelperStatus: Codable {
         let present: Bool
@@ -35,10 +38,36 @@ struct DoctorOut: Codable {
     }
 }
 
+struct DoctorIssue: Codable {
+    let system: String
+    let severity: String
+    let summary: String
+    let signature: String
+}
+
+struct HealReport: Codable {
+    let list: String
+    let actions: [HealAction]
+}
+
+struct HealAction: Codable {
+    let system: String
+    let action: String
+    let taskId: String?
+    let title: String?
+    let reason: String?
+}
+
 struct Doctor: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Report permission and configuration status for THIS host process, plus Hermes gateway / cron / Home Assistant and Budget Tracker bandwidth. TCC grants are per-host: Terminal working proves nothing about an MCP host app."
+        abstract: "Report permission and configuration status for THIS host process, plus independent Hermes and Home Assistant healthchecks and Budget Tracker bandwidth. With --enqueue-heals, create [heal] tasks for unhealthy systems so launchd dispatch can run specialist lanes. TCC grants are per-host: Terminal working proves nothing about an MCP host app."
     )
+
+    @Flag(name: .customLong("enqueue-heals"), help: "Create one [heal][auto] task per unhealthy system (deduped). Launchd dispatch picks them up — this command does not spawn agents.")
+    var enqueueHeals = false
+
+    @Option(name: .customLong("list"), help: "Reminders list for heal tasks (default: Code Tasks).")
+    var listName: String = "Code Tasks"
 
     private static func describe(_ status: EKAuthorizationStatus) -> String {
         switch status {
@@ -183,17 +212,29 @@ struct Doctor: AsyncParsableCommand {
         return String(flat.prefix(limit - 1)) + "…"
     }
 
-    /// True when ~/.hermes/.env has a non-empty KEY= value. Never returns the value.
-    private static func dotenvHasKey(_ key: String) -> Bool {
+    /// Read a ~/.hermes/.env value. Callers must not emit secrets (HASS_TOKEN, JWT, keys).
+    private static func dotenvValue(_ key: String) -> String? {
         let url = hermesHome().appendingPathComponent(".env")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         for line in text.split(whereSeparator: \.isNewline) {
             let t = line.trimmingCharacters(in: .whitespaces)
             if t.isEmpty || t.hasPrefix("#") { continue }
             guard t.hasPrefix("\(key)=") else { continue }
-            return !t.dropFirst(key.count + 1).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            var value = String(t.dropFirst(key.count + 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (value.hasPrefix("\"") && value.hasSuffix("\""))
+                || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                value = String(value.dropFirst().dropLast())
+            }
+            return value.isEmpty ? nil : value
         }
-        return false
+        return nil
+    }
+
+    /// Host:port only — never query string or userinfo.
+    private static func displayOrigin(_ raw: String) -> String {
+        guard let url = URL(string: raw), let host = url.host else { return "unparseable-url" }
+        let port = url.port.map { ":\($0)" } ?? ""
+        return "\(url.scheme ?? "http")://\(host)\(port)"
     }
 
     private static func jsonObject(at url: URL) -> [String: Any]? {
@@ -254,10 +295,15 @@ struct Doctor: AsyncParsableCommand {
         }
         var bits: [String] = []
         if let state = obj["gateway_state"] as? String { bits.append(state) }
-        if let pid = obj["pid"] as? Int { bits.append("pid \(pid)") }
-        else if let pid = obj["pid"] as? NSNumber { bits.append("pid \(pid.intValue)") }
+        let pidValue: Int? = (obj["pid"] as? Int) ?? (obj["pid"] as? NSNumber)?.intValue
+        if let pidValue {
+            bits.append("pid \(pidValue)")
+            if kill(pid_t(pidValue), 0) != 0 {
+                bits.append("process not running")
+            }
+        }
         if let platforms = obj["platforms"] as? [String: Any] {
-            let names = platforms.keys.sorted()
+            let names = platforms.keys.sorted().filter { $0 != "homeassistant" }
             for name in names {
                 guard let plat = platforms[name] as? [String: Any] else { continue }
                 let state = plat["state"] as? String ?? "unknown"
@@ -266,6 +312,9 @@ struct Doctor: AsyncParsableCommand {
                 } else {
                     bits.append("\(name)=\(state)")
                 }
+            }
+            if platforms["homeassistant"] != nil {
+                bits.append("haAdapter=see hermesHaLink")
             }
         }
         return bits.isEmpty ? "gateway_state.json present but empty" : bits.joined(separator: "; ")
@@ -287,32 +336,78 @@ struct Doctor: AsyncParsableCommand {
                 ?? (job["id"] as? String)
                 ?? "job"
             let status = job["last_status"] as? String ?? "never"
+            let provider = (job["provider"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            var line = "\(name): \(status)"
+            if let provider { line += " provider=\(provider)" }
             if let err = job["last_error"] as? String, !err.isEmpty {
-                bits.append("\(name): \(status) (\(clip(err)))")
-            } else {
-                bits.append("\(name): \(status)")
+                line += " (\(clip(err)))"
             }
+            bits.append(line)
         }
         return bits.joined(separator: "; ")
     }
 
-    private static func homeAssistantStatus() -> String {
-        let token = dotenvHasKey("HASS_TOKEN")
-        var bits = [token ? "HASS_TOKEN set" : "HASS_TOKEN missing"]
-        bits.append(dotenvHasKey("HASS_URL") ? "HASS_URL set" : "HASS_URL default")
+    /// Hermes gateway's Home Assistant *adapter* only — not HA core health.
+    private static func hermesHaLinkStatus() -> String {
         let url = hermesHome().appendingPathComponent("gateway_state.json")
-        if let obj = jsonObject(at: url),
-           let platforms = obj["platforms"] as? [String: Any],
-           let ha = platforms["homeassistant"] as? [String: Any] {
-            let state = ha["state"] as? String ?? "unknown"
-            if let err = ha["error_message"] as? String, !err.isEmpty {
-                bits.append("platform \(state) (\(clip(err)))")
-            } else {
-                bits.append("platform \(state)")
-            }
-        } else {
-            bits.append("platform not in gateway_state")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return "unknown (gateway not running)"
         }
+        guard let obj = jsonObject(at: url),
+              let platforms = obj["platforms"] as? [String: Any],
+              let ha = platforms["homeassistant"] as? [String: Any] else {
+            return "adapter not in gateway_state"
+        }
+        let state = ha["state"] as? String ?? "unknown"
+        if let err = ha["error_message"] as? String, !err.isEmpty {
+            return "\(state) (\(clip(err)))"
+        }
+        return state
+    }
+
+    /// Home Assistant core via HTTP /api/. Independent of the Hermes adapter.
+    private static func homeAssistantStatus() -> String {
+        let token = dotenvValue("HASS_TOKEN")
+        let rawURL = dotenvValue("HASS_URL") ?? "http://homeassistant.local:8123"
+        var bits = ["origin \(displayOrigin(rawURL))"]
+        bits.append(token == nil ? "HASS_TOKEN missing" : "HASS_TOKEN set")
+
+        guard var api = URL(string: rawURL) else {
+            bits.append("unreachable (bad HASS_URL)")
+            return bits.joined(separator: "; ")
+        }
+        if api.path.isEmpty || api.path == "/" {
+            api.appendPathComponent("api")
+        } else if !api.path.hasSuffix("/api") && !api.path.hasSuffix("/api/") {
+            api.appendPathComponent("api")
+        }
+
+        var request = URLRequest(url: api, timeoutInterval: 3)
+        request.httpMethod = "GET"
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let sem = DispatchSemaphore(value: 0)
+        var probe = "probe failed"
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { sem.signal() }
+            if let error {
+                probe = "unreachable (\(clip(error.localizedDescription, limit: 80)))"
+                return
+            }
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 200 {
+                probe = "api ok"
+            } else if code == 401 {
+                probe = "reachable (HTTP 401 — token rejected)"
+            } else {
+                probe = "reachable (HTTP \(code))"
+            }
+            _ = data
+        }.resume()
+        _ = sem.wait(timeout: .now() + 4)
+        bits.append(probe)
         return bits.joined(separator: "; ")
     }
 
@@ -339,6 +434,22 @@ struct Doctor: AsyncParsableCommand {
     }
 
     func run() async throws {
+        let hermes = Self.hermesStatus()
+        let hermesGateway = Self.hermesGatewayStatus()
+        let hermesCron = Self.hermesCronStatus()
+        let hermesHaLink = Self.hermesHaLinkStatus()
+        let homeAssistant = Self.homeAssistantStatus()
+        let issues = Self.collectIssues(
+            hermes: hermes,
+            hermesGateway: hermesGateway,
+            hermesCron: hermesCron,
+            hermesHaLink: hermesHaLink,
+            homeAssistant: homeAssistant
+        )
+        var heals: HealReport?
+        if enqueueHeals {
+            heals = await Self.enqueueHeals(issues: issues, listName: listName)
+        }
         emit(DoctorOut(
             binary: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path,
             hostProcess: Self.hostProcessName(),
@@ -363,12 +474,219 @@ struct Doctor: AsyncParsableCommand {
             agentsConfig: Self.agentsConfigStatus(),
             cursorAgent: Self.cursorAgentStatus(),
             launchAgent: Self.launchAgentStatus(),
-            hermes: Self.hermesStatus(),
-            hermesGateway: Self.hermesGatewayStatus(),
-            hermesCron: Self.hermesCronStatus(),
-            homeAssistant: Self.homeAssistantStatus(),
+            hermes: hermes,
+            hermesGateway: hermesGateway,
+            hermesCron: hermesCron,
+            hermesHaLink: hermesHaLink,
+            homeAssistant: homeAssistant,
             budget: Self.budgetStatus(),
-            automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."
+            automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
+            issues: issues,
+            heals: heals
         ))
+    }
+
+    /// One issue per affected *system*. Hermes↔HA adapter is ignored when HA itself is down.
+    static func collectIssues(
+        hermes: String,
+        hermesGateway: String,
+        hermesCron: String,
+        hermesHaLink: String,
+        homeAssistant: String
+    ) -> [DoctorIssue] {
+        var issues: [DoctorIssue] = []
+        let haDown = homeAssistant.localizedCaseInsensitiveContains("unreachable")
+            || homeAssistant.localizedCaseInsensitiveContains("HASS_TOKEN missing")
+            || homeAssistant.localizedCaseInsensitiveContains("HTTP 401")
+            || homeAssistant.localizedCaseInsensitiveContains("bad HASS_URL")
+            || homeAssistant.localizedCaseInsensitiveContains("probe failed")
+        if haDown {
+            issues.append(DoctorIssue(
+                system: "homeassistant",
+                severity: "red",
+                summary: homeAssistant,
+                signature: "homeassistant"
+            ))
+        }
+
+        var hermesBits: [String] = []
+        if hermes.localizedCaseInsensitiveContains("not installed")
+            || hermes.localizedCaseInsensitiveContains("binary not on PATH") {
+            hermesBits.append(hermes)
+        }
+        if hermesGateway.localizedCaseInsensitiveContains("not running") {
+            hermesBits.append("gateway: \(hermesGateway)")
+        }
+        if let cronIssue = Self.cronHealSummary(hermesCron) {
+            hermesBits.append(cronIssue)
+        }
+        if !haDown, hermesHaLink.localizedCaseInsensitiveContains("retrying")
+            || hermesHaLink.localizedCaseInsensitiveContains("failed")
+            || hermesHaLink.localizedCaseInsensitiveContains("error") {
+            hermesBits.append("haAdapter: \(hermesHaLink)")
+        }
+        if !hermesBits.isEmpty {
+            issues.append(DoctorIssue(
+                system: "hermes",
+                severity: "red",
+                summary: hermesBits.joined(separator: "; "),
+                signature: "hermes"
+            ))
+        }
+
+        let failed = AuditDB.shared.dispatchRows(status: "failed", limit: 20)
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoBasic = ISO8601DateFormatter()
+        let recent = failed.filter { row in
+            if row.agent == "doctor" { return false }
+            let stamp = row.finishedAt ?? row.startedAt
+            let date = iso.date(from: stamp) ?? isoBasic.date(from: stamp)
+            guard let date else { return true }
+            return date >= cutoff
+        }
+        if !recent.isEmpty {
+            let lines = recent.prefix(8).map { row in
+                "#\(row.id) \(row.agent) \(row.summary ?? row.status)"
+            }
+            issues.append(DoctorIssue(
+                system: "dispatch",
+                severity: "yellow",
+                summary: lines.joined(separator: "; "),
+                signature: "dispatch"
+            ))
+        }
+        return issues
+    }
+
+    /// Copilot 403 on a job already pinned to ollama-launch is stale, not a heal.
+    private static func cronHealSummary(_ cron: String) -> String? {
+        guard cron.localizedCaseInsensitiveContains(": error")
+                || cron.localizedCaseInsensitiveContains("last_error") else {
+            return nil
+        }
+        let staleCopilot = cron.localizedCaseInsensitiveContains("provider=ollama-launch")
+            && (cron.localizedCaseInsensitiveContains("403")
+                || cron.localizedCaseInsensitiveContains("copilot"))
+        if staleCopilot { return nil }
+        if cron.hasPrefix("no ") || cron.hasPrefix("unreadable") || cron.hasPrefix("0 jobs") {
+            return nil
+        }
+        return "cron: \(cron)"
+    }
+
+    private static func enqueueHeals(issues: [DoctorIssue], listName: String) async -> HealReport {
+        guard !issues.isEmpty else {
+            return HealReport(list: listName, actions: [])
+        }
+        let store = Store()
+        do {
+            try await store.requestAccess()
+        } catch {
+            let reason = (error as? AppleTasksError)?.description ?? error.localizedDescription
+            return HealReport(list: listName, actions: issues.map {
+                HealAction(system: $0.system, action: "skipped", taskId: nil, title: nil, reason: reason)
+            })
+        }
+        let open = (await store.reminders(in: nil)).filter { !$0.isCompleted }
+        var actions: [HealAction] = []
+        for issue in issues {
+            let spec = Self.healSpec(issue)
+            if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
+                let parsed = Tags.parse(existing.title ?? "")
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: "exists",
+                    taskId: existing.calendarItemExternalIdentifier ?? existing.calendarItemIdentifier,
+                    title: parsed.title,
+                    reason: "open heal already queued"
+                ))
+                continue
+            }
+            do {
+                let out = try createTask(
+                    store: store,
+                    listName: listName,
+                    title: spec.title,
+                    tags: spec.tags,
+                    notes: spec.notes,
+                    due: nil,
+                    priority: .high,
+                    url: nil,
+                    recurrence: nil,
+                    mirrorNativeTags: true,
+                    auditCommand: "doctor-heal"
+                )
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: "created",
+                    taskId: out.id,
+                    title: out.title,
+                    reason: nil
+                ))
+            } catch {
+                let reason = (error as? AppleTasksError)?.description ?? error.localizedDescription
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: "skipped",
+                    taskId: nil,
+                    title: spec.title,
+                    reason: reason
+                ))
+            }
+        }
+        return HealReport(list: listName, actions: actions)
+    }
+
+    private static func isOpenHeal(_ reminder: EKReminder, signature: String) -> Bool {
+        let tags = Set(Tags.parse(reminder.title ?? "").tags.map { $0.lowercased() })
+        guard tags.contains("heal") else { return false }
+        let notes = reminder.notes ?? ""
+        if notes.contains("heal-signature: \(signature)") { return true }
+        return tags.contains(signature.lowercased())
+    }
+
+    private struct HealSpec {
+        let tags: [String]
+        let title: String
+        let notes: String
+    }
+
+    private static func healSpec(_ issue: DoctorIssue) -> HealSpec {
+        let header = "heal-signature: \(issue.signature)\n\nHome Doctor found: \(issue.summary)\n\n"
+        let footer = """
+
+Never toggle Home Assistant entities (lights, climate, locks, covers). Never print tokens or .env values. Do not call dispatch_run (recursive dispatch is blocked). Launchd will not re-dispatch this task until you complete it.
+When finished: apple-tasks update <id> --append-notes "<what you did>" then apple-tasks complete <id> and apple-tasks update <id> --remove-tag dispatched:\(ClaimTags.host)
+"""
+        switch issue.system {
+        case "homeassistant":
+            return HealSpec(
+                tags: ["heal", "home-lab", "auto"],
+                title: "Heal Home Assistant API",
+                notes: header + """
+HA is the `homeassistant` Docker service in ~/Documents/home-lab/compose.yaml (port 8123).
+cd ~/Documents/home-lab && docker compose ps && docker compose up -d
+Re-probe with apple-tasks doctor. If HASS_URL is the wrong origin, set it in ~/.hermes/.env (do not print or rotate HASS_TOKEN) and restart the Hermes gateway (`hermes gateway run --replace`).
+""" + footer
+            )
+        case "hermes":
+            return HealSpec(
+                tags: ["hermes", "heal", "auto"],
+                title: "Heal Hermes",
+                notes: header + """
+Hermes-side: start or replace the gateway (`hermes gateway run --replace` or the argv in ~/.hermes/gateway_state.json). If a cron job last_error is Copilot 403 and the job is not already --provider ollama-launch, pin provider ollama-launch and model qwen3.6-35b. Do not restart-loop the gateway while Home Assistant is down.
+""" + footer
+            )
+        default:
+            return HealSpec(
+                tags: ["heal", "apple-mcp", "auto"],
+                title: "Heal failed apple-tasks dispatches",
+                notes: header + """
+Inspect apple-tasks dispatches --status failed and the run log under ~/.config/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
+""" + footer
+            )
+        }
     }
 }

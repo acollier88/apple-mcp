@@ -187,7 +187,7 @@ struct AgentsConfig: Codable {
     """
 
     /// Lanes never chosen for `[auto]`-only routing (classifiers / ops).
-    static let autoPoolExcluded: Set<String> = ["triage", "local", "doctor"]
+    static let autoPoolExcluded: Set<String> = ["triage", "local", "doctor", "heal"]
 
     /// Default walk when `modelPrefs.auto` is absent: local House first, then premium.
     static let autoPoolDefaultOrder = ["hermes", "cursor", "claude", "antigravity"]
@@ -708,7 +708,8 @@ struct Dispatch: AsyncParsableCommand {
                 let spec = outcome.spec
                 let trailerText = trailer(ledgerId: spec.ledgerId, status: outcome.status,
                                           exitCode: outcome.exitCode, branch: spec.branch,
-                                          repo: spec.repo, logPath: spec.logPath)
+                                          repo: spec.repo, logPath: spec.logPath,
+                                          seat: outcome.seat)
                 AuditDB.shared.finishDispatch(id: spec.ledgerId,
                                               status: outcome.status == "succeeded" ? "succeeded" : outcome.status == "timeout" ? "timeout" : "failed",
                                               exitCode: outcome.exitCode ?? -1,
@@ -760,6 +761,7 @@ struct Dispatch: AsyncParsableCommand {
         let status: String // succeeded | failed | timeout | spawn failed
         let exitCode: Int32?
         let spawnError: String?
+        var seat: AgentSeat.Info?
     }
 
     /// nil = this lane can take the task this pass.
@@ -804,18 +806,26 @@ struct Dispatch: AsyncParsableCommand {
     /// Runs one agent process to completion. No EventKit, no AuditDB — safe
     /// to run concurrently; all recording happens serially in Phase C.
     private static func execute(_ spec: RunSpec) async -> RunOutcome {
+        var argv = spec.argv
+        var seat = AgentSeat.from(argv: argv)
+        let captureCursor = AgentSeat.isCursorAgent(argv)
+        if captureCursor {
+            argv = AgentSeat.withStreamJSON(argv)
+        }
+
         FileManager.default.createFile(atPath: spec.logPath, contents: nil)
         let logHandle = FileHandle(forWritingAtPath: spec.logPath)
         logHandle?.write(Data("""
         # dispatch #\(spec.ledgerId) \(ISO8601DateFormatter().string(from: Date()))
         # task \(spec.taskId): \(spec.title)
+        \(seat.logLine)
         # \(spec.argv.joined(separator: " "))\n\n
         """.utf8))
         defer { try? logHandle?.close() }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = spec.argv
+        process.arguments = argv
         if let runCwd = spec.runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
         var env = ProcessInfo.processInfo.environment
         for (name, value) in spec.env ?? [:] { env[name] = value }
@@ -824,16 +834,29 @@ struct Dispatch: AsyncParsableCommand {
         // live in ~/.local/bin or Homebrew. Prepend those so /usr/bin/env finds them.
         env["PATH"] = Self.agentSearchPath(existing: env["PATH"])
         process.environment = env
-        if let logHandle {
-            process.standardOutput = logHandle
+
+        let stdoutPipe: Pipe? = captureCursor ? Pipe() : nil
+        let filter: CursorNDJSONFilter?
+        if captureCursor, let logHandle, let stdoutPipe {
+            filter = CursorNDJSONFilter(log: logHandle)
+            process.standardOutput = stdoutPipe
             process.standardError = logHandle
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                filter?.ingest(handle.availableData)
+            }
+        } else {
+            filter = nil
+            if let logHandle {
+                process.standardOutput = logHandle
+                process.standardError = logHandle
+            }
         }
 
         do {
             try process.run()
         } catch {
             return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
-                              spawnError: error.localizedDescription)
+                              spawnError: error.localizedDescription, seat: seat)
         }
         var timedOut = false
         if let minutes = spec.timeoutMinutes {
@@ -851,17 +874,26 @@ struct Dispatch: AsyncParsableCommand {
             }
         }
         process.waitUntilExit()
+        if let stdoutPipe {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            filter?.ingest(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
+            filter?.flush()
+        }
+        if let resolved = filter?.resolvedModel { seat.resolved = resolved }
+        if let sessionId = filter?.sessionId { seat.sessionId = sessionId }
         let code = process.terminationStatus
         let status = timedOut ? "timeout" : (code == 0 ? "succeeded" : "failed")
-        return RunOutcome(spec: spec, status: status, exitCode: code, spawnError: nil)
+        return RunOutcome(spec: spec, status: status, exitCode: code, spawnError: nil, seat: seat)
     }
 
     /// One-line run outcome for the ledger, plus (for succeeded worktree
     /// runs) up to 3 commit oneliners showing what the branch produced.
     private func trailer(ledgerId: Int64, status: String, exitCode: Int32?,
-                         branch: String?, repo: String?, logPath: String?) -> String {
+                         branch: String?, repo: String?, logPath: String?,
+                         seat: AgentSeat.Info?) -> String {
         var line = "[dispatch #\(ledgerId)] \(status)"
         if let exitCode { line += " exit=\(exitCode)" }
+        if let seat { line += " \(seat.summary)" }
         if let branch { line += " branch=\(branch)" }
         if let logPath { line += " log=\(logPath)" }
         if status == "succeeded", let branch, let repo,

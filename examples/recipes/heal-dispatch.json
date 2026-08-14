@@ -1,0 +1,13 @@
+{
+  "id": "heal-dispatch",
+  "name": "Heal failed dispatches",
+  "description": "Host-ops heal for recent apple-tasks dispatch failures. Created automatically by doctor --enqueue-heals.",
+  "title": "Heal failed apple-tasks dispatches",
+  "notes": "heal-signature: dispatch\n\nInspect apple-tasks dispatches --status failed and ~/.config/apple-tasks/runs/. Fix the underlying failure so the next launchd pass can succeed.\nNever toggle Home Assistant entities. Never print tokens. Do not call dispatch_run.",
+  "list": "Code Tasks",
+  "agent": "heal",
+  "workdir": "apple-mcp",
+  "tags": [],
+  "priority": "high",
+  "includeAuto": true
+}

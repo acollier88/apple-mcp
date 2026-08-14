@@ -127,6 +127,6 @@ complete their reminders, `close_issues: true` closes issues for completed
 reminders; `dry_run` defaults TRUE from MCP).
 
 **Introspection** — `audit_log` (who did what, when, as whom), `doctor`
-(permission + config diagnostics, including Hermes gateway / cron / Home Assistant and Budget Tracker bandwidth).
+(permission + config diagnostics, including independent Hermes vs Home Assistant HTTP healthchecks, the Hermes↔HA adapter, Budget Tracker bandwidth, structured `issues`, and optional `enqueue_heals` to queue specialist heal tasks).
 
 Full behavioral docs live in [`../cli/README.md`](../cli/README.md).

@@ -1,0 +1,12 @@
+{
+  "id": "heal-hermes",
+  "name": "Heal Hermes",
+  "description": "House-lane heal: gateway, cron provider pin, or HA adapter. Created automatically by doctor --enqueue-heals when Hermes itself is unhealthy.",
+  "title": "Heal Hermes",
+  "notes": "heal-signature: hermes\n\nStart or replace the gateway (`hermes gateway run --replace` or the argv in ~/.hermes/gateway_state.json). If a cron job last_error is Copilot 403 and the job is not already provider ollama-launch, pin provider ollama-launch and model qwen3.6-35b. Do not restart-loop the gateway while Home Assistant is down.\nNever toggle Home Assistant entities. Never print tokens. Do not call dispatch_run.",
+  "list": "Code Tasks",
+  "agent": "hermes",
+  "tags": ["heal"],
+  "priority": "high",
+  "includeAuto": true
+}

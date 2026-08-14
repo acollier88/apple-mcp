@@ -1581,6 +1581,7 @@ server.registerTool(
     // Raw agent output (arbitrary text lines) — no outputSchema.
     description:
       "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). " +
+      "Header lines record provider/model (and Cursor Auto's resolved model). " +
       "Returns the last `tail` lines (reads at most the final 256 KB).",
     inputSchema: {
       ledger_id: z.number().int().describe("Ledger row id from dispatch_list."),
@@ -1789,9 +1790,19 @@ server.registerTool(
   {
     description:
       "Diagnose apple-tasks setup for THIS host process: Reminders/Calendar permission status, " +
-      "dispatcher config, Hermes gateway / cron / Home Assistant, Budget Tracker bandwidth, private native-tags helper, " +
-      "notes-scan watermark. TCC grants are per-host-process, so run this when tools fail unexpectedly.",
-    inputSchema: {},
+      "dispatcher config, independent Hermes vs Home Assistant healthchecks, Budget Tracker bandwidth, " +
+      "structured issues[], and optional --enqueue-heals (creates [heal][auto] tasks for unhealthy systems; " +
+      "launchd dispatch picks them up — this tool does not spawn agents). TCC grants are per-host-process.",
+    inputSchema: {
+      enqueue_heals: z
+        .boolean()
+        .optional()
+        .describe("If true, create one [heal][auto] task per unhealthy system (deduped). Does not dispatch."),
+      list: z
+        .string()
+        .optional()
+        .describe("Reminders list for heal tasks (default: Code Tasks). Only used with enqueue_heals."),
+    },
     // DoctorOut (Sources/AppleTasks/Doctor.swift)
     outputSchema: {
       binary: z.string(),
@@ -1818,14 +1829,41 @@ server.registerTool(
       hermes: z.string(),
       hermesGateway: z.string(),
       hermesCron: z.string(),
+      hermesHaLink: z.string(),
       homeAssistant: z.string(),
       budget: z.string(),
       automationNote: z.string(),
+      issues: z.array(
+        z.object({
+          system: z.string(),
+          severity: z.string(),
+          summary: z.string(),
+          signature: z.string(),
+        })
+      ),
+      heals: z
+        .object({
+          list: z.string(),
+          actions: z.array(
+            z.object({
+              system: z.string(),
+              action: z.string(),
+              taskId: z.string().nullable().optional(),
+              title: z.string().nullable().optional(),
+              reason: z.string().nullable().optional(),
+            })
+          ),
+        })
+        .nullable()
+        .optional(),
     },
   },
-  async () => {
+  async ({ enqueue_heals, list }) => {
     try {
-      return okJson(await cli(["doctor"]));
+      const args = ["doctor"];
+      if (enqueue_heals) args.push("--enqueue-heals");
+      if (list) args.push("--list", list);
+      return okJson(await cli(args, enqueue_heals ? 60_000 : 30_000));
     } catch (err) {
       return fail(err);
     }

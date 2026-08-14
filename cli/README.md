@@ -238,7 +238,7 @@ details and self-complete instructions. A leading tag that matches an
 `[auto]` with no lane tag walks `modelPrefs.auto` and takes the first
 **available** worker (command/llm present, under `maxConcurrent`, gates
 pass; `worktree: true` lanes need a workdir tag). Classifier/ops lanes
-(`triage`, `local`, `doctor`) are never in the auto pool. If nothing is
+(`triage`, `local`, `doctor`, `heal`) are never in the auto pool. If nothing is
 available the task stays queued — it is not `[failed]`. Config at
 `~/.config/apple-tasks/agents.json`:
 
@@ -272,7 +272,7 @@ directory. Dedupe is enforced by both the dispatch ledger and the
 `[dispatched]`/`[failed]` tags. Always test routing with
 `apple-tasks dispatch --dry-run` first.
 
-Starter config (includes **cursor**, **hermes**, **doctor**, claude, antigravity, triage):
+Starter config (includes **cursor**, **hermes**, **doctor**, **heal**, claude, antigravity, triage):
 [`examples/agents.json`](../examples/agents.json).
 
 ### Supported agent CLIs
@@ -283,7 +283,8 @@ Any argv template works; these are the lanes the example config ships:
 |-----|--------|--------|
 | `cursor` | [`agent`](https://cursor.com/docs/cli/overview) (Cursor Agent CLI) | `-p --force --trust --approve-mcps --sandbox disabled`. Auth: `agent login` or `CURSOR_API_KEY`. Install puts the binary in `~/.local/bin` (not on the default GUI/launchd PATH) — the dispatcher prepends that dir automatically. |
 | `hermes` | [`hermes`](https://github.com/nousresearch/hermes-agent) | House lane: `hermes -z` pinned to the local `ollama-launch` provider + Home Assistant toolset. `worktree: false` (no git). Tag `[hermes][auto]`. |
-| `doctor` | `agent` (same CLI as cursor) | Home Doctor: inspect `apple-tasks doctor` + Hermes gateway/cron, notify on salient failures, PR or `[hermes]` follow-up only on repeat. `worktree: true`, 15 min. Tag `[doctor][apple-mcp][auto]`. Recurrence is daily — EventKit has no hourly FREQ. |
+| `doctor` | `agent` (same CLI as cursor) | Home Doctor: probe independent Hermes vs HA healthchecks, then MCP `doctor(enqueue_heals: true)` to create specialist `[heal]` tasks. Does not call `dispatch_run`. `worktree: true`, 15 min. Tag `[doctor][apple-mcp][auto]`. Recurrence is daily — EventKit has no hourly FREQ. |
+| `heal` | `agent` (same CLI as cursor) | Host-ops healer (`worktree: false`): Home Assistant compose in `~/Documents/home-lab`, failed dispatches. Named `[heal]` pins this lane; never in the auto pool. Never toggle HA entities. |
 | `claude` | `claude` | `-p --permission-mode acceptEdits` |
 | `antigravity` | `agy` | sandbox + skip-permissions |
 | `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
@@ -307,9 +308,18 @@ make uninstall-digest
 PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` / `hermes` usually
 live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
 before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
-`~/.config/apple-tasks/logs/dispatch.*.log`. `doctor` reports
+`~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
+(`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
+(from argv) and, for Cursor `agent`, a `# resolved model=` line from Auto.
+`doctor` reports
 `launchAgent` / `cursorAgent` / `hermes` / `hermesGateway` / `hermesCron` /
-`homeAssistant` / `budget` / `agentsConfig`.
+`hermesHaLink` (Hermes↔HA adapter) / `homeAssistant` (HA HTTP `/api/`) /
+`budget` / `agentsConfig` / `issues` (classified failures). `apple-tasks doctor
+--enqueue-heals` (MCP `doctor` with `enqueue_heals: true`) creates one
+`[heal][auto]` task per unhealthy system (Home Assistant → `[heal][home-lab]`,
+Hermes → `[hermes][heal]`, failed dispatches → `[heal][apple-mcp]`), deduped
+by `heal-signature:` in notes. It does **not** spawn agents; launchd dispatch
+picks them up. Dispatched agents cannot call `dispatch_run`.
 
 The optional `triage` block runs the [on-demand inbox
 triage](#on-demand-triage-no-loop) at the start of every dispatch cycle:
