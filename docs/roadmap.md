@@ -1376,10 +1376,10 @@ Design questions remaining: per-seat defaults vs a tag (`[fast]`)?
 does a *failed* run retry the next preference, and how does that
 interact with maxRetries?
 
-**Bandwidth (in progress):** Budget Tracker writes
-`~/.config/budget-tracker/latest.json`. Dispatch `autoBudget` skips
-premium `[auto]` lanes by usable percent; Cursor/Antigravity use any-of
-two lanes. Doctor probe is a follow-up branch.
+**Bandwidth:** Budget Tracker writes `~/.config/budget-tracker/latest.json`.
+Dispatch `autoBudget` skips premium `[auto]` lanes by usable percent;
+Cursor/Antigravity use any-of two lanes. `apple-tasks doctor` reports
+the snapshot age and per-provider lanes.
 
 Hermes-style ordered model preferences: config maps task categories to
 preference arrays, e.g. `"modelPrefs": {"fast": ["local", "homelab-7b"],

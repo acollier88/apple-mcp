@@ -1789,7 +1789,7 @@ server.registerTool(
   {
     description:
       "Diagnose apple-tasks setup for THIS host process: Reminders/Calendar permission status, " +
-      "dispatcher config, Hermes gateway / cron / Home Assistant, private native-tags helper, " +
+      "dispatcher config, Hermes gateway / cron / Home Assistant, Budget Tracker bandwidth, private native-tags helper, " +
       "notes-scan watermark. TCC grants are per-host-process, so run this when tools fail unexpectedly.",
     inputSchema: {},
     // DoctorOut (Sources/AppleTasks/Doctor.swift)
@@ -1819,6 +1819,7 @@ server.registerTool(
       hermesGateway: z.string(),
       hermesCron: z.string(),
       homeAssistant: z.string(),
+      budget: z.string(),
       automationNote: z.string(),
     },
   },

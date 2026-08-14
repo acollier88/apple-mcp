@@ -309,7 +309,7 @@ live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
 before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
 `~/.config/apple-tasks/logs/dispatch.*.log`. `doctor` reports
 `launchAgent` / `cursorAgent` / `hermes` / `hermesGateway` / `hermesCron` /
-`homeAssistant` / `agentsConfig`.
+`homeAssistant` / `budget` / `agentsConfig`.
 
 The optional `triage` block runs the [on-demand inbox
 triage](#on-demand-triage-no-loop) at the start of every dispatch cycle:

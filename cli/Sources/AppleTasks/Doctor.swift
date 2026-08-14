@@ -25,6 +25,7 @@ struct DoctorOut: Codable {
     let hermesGateway: String
     let hermesCron: String
     let homeAssistant: String
+    let budget: String
     let automationNote: String
 
     struct PrivateHelperStatus: Codable {
@@ -36,7 +37,7 @@ struct DoctorOut: Codable {
 
 struct Doctor: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Report permission and configuration status for THIS host process, plus Hermes gateway / cron / Home Assistant. TCC grants are per-host: Terminal working proves nothing about an MCP host app."
+        abstract: "Report permission and configuration status for THIS host process, plus Hermes gateway / cron / Home Assistant and Budget Tracker bandwidth. TCC grants are per-host: Terminal working proves nothing about an MCP host app."
     )
 
     private static func describe(_ status: EKAuthorizationStatus) -> String {
@@ -222,6 +223,27 @@ struct Doctor: AsyncParsableCommand {
         return bits.joined(separator: "; ")
     }
 
+    /// Budget Tracker snapshot used by `[auto]` routing. Secret-free; reports age and per-provider usable lanes.
+    private static func budgetStatus() -> String {
+        guard let loaded = BudgetBandwidth.loadAllowingStale() else {
+            return "missing (\(BudgetBandwidth.defaultURL.path); Budget Tracker writes it on refresh)"
+        }
+        let ageMin = max(Int(loaded.age / 60), 0)
+        let prefix = loaded.age > BudgetBandwidth.staleAfter ? "stale \(ageMin)m" : "ok \(ageMin)m"
+        let parts = ["cursor", "claude", "antigravity", "copilot"].compactMap { key -> String? in
+            guard let p = loaded.snap.providers[key],
+                  let pct = p.usablePercent,
+                  let tier = p.usableTier else { return nil }
+            if p.lanes.count > 1 {
+                let lanes = p.lanes.map { "\($0.name) \(Int($0.percentUsed))%" }.joined(separator: ", ")
+                return "\(key) \(tier) \(Int(pct))% (\(lanes))"
+            }
+            return "\(key) \(tier) \(Int(pct))%"
+        }
+        let body = parts.isEmpty ? "no providers" : parts.joined(separator: "; ")
+        return "\(prefix): \(body)"
+    }
+
     private static func hermesGatewayStatus() -> String {
         let url = hermesHome().appendingPathComponent("gateway_state.json")
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -345,6 +367,7 @@ struct Doctor: AsyncParsableCommand {
             hermesGateway: Self.hermesGatewayStatus(),
             hermesCron: Self.hermesCronStatus(),
             homeAssistant: Self.homeAssistantStatus(),
+            budget: Self.budgetStatus(),
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test."
         ))
     }
