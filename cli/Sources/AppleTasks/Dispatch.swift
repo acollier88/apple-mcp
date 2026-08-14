@@ -566,9 +566,16 @@ struct Dispatch: AsyncParsableCommand {
                 .replacingOccurrences(of: "{title}", with: parsed.title)
                 .replacingOccurrences(of: "{notes}", with: reminder.notes ?? "(none)")
                 .replacingOccurrences(of: "{claimTag}", with: ClaimTags.dispatched)
-            if agent.worktree == true {
+            if agent.worktree == true, cwd != nil {
                 prompt += "\nYou are in a dedicated git worktree on your own branch. " +
                     "Commit your work to the current branch; do not switch branches."
+            }
+            // Scratch fallback (IDEAS #54): no workdir tag is a valid state
+            // (calendar debriefs, [research], notify-me tasks), not a failure.
+            if cwd == nil {
+                prompt += "\nNo repository is associated with this task; you are running in a " +
+                    "throwaway scratch directory. Deliver results via apple-tasks — notes create, " +
+                    "notify, or update \(taskId) --append-notes — not as files."
             }
             if lowerTags.contains("pr") {
                 prompt += "\nThis task requires a Pull Request. When finished, push your branch to origin with 'git push -u origin HEAD' and open a PR with 'gh pr create' (title + a body describing the change and how you verified). Run these commands to associate it: apple-tasks update \(taskId) --url \"<PR url>\""
@@ -609,6 +616,7 @@ struct Dispatch: AsyncParsableCommand {
             if dryRun {
                 var action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
                 if fromAutoPool { action += " via \(agentTag) (auto pool)" }
+                if cwd == nil { action += " (scratch — no workdir tag)" }
                 reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
                                               cwd: cwd, action: action, exitCode: nil,
                                               runLog: nil, worktree: nil))
@@ -647,18 +655,28 @@ struct Dispatch: AsyncParsableCommand {
 
             // Worktree isolation: agent output is a branch, never edits to the
             // main checkout. Refuse to run unisolated if creation fails.
+            // With no workdir tag there is no repo to isolate; the task runs
+            // in a throwaway per-dispatch scratch directory instead (IDEAS
+            // #54) — worktree lanes included, since scratch IS the isolation.
             var runCwd = cwd
             var worktreePath: String?
             var branchName: String?
-            if agent.worktree == true {
-                guard let repo = cwd else {
+            if cwd == nil {
+                let scratch = AgentsConfig.url.deletingLastPathComponent()
+                    .appendingPathComponent("scratch/\(ledgerId)").path
+                do {
+                    try FileManager.default.createDirectory(
+                        atPath: scratch, withIntermediateDirectories: true)
+                } catch {
                     AuditDB.shared.finishDispatch(id: ledgerId, status: "failed", exitCode: -1)
                     await markFailed(store: store, taskId: taskId)
                     reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
-                                                  cwd: nil, action: "failed: worktree requires a workdir tag",
+                                                  cwd: nil, action: "failed: could not create scratch dir \(scratch)",
                                                   exitCode: nil, runLog: nil, worktree: nil))
                     continue
                 }
+                runCwd = scratch
+            } else if agent.worktree == true, let repo = cwd {
                 let wt = AgentsConfig.url.deletingLastPathComponent()
                     .appendingPathComponent("worktrees/\(ledgerId)").path
                 let branch = "agent/\(agentTag)-\(ledgerId)"

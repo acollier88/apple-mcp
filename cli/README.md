@@ -268,8 +268,12 @@ available the task stays queued — it is not `[failed]`. Config at
 ```
 
 The first task tag matching a `workdirs` key sets the agent's working
-directory. Dedupe is enforced by both the dispatch ledger and the
-`[dispatched]`/`[failed]` tags. Always test routing with
+directory. A task with no matching tag is not an error: it runs in a
+throwaway per-dispatch scratch directory
+(`~/.config/apple-tasks/scratch/<id>`) — the right shape for research,
+calendar debriefs, and notify-me tasks whose deliverable is a note or a
+notification, not code. Dedupe is enforced by both the dispatch ledger
+and the `[dispatched]`/`[failed]` tags. Always test routing with
 `apple-tasks dispatch --dry-run` first.
 
 Starter config (includes **cursor**, **hermes**, **doctor**, **heal**, claude, antigravity, triage):

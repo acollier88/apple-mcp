@@ -15,7 +15,7 @@ struct ClaudeLanguageModel: LanguageModel {
     var maxTokens: Int = 8192
 
     var capabilities: LanguageModelCapabilities {
-        LanguageModelCapabilities(capabilities: [.toolCalling, .reasoning])
+        LanguageModelCapabilities([.toolCalling, .reasoning])
     }
 
     var executorConfiguration: ClaudeExecutor.Configuration {

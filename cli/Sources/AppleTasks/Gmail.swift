@@ -118,7 +118,13 @@ enum GmailAuth {
             "client_secret": client.clientSecret,
         ]
         let (data, status) = try await postForm(url: client.tokenUri, form: form)
-        struct Refresh: Codable { let access_token: String; let expires_in: Double }
+        struct Refresh: Codable {
+            let access_token: String
+            let expires_in: Double
+            /// Present when Google rotates the refresh token; the old one may
+            /// be dead, so persist it or the next refresh forces a re-login.
+            let refresh_token: String?
+        }
         guard status == 200, let refreshed = try? JSONDecoder().decode(Refresh.self, from: data) else {
             let detail = String(data: data, encoding: .utf8) ?? ""
             throw AppleTasksError.automationFailed("""
@@ -131,6 +137,7 @@ enum GmailAuth {
         }
         token.accessToken = refreshed.access_token
         token.expiresAt = Date().timeIntervalSince1970 + refreshed.expires_in
+        if let rotated = refreshed.refresh_token { token.refreshToken = rotated }
         try save(token)
         return token.accessToken
     }
@@ -350,9 +357,21 @@ struct GmailScan: AsyncParsableCommand {
             let metaURL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/\(ref.id)" +
                 "?format=metadata&metadataHeaders=Subject&metadataHeaders=From"
             let (metaData, metaStatus) = try await GmailAuth.get(metaURL, bearer: bearer)
-            guard metaStatus == 200,
-                  let meta = try? JSONDecoder().decode(MessageMeta.self, from: metaData),
-                  let ms = Double(meta.internalDate) else { continue }
+            // A failed fetch must abort the whole scan (watermark unsaved):
+            // skipping while newer messages advance the watermark would drop
+            // this message from every future scan.
+            guard metaStatus == 200 else {
+                throw AppleTasksError.automationFailed("""
+                Gmail metadata fetch failed for \(ref.id) (\(metaStatus)): \
+                \((String(data: metaData, encoding: .utf8) ?? "").prefix(200)) \
+                — watermark not advanced, rerun scan
+                """)
+            }
+            guard let meta = try? JSONDecoder().decode(MessageMeta.self, from: metaData),
+                  let ms = Double(meta.internalDate) else {
+                throw AppleTasksError.automationFailed(
+                    "unexpected Gmail metadata shape for \(ref.id) — watermark not advanced")
+            }
             guard ms > watermarkMs else { continue }
             newWatermark = max(newWatermark, ms)
             rows.append(GmailHeaderOut(
@@ -418,6 +437,32 @@ struct GmailShow: AsyncParsableCommand {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Crude text extraction for HTML-only mail (receipts, newsletters):
+    /// drops script/style/head wholesale, turns structural closers into
+    /// newlines, strips every remaining tag (img/anchor URLs never reach the
+    /// agent), then decodes the common entities. Entity decode runs AFTER tag
+    /// removal so "&lt;img&gt;" can't reconstitute markup.
+    static func stripHTML(_ html: String) -> String {
+        var s = html
+        for block in ["script", "style", "head", "title"] {
+            s = s.replacingOccurrences(of: "(?is)<\(block)\\b.*?</\(block)>",
+                                       with: "", options: .regularExpression)
+        }
+        s = s.replacingOccurrences(of: "(?i)<(br|/p|/div|/tr|/li|/h[1-6]|/table)[^>]*>",
+                                   with: "\n", options: .regularExpression)
+        s = s.replacingOccurrences(of: "(?i)<(/td|/th)[^>]*>", with: " ",
+                                   options: .regularExpression)
+        s = s.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        for (entity, char) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"),
+                               ("&quot;", "\""), ("&#39;", "'"), ("&amp;", "&")] {
+            s = s.replacingOccurrences(of: entity, with: char)
+        }
+        s = s.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\n[ \\t]+", with: "\n", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func run() async throws {
         let bearer = try await GmailAuth.accessToken()
         let url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/\(GmailAuth.urlEncode(id))?format=full"
@@ -428,7 +473,10 @@ struct GmailShow: AsyncParsableCommand {
                 "Gmail get failed (\(status)): \((String(data: data, encoding: .utf8) ?? "").prefix(300))")
         }
         let plain = Self.findPart(message.payload, mimeType: "text/plain").flatMap(Self.decodeBase64URL)
-        let body = plain ?? message.snippet ?? ""
+        let html = plain == nil
+            ? Self.findPart(message.payload, mimeType: "text/html").flatMap(Self.decodeBase64URL)
+            : nil
+        let body = plain ?? html.map(Self.stripHTML) ?? message.snippet ?? ""
         let ms = Double(message.internalDate) ?? 0
         let subject = message.payload.map { part in
             part.headers?.first { $0.name.caseInsensitiveCompare("Subject") == .orderedSame }?.value ?? ""

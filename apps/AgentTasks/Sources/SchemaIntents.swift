@@ -331,12 +331,14 @@ struct DeleteRemindersIntent {
 @available(macOS 27.0, *)
 @AppIntent(schema: .reminders.createList)
 struct CreateListIntent {
-    var name: String?
+    // Beta 4 (27A5228h) metadata processor requires `name` non-optional;
+    // beta 3 accepted String?.
+    var name: String
     var type: ListType
 
     func perform() async throws -> some IntentResult & ReturnsValue<PlanEntity> {
         struct Created: Decodable { let id: String; let name: String }
-        let json = try CLI.run(["lists", "add", name ?? "New Plan"])
+        let json = try CLI.run(["lists", "add", name])
         let created = try JSONDecoder().decode(Created.self, from: Data(json.utf8))
         return .result(value: PlanEntity(id: created.id, name: created.name))
     }
