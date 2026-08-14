@@ -109,7 +109,8 @@
   },
   "workdirs": {
     "apple-mcp": "~/Code/apple-mcp",
-    "home-lab": "~/Documents/home-lab"
+    "home-lab": "~/Documents/home-lab",
+    "hermes-agent": "~/.hermes/hermes-agent"
   },
   "requireAutoTag": true,
   "maxRetries": 2,

@@ -1,0 +1,16 @@
+{
+  "id": "hermes-rebase",
+  "name": "Rebase Hermes fork",
+  "description": "Weekly: rebase the local hermes-agent vision leftover onto NousResearch/hermes-agent main. Drop the fork if upstream absorbed the last deltas.",
+  "title": "Rebase Hermes fork onto upstream main",
+  "notes": "Repo: ~/.hermes/hermes-agent. PR: NousResearch/hermes-agent#86426 (branch fix/local-ollama-native-images, fork acollier88/hermes-agent-1). Backup: ollama-vision-routing-pre-2026-08-14.\n\n1. git fetch upstream\n2. Check whether these leftover deltas are now on upstream/main (or the PR merged):\n   - suppress vision_analyze when the turn already has a native image_url\n   - media in tool results for custom / ollama / ollama-launch\n   - _resolve_custom_runtime tries the default named custom provider first\n3. If all three landed, stop using the fork: checkout upstream/main (or the latest tag), reinstall the venv hermes, and complete this series (clear recurrence).\n4. If not: rebase the leftover onto upstream/main (one unique commit), resolve tests, leave the running binary as ~/.hermes/hermes-agent/venv/bin/hermes.\n5. Do not force-push origin unless asked. Never print tokens.\n\nWhen finished: apple-tasks update <id> --append-notes \"<what you did>\" then complete so next Friday rolls forward.",
+  "list": "Code Tasks",
+  "agent": "cursor",
+  "workdir": "hermes-agent",
+  "tags": [],
+  "priority": "none",
+  "includeAuto": true,
+  "dueTime": "08:00",
+  "dueOffsetDays": 7,
+  "recurrence": "FREQ=WEEKLY;BYDAY=FR"
+}
