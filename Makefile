@@ -15,7 +15,7 @@ INTERVAL ?= 300
 HOUR ?= 7
 MINUTE ?= 0
 
-.PHONY: all cli helper mcp app clean betacheck mail-rule \
+.PHONY: all cli helper mcp app server install-server clean betacheck mail-rule \
 	install-agent uninstall-agent install-digest uninstall-digest
 
 all: cli helper
@@ -28,6 +28,21 @@ helper: cli
 
 mcp:
 	cd mcp && bun install
+
+SERVER_BIN = $(CURDIR)/server/.build/release/apple-tasks-server
+LOCAL_BIN = $(HOME)/.local/bin
+
+server:
+	cd server && swift build -c release
+	@echo "binary: $(SERVER_BIN)"
+	@echo "run:    $(SERVER_BIN)"
+	@echo "or:     make install-server   # symlink ~/.local/bin/apple-tasks-server"
+
+install-server: server
+	@mkdir -p "$(LOCAL_BIN)"
+	@ln -sfn "$(SERVER_BIN)" "$(LOCAL_BIN)/apple-tasks-server"
+	@echo "installed: $(LOCAL_BIN)/apple-tasks-server -> $(SERVER_BIN)"
+	@echo "auth: APPLE_TASKS_SERVE_TOKEN or ~/.config/apple-tasks/serve.json"
 
 app: cli
 	cd apps/AgentTasks && ./build.sh
