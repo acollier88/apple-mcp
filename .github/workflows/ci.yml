@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  swift:
+    # macos-26 ships Xcode 26.x, so FoundationModels resolves (it is also
+    # canImport-guarded + weak-linked, so older images still build).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CLI
+        working-directory: cli
+        run: swift build -c release
+      - name: Test CLI
+        working-directory: cli
+        run: swift test
+      - name: Test server
+        working-directory: server
+        run: swift test
+
+  # apps/AgentTasks is not built here: it needs the Xcode 27 beta.
+  # `make betacheck` remains the local gate for it.
+
+  mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test

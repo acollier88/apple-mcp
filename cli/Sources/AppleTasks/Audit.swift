@@ -4,7 +4,7 @@ import SQLite3
 // Machine-side memory: append-only audit of mutations + mutable dispatch
 // ledger. Reminders remains the source of truth for task state.
 final class AuditDB {
-    static let shared = AuditDB()
+    static let shared = AuditDB(url: url)
 
     private var db: OpaquePointer?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -25,10 +25,10 @@ final class AuditDB {
             .appendingPathComponent(".config/apple-tasks/apple-tasks.db")
     }
 
-    private init() {
+    init(url: URL) {
         try? FileManager.default.createDirectory(
-            at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard sqlite3_open(Self.url.path, &db) == SQLITE_OK else {
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
             db = nil
             return
         }
@@ -85,6 +85,13 @@ final class AuditDB {
             answered_via TEXT
         )
         """)
+    }
+
+    deinit {
+        if db != nil {
+            sqlite3_close(db)
+            db = nil
+        }
     }
 
     private func exec(_ sql: String) {

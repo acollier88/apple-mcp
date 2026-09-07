@@ -228,11 +228,15 @@ enum ClaimTags {
     static let host: String = {
         var buf = [CChar](repeating: 0, count: 256)
         gethostname(&buf, buf.count)
-        let raw = String(cString: buf)
+        return sanitizeHost(String(cString: buf))
+    }()
+
+    /// First DNS label, lowercased, keeping letters/digits/hyphen. `"mac"` if empty.
+    static func sanitizeHost(_ raw: String) -> String {
         let label = raw.split(separator: ".").first.map(String.init) ?? raw
         let cleaned = label.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }
         return cleaned.isEmpty ? "mac" : cleaned
-    }()
+    }
 
     static var dispatched: String { "dispatched:\(host)" }
     static var failed: String { "failed:\(host)" }
