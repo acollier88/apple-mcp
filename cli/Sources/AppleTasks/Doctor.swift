@@ -46,7 +46,7 @@ struct DoctorOut: Codable {
         let sourceTree: String?
         let sourceHead: String?
         let sourceDirty: Bool?
-        let binaryOlderThanHead: Bool?
+        let binaryOlderThanCliCommit: Bool?
         let note: String
     }
 }
@@ -474,7 +474,7 @@ struct Doctor: AsyncParsableCommand {
         }
         guard let bin = launchdBinary else {
             return .init(launchdBinary: nil, binaryModified: nil, sourceTree: nil, sourceHead: nil,
-                         sourceDirty: nil, binaryOlderThanHead: nil,
+                         sourceDirty: nil, binaryOlderThanCliCommit: nil,
                          note: "launchd dispatch not loaded; nothing to compare")
         }
         let iso = ISO8601DateFormatter()
@@ -491,7 +491,7 @@ struct Doctor: AsyncParsableCommand {
         }
         guard let tree else {
             return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string),
-                         sourceTree: nil, sourceHead: nil, sourceDirty: nil, binaryOlderThanHead: nil,
+                         sourceTree: nil, sourceHead: nil, sourceDirty: nil, binaryOlderThanCliCommit: nil,
                          note: "binary is not inside a git checkout")
         }
         let git = ["/usr/bin/git", "-c", "core.fsmonitor=false", "-C", tree]
@@ -499,7 +499,9 @@ struct Doctor: AsyncParsableCommand {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let porcelain = capture(git[0], Array(git[1...]) + ["status", "--porcelain"])
         let dirty = porcelain.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let headEpoch = capture(git[0], Array(git[1...]) + ["log", "-1", "--format=%ct"])
+        // Only commits that touch the CLI sources matter; a docs-only commit
+        // must not flag a perfectly current binary.
+        let headEpoch = capture(git[0], Array(git[1...]) + ["log", "-1", "--format=%ct", "--", "cli"])
             .flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         var older: Bool?
         if let binaryDate, let headEpoch {
@@ -507,9 +509,9 @@ struct Doctor: AsyncParsableCommand {
         }
         var notes: [String] = []
         if dirty == true { notes.append("source tree has uncommitted changes — commit or they exist only on this Mac") }
-        if older == true { notes.append("binary predates HEAD — rebuild (make cli helper) so launchd runs the committed code") }
+        if older == true { notes.append("binary predates the last cli/ commit — rebuild (make cli helper) so launchd runs the committed code") }
         return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string), sourceTree: tree,
-                     sourceHead: head, sourceDirty: dirty, binaryOlderThanHead: older,
+                     sourceHead: head, sourceDirty: dirty, binaryOlderThanCliCommit: older,
                      note: notes.isEmpty ? "ok: launchd runs a build of the committed HEAD" : notes.joined(separator: "; "))
     }
 
