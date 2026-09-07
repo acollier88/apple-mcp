@@ -308,11 +308,15 @@ make install-digest HOUR=7 MINUTE=30
 make uninstall-digest
 ```
 
-`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch` with a
-PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` / `hermes` usually
-live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
-before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
-`~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
+`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch --quiet`
+with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
+`hermes` usually live). `--quiet` emits `[]` when a pass produced only the
+same GC/skip/gate/schedule noise as the previous one, so launchd's stdout
+log does not grow on idle cycles. Optional secrets go in
+`~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
+`export CURSOR_API_KEY=…`). The wrapper rotates
+`~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
+Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
 (`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
 (from argv) and, for Cursor `agent`, a `# resolved model=` line from Auto.
 `doctor` reports
@@ -357,7 +361,10 @@ the design):
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is
-  written after the claim and is only the human-visible mirror.
+  written after the claim and is only the human-visible mirror. If the
+  ledger DB is unavailable the pass **fails closed** (stderr warning, no
+  unledgered run). A claim-tag save failure aborts that task only and the
+  rest of the pass continues.
 - **Concurrency** (`maxConcurrent`, global and per-agent) — agent runs
   execute in a capped task group; the global default of 1 preserves
   sequential behavior until you opt in. Outcomes are recorded as each run
@@ -372,7 +379,9 @@ the design):
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
-  only if empty). `--no-gc` skips the pass.
+  only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
+  for finished (or orphan) ledger rows older than the same cutoff are
+  removed too. `--no-gc` skips the pass.
 - **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
   macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to

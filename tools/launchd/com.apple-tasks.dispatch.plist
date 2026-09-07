@@ -13,6 +13,7 @@
 		<string>@WRAPPER@</string>
 		<string>@APPLE_TASKS_BIN@</string>
 		<string>dispatch</string>
+		<string>--quiet</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>@INTERVAL@</integer>

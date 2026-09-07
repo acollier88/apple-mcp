@@ -24,24 +24,36 @@ GitHubSync.swift.
 
 ### Dispatch ledger
 
+`claimDispatch(...) -> ClaimResult` is fail-closed. Cases:
+
+- `.claimed(Int64)` — this dispatcher holds the claim; ledger row id
+- `.held` — another dispatcher already has a `running` row for this task
+- `.unavailable` — ledger DB is not open (`isAvailable == false`); caller
+  must **not** dispatch (never treat a sentinel id as a real claim)
+
+`finishDispatch`, `setDispatchPaths`, and `clearWorktree` return
+`@discardableResult Bool` (`false` when `db == nil`).
+
 | Method | Callers |
 |--------|---------|
-| `claimDispatch(...)` | Dispatch.swift |
-| `finishDispatch(id:status:exitCode:)` | Dispatch.swift |
-| `setDispatchPaths(id:runLogPath:worktree:)` | Dispatch.swift |
+| `claimDispatch(...) -> ClaimResult` | Dispatch.swift |
+| `finishDispatch(id:status:exitCode:) -> Bool` | Dispatch.swift |
+| `setDispatchPaths(id:runLogPath:worktree:) -> Bool` | Dispatch.swift |
 | `dispatchRows(status:limit:)` | Dispatch.swift (`dispatches` cmd), Digest.swift, Doctor.swift |
+| `dispatchRow(id:)` | Dispatch.swift (scratch-dir GC) |
 | `hasActiveDispatch(taskId:)` | Dispatch.swift |
 | `activeDispatchCount(agent:)` | Dispatch.swift |
 | `reapStale(before:)` | Dispatch.swift |
 | `failedAttempts(taskId:)` | Dispatch.swift |
 | `worktreeRows()` | Dispatch.swift |
-| `clearWorktree(id:)` | Dispatch.swift |
+| `clearWorktree(id:) -> Bool` | Dispatch.swift |
+| `isAvailable` | Dispatch.swift (one stderr warning per pass) |
 
 ### State KV
 
 | Method | Callers |
 |--------|---------|
-| `getState` / `setState` | Automation.swift |
+| `getState` / `setState` | Automation.swift, Dispatch.swift (`dispatch.lastReportHash` for `--quiet`) |
 
 ### Approvals (ntfy)
 

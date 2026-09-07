@@ -27,6 +27,7 @@ struct DoctorOut: Codable {
     let hermesHaLink: String
     let homeAssistant: String
     let budget: String
+    let deployment: DeploymentStatus
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
@@ -35,6 +36,18 @@ struct DoctorOut: Codable {
         let present: Bool
         let path: String?
         let check: String?
+    }
+
+    /// Which binary launchd actually runs, and whether its source tree has
+    /// drifted from it (uncommitted edits, or a HEAD newer than the build).
+    struct DeploymentStatus: Codable {
+        let launchdBinary: String?
+        let binaryModified: String?
+        let sourceTree: String?
+        let sourceHead: String?
+        let sourceDirty: Bool?
+        let binaryOlderThanHead: Bool?
+        let note: String
     }
 }
 
@@ -433,6 +446,73 @@ struct Doctor: AsyncParsableCommand {
         return "plist present but not loaded (re-run: make install-agent)"
     }
 
+    /// stdout of a short-lived process, or nil if it failed to launch / exited non-zero.
+    private static func capture(_ exe: String, _ args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exe)
+        process.arguments = args
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Detects the two-trees hazard: the launchd job runs a binary built from
+    /// a checkout that may carry uncommitted edits or lag its own HEAD.
+    private static func deploymentStatus() -> DoctorOut.DeploymentStatus {
+        var launchdBinary: String?
+        if let out = capture("/bin/launchctl", ["print", "gui/\(getuid())/com.apple-tasks.dispatch"]),
+           let start = out.range(of: "arguments = {") {
+            let block = out[start.upperBound...].prefix { $0 != "}" }
+            launchdBinary = block.split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { $0.hasSuffix("/apple-tasks") }
+        }
+        guard let bin = launchdBinary else {
+            return .init(launchdBinary: nil, binaryModified: nil, sourceTree: nil, sourceHead: nil,
+                         sourceDirty: nil, binaryOlderThanHead: nil,
+                         note: "launchd dispatch not loaded; nothing to compare")
+        }
+        let iso = ISO8601DateFormatter()
+        let binaryDate = (try? FileManager.default.attributesOfItem(atPath: bin))?[.modificationDate] as? Date
+        // Walk up from cli/.build/release/apple-tasks to the checkout root.
+        var dir = URL(fileURLWithPath: bin).deletingLastPathComponent()
+        var tree: String?
+        for _ in 0..<6 {
+            if FileManager.default.fileExists(atPath: dir.appendingPathComponent(".git").path) {
+                tree = dir.path
+                break
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        guard let tree else {
+            return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string),
+                         sourceTree: nil, sourceHead: nil, sourceDirty: nil, binaryOlderThanHead: nil,
+                         note: "binary is not inside a git checkout")
+        }
+        let git = ["/usr/bin/git", "-c", "core.fsmonitor=false", "-C", tree]
+        let head = capture(git[0], Array(git[1...]) + ["rev-parse", "--short", "HEAD"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let porcelain = capture(git[0], Array(git[1...]) + ["status", "--porcelain"])
+        let dirty = porcelain.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let headEpoch = capture(git[0], Array(git[1...]) + ["log", "-1", "--format=%ct"])
+            .flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        var older: Bool?
+        if let binaryDate, let headEpoch {
+            older = binaryDate.timeIntervalSince1970 < headEpoch
+        }
+        var notes: [String] = []
+        if dirty == true { notes.append("source tree has uncommitted changes — commit or they exist only on this Mac") }
+        if older == true { notes.append("binary predates HEAD — rebuild (make cli helper) so launchd runs the committed code") }
+        return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string), sourceTree: tree,
+                     sourceHead: head, sourceDirty: dirty, binaryOlderThanHead: older,
+                     note: notes.isEmpty ? "ok: launchd runs a build of the committed HEAD" : notes.joined(separator: "; "))
+    }
+
     func run() async throws {
         let hermes = Self.hermesStatus()
         let hermesGateway = Self.hermesGatewayStatus()
@@ -480,6 +560,7 @@ struct Doctor: AsyncParsableCommand {
             hermesHaLink: hermesHaLink,
             homeAssistant: homeAssistant,
             budget: Self.budgetStatus(),
+            deployment: Self.deploymentStatus(),
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
             heals: heals
