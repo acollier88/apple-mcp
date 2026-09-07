@@ -95,6 +95,9 @@ struct QueueTab: View {
     @State private var filterAgent: String? = nil // nil = all agents
     @State private var showFailed = true
     @State private var workdirs: [WorkdirsStore.Entry] = []
+    @State private var askQuestion = ""
+    @State private var askAnswer: String?
+    @State private var isAsking = false
 
     private var agentFilters: [String] {
         Array(Set(tasks.compactMap(\.agentTag))).sorted()
@@ -115,6 +118,8 @@ struct QueueTab: View {
             header
             Divider()
             filterBar
+            Divider()
+            askBar
             Divider()
             content
         }
@@ -189,6 +194,45 @@ struct QueueTab: View {
             .padding(.vertical, 8)
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+    }
+
+    private var askBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("Ask about the queue…", text: $askQuestion)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { Task { await runAsk() } }
+                Button("Ask") { Task { await runAsk() } }
+                    .disabled(askQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAsking)
+                if isAsking {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            if let askAnswer {
+                Text(askAnswer)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func runAsk() async {
+        let q = askQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !isAsking else { return }
+        isAsking = true
+        defer { isAsking = false }
+        do {
+            if #available(macOS 27.0, *) {
+                askAnswer = try await AgentQueueAsk.answer(q)
+            } else {
+                askAnswer = "Ask needs macOS 27."
+            }
+        } catch {
+            askAnswer = error.localizedDescription
+        }
     }
 
     @ViewBuilder
