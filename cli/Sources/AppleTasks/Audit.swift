@@ -197,11 +197,13 @@ final class AuditDB {
         return Int(sqlite3_column_int(stmt, 0))
     }
 
-    /// True if this task already has a running or succeeded dispatch.
+    /// True if this task has a dispatch still in flight.
+    /// Succeeded rows must not block: recurring tasks keep the same
+    /// EventKit id after complete rolls the next due (Home Doctor daily).
     func hasActiveDispatch(taskId: String) -> Bool {
         guard db != nil else { return false }
         var stmt: OpaquePointer?
-        let sql = "SELECT COUNT(*) FROM dispatches WHERE task_id = ? AND status IN ('running','succeeded')"
+        let sql = "SELECT COUNT(*) FROM dispatches WHERE task_id = ? AND status = 'running'"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
@@ -209,17 +211,18 @@ final class AuditDB {
     }
 
     /// Atomically claim the dispatch for a task: inserts a 'running' row only
-    /// if no running/succeeded row exists, in one statement, so two
-    /// dispatchers (cron + manual) cannot both claim. Returns the ledger id,
-    /// nil if another dispatcher already holds the claim, or -1 when the
-    /// ledger DB is unavailable (dispatch proceeds unledgered, as before).
+    /// if no running row exists, in one statement, so two dispatchers
+    /// (cron + manual) cannot both claim. Prior succeeded runs do not block
+    /// the next occurrence. Returns the ledger id, nil if another dispatcher
+    /// already holds the claim, or -1 when the ledger DB is unavailable
+    /// (dispatch proceeds unledgered, as before).
     func claimDispatch(taskId: String, agent: String, command: String, cwd: String?) -> Int64? {
         guard db != nil else { return -1 }
         var stmt: OpaquePointer?
         let sql = """
         INSERT INTO dispatches (task_id, agent, command, cwd, started_at, status)
         SELECT ?1, ?2, ?3, ?4, ?5, 'running'
-        WHERE NOT EXISTS (SELECT 1 FROM dispatches WHERE task_id = ?1 AND status IN ('running','succeeded'))
+        WHERE NOT EXISTS (SELECT 1 FROM dispatches WHERE task_id = ?1 AND status = 'running')
         """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return -1 }
         defer { sqlite3_finalize(stmt) }

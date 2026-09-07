@@ -292,6 +292,32 @@ struct Dispatch: AsyncParsableCommand {
         let exitCode: Int?
         let runLog: String?
         let worktree: String?
+        let command: String?
+        let promptPreview: String?
+
+        init(
+            taskId: String,
+            title: String,
+            agent: String,
+            cwd: String?,
+            action: String,
+            exitCode: Int?,
+            runLog: String?,
+            worktree: String?,
+            command: String? = nil,
+            promptPreview: String? = nil
+        ) {
+            self.taskId = taskId
+            self.title = title
+            self.agent = agent
+            self.cwd = cwd
+            self.action = action
+            self.exitCode = exitCode
+            self.runLog = runLog
+            self.worktree = worktree
+            self.command = command
+            self.promptPreview = promptPreview
+        }
     }
 
     func run() async throws {
@@ -449,10 +475,18 @@ struct Dispatch: AsyncParsableCommand {
                 guard let namedAgent, namedAgent == onlyAgent.lowercased() else { continue }
             }
             if requireAuto && !lowerTags.contains("auto") { continue }
-            // Any Mac's claim blocks re-dispatch (IDEAS #13).
-            if parsed.tags.contains(where: ClaimTags.isDispatched) { continue }
-
             let reportAgent = namedAgent ?? "auto"
+            // Any Mac's claim blocks re-dispatch (IDEAS #13).
+            if parsed.tags.contains(where: ClaimTags.isDispatched) {
+                if dryRun {
+                    let tag = parsed.tags.first(where: ClaimTags.isDispatched) ?? "dispatched"
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                  cwd: nil,
+                                                  action: "skipped: already claimed [\(tag)] — complete the task or remove the claim tag to run the next occurrence",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                }
+                continue
+            }
 
             // Not due yet: stays queued until its due time. This is what
             // makes recurrence useful for agent work (IDEAS #36) — completing
@@ -475,19 +509,59 @@ struct Dispatch: AsyncParsableCommand {
             if let failedTag = parsed.tags.first(where: ClaimTags.isFailed) {
                 // Another Mac's failure is its claim to retry (IDEAS #13) —
                 // this ledger has no attempt history for it anyway.
-                guard ClaimTags.isOwn(failedTag) else { continue }
+                if !ClaimTags.isOwn(failedTag) {
+                    if dryRun {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                      cwd: nil,
+                                                      action: "skipped: claim [\(failedTag)] belongs to another Mac",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    }
+                    continue
+                }
                 let maxRetries = config.maxRetries ?? 0
-                guard maxRetries > 0 else { continue }
+                if maxRetries <= 0 {
+                    if dryRun {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                      cwd: nil,
+                                                      action: "skipped: [\(failedTag)] and maxRetries is 0",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    }
+                    continue
+                }
                 let (attempts, lastFailure) = AuditDB.shared.failedAttempts(taskId: taskId)
-                guard attempts <= maxRetries else { continue }
+                if attempts > maxRetries {
+                    if dryRun {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                      cwd: nil,
+                                                      action: "skipped: \(attempts) failures exceeds maxRetries \(maxRetries)",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    }
+                    continue
+                }
                 let backoff = TimeInterval((config.retryBackoffMinutes ?? 30) * 60 * max(attempts, 1))
                 if let lastFailure,
                    let lastDate = ISO8601DateFormatter().date(from: lastFailure),
-                   Date().timeIntervalSince(lastDate) < backoff { continue }
+                   Date().timeIntervalSince(lastDate) < backoff {
+                    if dryRun {
+                        reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                      cwd: nil,
+                                                      action: "skipped: retry backoff until after \(lastFailure)",
+                                                      exitCode: nil, runLog: nil, worktree: nil))
+                    }
+                    continue
+                }
                 retryAttempt = attempts + 1
             }
 
-            if AuditDB.shared.hasActiveDispatch(taskId: taskId) { continue }
+            if AuditDB.shared.hasActiveDispatch(taskId: taskId) {
+                if dryRun {
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                  cwd: nil,
+                                                  action: "skipped: ledger still has a running dispatch",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                }
+                continue
+            }
 
             // Subtask dependency gate (IDEAS #47): a parent stays queued
             // until every open subtask completes — subtasks dispatch on
@@ -535,7 +609,15 @@ struct Dispatch: AsyncParsableCommand {
             guard let agentTag, let agent else {
                 if let namedAgent, let note = skipNotes.first {
                     let reason = Self.stripLanePrefix(note)
-                    if reason == "at cap" { continue }
+                    if reason == "at cap" {
+                        if dryRun {
+                            reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: namedAgent,
+                                                          cwd: cwd,
+                                                          action: "skipped: agent '\(namedAgent)' is at maxConcurrent — stays queued",
+                                                          exitCode: nil, runLog: nil, worktree: nil))
+                        }
+                        continue
+                    }
                     if reason.hasPrefix("gated:") {
                         reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: namedAgent,
                                                       cwd: cwd, action: "\(reason) — stays queued",
@@ -617,9 +699,12 @@ struct Dispatch: AsyncParsableCommand {
                 var action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
                 if fromAutoPool { action += " via \(agentTag) (auto pool)" }
                 if cwd == nil { action += " (scratch — no workdir tag)" }
+                let preview = prompt.count > 1600 ? String(prompt.prefix(1600)) + "…" : prompt
                 reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
                                               cwd: cwd, action: action, exitCode: nil,
-                                              runLog: nil, worktree: nil))
+                                              runLog: nil, worktree: nil,
+                                              command: template.joined(separator: " "),
+                                              promptPreview: preview))
                 continue
             }
 
@@ -752,6 +837,15 @@ struct Dispatch: AsyncParsableCommand {
                                               exitCode: outcome.exitCode.map(Int.init),
                                               runLog: spec.logPath, worktree: spec.worktree))
             }
+        }
+        if dryRun {
+            let listLabel = listName ?? "all lists"
+            reports.insert(
+                DispatchReport(taskId: "-", title: listLabel, agent: "-", cwd: nil,
+                               action: "dry-run scanned \(reminders.count) open reminders",
+                               exitCode: nil, runLog: nil, worktree: nil),
+                at: 0
+            )
         }
         emit(reports)
     }

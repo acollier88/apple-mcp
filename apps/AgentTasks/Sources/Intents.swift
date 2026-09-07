@@ -189,7 +189,7 @@ struct CreateAgentTaskIntent: AppIntent {
     }
 }
 
-struct TriageInboxIntent: AppIntent {
+struct TriageInboxIntent: AppIntent, LongRunningIntent {
     static let title: LocalizedStringResource = "Triage Agent Inbox"
     static let description = IntentDescription("Classifies and routes untagged reminders in the inbox: agent work gets tagged and filed, personal items get a [personal] tag.")
 
@@ -201,21 +201,26 @@ struct TriageInboxIntent: AppIntent {
     }
 
     func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
-        let json = try CLI.run(["triage", "--inbox", inbox, "--apply"])
-        // Parse the small result to speak a count; fall back to raw on any change.
-        var spoken = "Triage complete."
-        if let data = json.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let actions = obj["actions"] as? [[String: Any]] {
-            let agents = actions.filter { ($0["kind"] as? String) == "agent" }.count
-            let personal = actions.filter { ($0["kind"] as? String) == "personal" }.count
-            if actions.isEmpty {
-                spoken = "Nothing to triage — the inbox has no untagged items."
-            } else {
-                spoken = "Triaged \(actions.count) item\(actions.count == 1 ? "" : "s"): \(agents) routed to agents, \(personal) marked personal."
+        let outcome = try await performBackgroundTask {
+            progress.totalUnitCount = 1
+            defer { progress.completedUnitCount = 1 }
+            let json = try CLI.run(["triage", "--inbox", inbox, "--apply"])
+            // Parse the small result to speak a count; fall back to raw on any change.
+            var spoken = "Triage complete."
+            if let data = json.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let actions = obj["actions"] as? [[String: Any]] {
+                let agents = actions.filter { ($0["kind"] as? String) == "agent" }.count
+                let personal = actions.filter { ($0["kind"] as? String) == "personal" }.count
+                if actions.isEmpty {
+                    spoken = "Nothing to triage — the inbox has no untagged items."
+                } else {
+                    spoken = "Triaged \(actions.count) item\(actions.count == 1 ? "" : "s"): \(agents) routed to agents, \(personal) marked personal."
+                }
             }
+            return (json, spoken)
         }
-        return .result(value: json, dialog: IntentDialog(stringLiteral: spoken))
+        return .result(value: outcome.0, dialog: IntentDialog(stringLiteral: outcome.1))
     }
 }
 
@@ -305,6 +310,15 @@ struct AgentTasksShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Triage Inbox",
             systemImageName: "tray.and.arrow.down"
+        )
+        AppShortcut(
+            intent: AskAgentTasksIntent(),
+            phrases: [
+                "Ask \(.applicationName)",
+                "Ask about the queue in \(.applicationName)",
+            ],
+            shortTitle: "Ask Agent Tasks",
+            systemImageName: "sparkle.magnifyingglass"
         )
     }
 }
