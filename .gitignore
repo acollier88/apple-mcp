@@ -16,3 +16,5 @@ research/ClaudeLanguageModel/build/
 
 # Local-only config lives in ~/.config/apple-tasks (agents.json, notify.json,
 # apple-tasks.db, runs/) — never in the repo.
+.env
+local.env
