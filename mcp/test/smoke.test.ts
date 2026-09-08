@@ -131,6 +131,7 @@ describe("apple-tasks MCP smoke", () => {
     expect(byName.task_list?.annotations?.readOnlyHint).toBe(true);
     expect(byName.dispatch_run?.annotations?.destructiveHint).toBe(true);
     expect(byName.task_delete?.annotations?.destructiveHint).toBe(true);
+    expect(byName.dispatch_discard?.annotations?.destructiveHint).toBe(true);
   });
 
   test("tools/list matches golden except for annotations", async () => {

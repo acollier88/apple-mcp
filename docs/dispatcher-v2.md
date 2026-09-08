@@ -161,3 +161,55 @@ no cancel command).
   Doctor's heal scan queries `failed` only (cancelled is excluded).
   Digest prints the status string as-is. MCP `dispatch_list` status enum
   does not yet include `cancelled` (out of scope for this change).
+
+## v3: completion verification (2026-09)
+
+Closes review finding 7: an agent that exits 0 without `apple-tasks
+complete` used to leave `[dispatched:host]` on the task forever, and a
+human edit did not unstrand it.
+
+- **Phase C (write-back).** After the trailer/notes write-back and
+  notifications, re-fetch the reminder and classify
+  `verification = completed | open-claimed | open-untagged`. Deleted or
+  `isCompleted` is `completed`. Our own `[dispatched]` / `[dispatched:host]`
+  on an open task is `open-claimed`; a foreign Mac's claim is
+  `open-untagged` (not ours). On `succeeded` + `open-claimed`, shed our
+  claim (title + native chip) and append one notes line:
+  `[dispatch #N] agent exited 0 without completing the task — re-dispatch
+  is blocked until the task changes`. Then re-fetch so the stored
+  fingerprint is the post-shed title + extra note. `lastModifiedDate` is
+  stored as informational only. The report `action` becomes
+  `succeeded (open, claim shed)` only for that case; other actions stay
+  as they were. Failed/timeout already went through `markFailed` and are
+  not shed here.
+- **Phase A guard.** After the existing `[dispatched]` claim check (another
+  Mac, or a run in flight — still first) and before the "not due yet"
+  check: if `claimGuard` is `"modified"` and the latest succeeded row for
+  this task ended `verification = open-claimed` (the agent walked away
+  without `complete`) and has a stored `taskFingerprint` that equals the
+  current `TaskFingerprint.of(reminder)`, skip. Dry-run reason:
+  `skipped: unchanged since succeeded #N — edit the task or complete it
+  to re-run`. Rows with `taskFingerprint == nil` (pre-v2) never block.
+  The `open-claimed` condition is load-bearing: when an agent *does*
+  complete a recurring task, the due date rolls during the run, so Phase C
+  stores the fingerprint of the *next* occurrence — and by the time that
+  occurrence comes due nothing has changed since. Guarding on fingerprint
+  alone would block every recurrence forever.
+  The `hasActiveDispatch` running check is unchanged and stays under both
+  modes.
+- **`claimGuard`** in `agents.json`: `"running"` (today's behavior — any
+  `[dispatched…]` tag blocks; this is the effective default while the
+  key is omitted) | `"modified"` (fingerprint compare). Plan is to flip
+  the default to `"modified"` after a week live.
+- **Fingerprint is content-only** (title incl. tags, notes, due, URL,
+  priority — see `TaskFingerprint`). iCloud sync churn that bumps
+  `lastModifiedDate` without changing content cannot make a task look
+  new. A recurrence roll or a human edit changes the hash → eligible
+  again.
+- **Worktree GC.** When a merged succeeded branch/worktree is removed,
+  the ledger row is `markReviewed` so it leaves the pending-review set.
+  Unmerged-kept behavior and report strings are unchanged.
+- **Dry-run.** With the default `claimGuard` (`"running"` / omitted) a
+  dry-run is identical to pre-v3: the new skip line only appears when
+  `claimGuard` is `"modified"` and a succeeded fingerprint still matches.
+  Phase C (shed / fingerprint store) does not run on dry-run.

@@ -120,6 +120,14 @@ struct AgentsConfig: Codable {
     /// How `[auto]`-only routing treats Budget Tracker bandwidth:
     /// `"skipRed"` (default) | `"skipYellow"` | `"off"`. Named lane tags ignore this.
     var autoBudget: String?
+    /// Phase A claim-guard mode. `"running"` (today's behavior, the effective
+    /// default while this is nil) blocks re-dispatch whenever any
+    /// `[dispatched…]` tag is present. `"modified"` additionally compares the
+    /// content fingerprint against the last succeeded row and only blocks
+    /// when nothing changed — so a human edit or recurrence roll unstrands
+    /// a task that an agent left open. Plan is to flip the default to
+    /// `"modified"` after a week live.
+    var claimGuard: String?
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser

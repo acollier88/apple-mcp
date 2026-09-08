@@ -32,7 +32,7 @@ asserts the upgrade keeps rows and is a no-op on reopen.
 ### `record(command:taskId:list:detail:result:error:)`
 
 Commands.swift (add/update/complete/uncomplete/delete/lists add/remirror-tags),
-Dispatch.swift (dispatch, dispatch-retry, dispatch-reap, dispatch-cancel),
+Dispatch.swift (dispatch, dispatch-retry, dispatch-reap, dispatch-cancel, dispatch-discard),
 Triage.swift, Suggest.swift (via digest), Notify.swift, Mail.swift,
 Events.swift, Digest.swift, Approvals.swift, Gmail.swift, Watches.swift,
 GitHubSync.swift.
@@ -62,13 +62,15 @@ it is **not** counted by `failedAttempts` (retry/backoff stays
 | `setDispatchPid(id:pid:) -> Bool` | Dispatch.swift (Phase B, immediately after spawn) |
 | `setDispatchPaths(id:runLogPath:worktree:) -> Bool` | Dispatch.swift |
 | `dispatchRows(status:limit:)` | Dispatch.swift (`dispatches` cmd, dead-pid reap), Digest.swift, Doctor.swift |
-| `dispatchRow(id:)` | Dispatch.swift (scratch-dir GC), `dispatch-cancel` |
+| `dispatchRow(id:)` | Dispatch.swift (scratch-dir GC), `dispatch-cancel`, `dispatch-discard` |
 | `hasActiveDispatch(taskId:)` | Dispatch.swift |
 | `activeDispatchCount(agent:)` | Dispatch.swift |
 | `reapStale(before:)` | Dispatch.swift |
 | `failedAttempts(taskId:)` | Dispatch.swift (excludes `cancelled`) |
 | `worktreeRows()` | Dispatch.swift (`succeeded`/`failed`/`timeout`/`cancelled`) |
-| `clearWorktree(id:) -> Bool` | Dispatch.swift |
+| `clearWorktree(id:) -> Bool` | Dispatch.swift, PendingReview.swift (gone worktree), `dispatch-discard` |
+| `pendingReviewRows(limit:)` | PendingReview.swift (`dispatches --status pending-review`, Digest) |
+| `markReviewed(id:) -> Bool` | PendingReview.swift (merged/gone auto-review), `dispatch-discard` |
 | `isAvailable` | Dispatch.swift (one stderr warning per pass) |
 
 ### State KV

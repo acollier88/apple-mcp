@@ -85,7 +85,7 @@ final class AuditDB {
     }
 
     /// Schema version the code expects. Bump when adding a migration case.
-    static let schemaVersion: Int32 = 1
+    static let schemaVersion: Int32 = 2
 
     var schemaVersion: Int32 { Int32(scalarInt("PRAGMA user_version") ?? 0) }
 
@@ -107,6 +107,17 @@ final class AuditDB {
                 // Reminder lastModifiedDate captured at finish, for the
                 // "unchanged since we last succeeded" re-dispatch guard (P3).
                 addColumnIfMissing(table: "dispatches", column: "task_modified_at", type: "TEXT")
+            case 1:
+                // Completion verification (review P3): what the task looked
+                // like right after our write-back, so Phase A can tell "nothing
+                // changed since we last succeeded" from "recurrence rolled /
+                // human edited". Fingerprint = TaskFingerprint.of(...); the
+                // verification is completed | open-untagged | open-claimed.
+                addColumnIfMissing(table: "dispatches", column: "task_fingerprint", type: "TEXT")
+                addColumnIfMissing(table: "dispatches", column: "verification", type: "TEXT")
+                // Reviewed-branch bookkeeping: set when a human discards a
+                // succeeded worktree/branch (dispatch-discard) or GC merges it.
+                addColumnIfMissing(table: "dispatches", column: "reviewed_at", type: "TEXT")
             default:
                 return
             }
@@ -239,6 +250,63 @@ final class AuditDB {
         let summary: String?
         /// Agent process id while running (nil before spawn / for old rows).
         let pid: Int?
+        /// Reminder content fingerprint captured right after Phase C write-back
+        /// (TaskFingerprint.of). nil for rows finished before schema v2.
+        let taskFingerprint: String?
+        /// EKReminder.lastModifiedDate at that same moment (informational).
+        let taskModifiedAt: String?
+        /// completed | open-untagged | open-claimed | nil (pre-v2 or unknown).
+        let verification: String?
+        /// Set when the branch was discarded (dispatch-discard) or auto-GC'd
+        /// as merged; a succeeded worktree row without it is "pending review".
+        let reviewedAt: String?
+
+        /// Branch the dispatcher created for a worktree run (Plan.swift).
+        var branch: String? { worktree == nil ? nil : "agent/\(agent)-\(id)" }
+    }
+
+    /// Phase C: record what the task looked like after our write-back.
+    @discardableResult
+    func setVerification(id: Int64, fingerprint: String?, modifiedAt: String?, verification: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE dispatches SET task_fingerprint = ?, task_modified_at = ?, verification = ? WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        for (index, value) in [fingerprint, modifiedAt].enumerated() {
+            if let value { sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT) }
+            else { sqlite3_bind_null(stmt, Int32(index + 1)) }
+        }
+        sqlite3_bind_text(stmt, 3, verification, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 4, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    /// Most recent `succeeded` row for a task (the "unchanged since" guard).
+    func latestSucceeded(taskId: String) -> DispatchRow? {
+        selectDispatches(where: "task_id = ? AND status = 'succeeded'", binds: [taskId], limit: 1).first
+    }
+
+    /// Succeeded worktree runs nobody has reviewed: the branch still exists
+    /// on record and no human discard / merge-GC has marked it reviewed.
+    /// Whether the branch is actually unmerged is a git question the caller
+    /// answers (GC.swift does the same check).
+    func pendingReviewRows(limit: Int = 200) -> [DispatchRow] {
+        selectDispatches(
+            where: "worktree IS NOT NULL AND status = 'succeeded' AND reviewed_at IS NULL",
+            binds: [], limit: limit)
+    }
+
+    /// Mark a worktree run reviewed (discarded or merged); GC uses it too.
+    @discardableResult
+    func markReviewed(id: Int64) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET reviewed_at = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     /// Record the spawned agent's pid so reap/cancel can signal it.
@@ -407,7 +475,8 @@ final class AuditDB {
         guard db != nil else { return [] }
         let sql = """
         SELECT id, task_id, agent, command, cwd, started_at, finished_at, status, exit_code, \
-        run_log_path, worktree, summary, pid FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
+        run_log_path, worktree, summary, pid, task_fingerprint, task_modified_at, verification, reviewed_at \
+        FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -427,7 +496,8 @@ final class AuditDB {
                 status: col(7) ?? "",
                 exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8)),
                 runLogPath: col(9), worktree: col(10), summary: col(11),
-                pid: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12))))
+                pid: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12)),
+                taskFingerprint: col(13), taskModifiedAt: col(14), verification: col(15), reviewedAt: col(16)))
         }
         return rows
     }

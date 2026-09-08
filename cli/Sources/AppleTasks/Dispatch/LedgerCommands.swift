@@ -30,15 +30,23 @@ struct Dispatches: AsyncParsableCommand {
         abstract: "Show the dispatch ledger (agent runs and their outcomes)."
     )
 
-    static let statuses = ["running", "succeeded", "failed", "timeout", "cancelled", "aborted"]
+    static let statuses = ["running", "succeeded", "failed", "timeout", "cancelled", "aborted", "pending-review"]
 
-    @Option(help: "Filter: running | succeeded | failed | timeout | cancelled | aborted.")
+    @Option(help: "Filter: running | succeeded | failed | timeout | cancelled | aborted | pending-review.")
     var status: String?
+
+    @Flag(name: .customLong("pending-review"),
+          help: "Alias for --status pending-review: unmerged succeeded worktree branches.")
+    var pendingReview = false
 
     @Option(help: "Max rows (default 50, newest first).")
     var limit: Int = 50
 
     func run() async throws {
+        if pendingReview || status == "pending-review" {
+            emit(PendingReview.items(limit: limit))
+            return
+        }
         if let status {
             guard Self.statuses.contains(status) else {
                 throw AppleTasksError.invalidInput(
@@ -125,5 +133,74 @@ struct DispatchCancel: AsyncParsableCommand {
                               list: list, detail: "\(row.agent): \(title)", result: "ok")
         emit(Result(id: row.id, taskId: row.taskId, agent: row.agent,
                     status: "cancelled", process: processNote, tagShed: tagShed))
+    }
+}
+
+/// Discard a succeeded worktree branch: force-remove the worktree, delete the
+/// agent branch, mark the ledger row reviewed. Idempotent if already reviewed.
+struct DispatchDiscard: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "dispatch-discard",
+        abstract: """
+        Discard a succeeded worktree branch by ledger id: force-remove the \
+        worktree, delete the agent/<agent>-<id> branch, mark the row reviewed.
+        """
+    )
+
+    @Argument(help: "Ledger row id (apple-tasks dispatches --status pending-review).")
+    var ledgerId: Int64
+
+    struct DiscardResult: Codable {
+        let id: Int
+        let branch: String
+        let worktreeRemoved: Bool
+        let branchDeleted: Bool
+    }
+
+    struct AlreadyReviewed: Codable {
+        let id: Int
+        let discarded: Bool
+        let note: String
+    }
+
+    func run() async throws {
+        guard let row = AuditDB.shared.dispatchRow(id: ledgerId) else {
+            throw AppleTasksError.invalidInput("no dispatch ledger row #\(ledgerId)")
+        }
+        if row.reviewedAt != nil {
+            emit(AlreadyReviewed(id: row.id, discarded: false, note: "already reviewed"))
+            return
+        }
+        guard row.status == "succeeded", row.worktree != nil else {
+            let message = row.status != "succeeded"
+                ? "dispatch #\(row.id) is \(row.status), not a succeeded worktree run"
+                : "dispatch #\(row.id) has no worktree on record"
+            throw AppleTasksError.invalidInput(message)
+        }
+        emit(Self.discard(row: row, db: .shared))
+    }
+
+    /// Git + ledger steps so tests can exercise discard without ArgumentParser.
+    static func discard(row: AuditDB.DispatchRow, db: AuditDB) -> DiscardResult {
+        let branch = row.branch ?? "agent/\(row.agent)-\(row.id)"
+        var worktreeRemoved = false
+        var branchDeleted = false
+        if let repo = row.cwd, !repo.isEmpty {
+            if let wt = row.worktree {
+                _ = Dispatch.runGit(["worktree", "remove", "--force", wt], repo: repo)
+                worktreeRemoved = !FileManager.default.fileExists(atPath: wt)
+            }
+            _ = Dispatch.runGit(["branch", "-D", branch], repo: repo)
+            branchDeleted = Dispatch.runGit(
+                ["rev-parse", "--verify", "--quiet", branch], repo: repo) != 0
+        } else if let wt = row.worktree {
+            worktreeRemoved = !FileManager.default.fileExists(atPath: wt)
+        }
+        db.clearWorktree(id: Int64(row.id))
+        db.markReviewed(id: Int64(row.id))
+        db.record(command: "dispatch-discard", taskId: row.taskId,
+                  detail: "\(row.agent): \(branch)", result: "ok")
+        return DiscardResult(id: row.id, branch: branch,
+                             worktreeRemoved: worktreeRemoved, branchDeleted: branchDeleted)
     }
 }

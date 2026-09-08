@@ -73,6 +73,7 @@ extension Dispatch {
                         _ = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
                         _ = Self.runGit(["branch", "-d", branch], repo: repo)
                         AuditDB.shared.clearWorktree(id: Int64(row.id))
+                        AuditDB.shared.markReviewed(id: Int64(row.id))
                         action = "gc: branch \(branch) merged, worktree removed"
                     } else {
                         action = "gc: kept, unmerged branch \(branch) pending"

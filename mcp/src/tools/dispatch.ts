@@ -65,10 +65,10 @@ export function registerDispatchTools(server: McpServer): void {
     description:
       "Show the dispatch ledger: agent runs with status, exit code, outcome summary, run log path, worktree.",
     input: {
-      status: z.enum(["running", "succeeded", "failed", "timeout", "cancelled", "aborted"]).optional(),
+      status: z.enum(["running", "succeeded", "failed", "timeout", "cancelled", "aborted", "pending-review"]).optional(),
       limit: z.number().int().optional().describe("Max rows (default 50, newest first)."),
     },
-    // AuditDB.DispatchRow (Sources/AppleTasks/Audit.swift)
+    // AuditDB.DispatchRow | PendingReviewItem (Dispatch/PendingReview.swift)
     output: {
       dispatches: z.array(z.object({
         id: z.number().int(),
@@ -83,6 +83,9 @@ export function registerDispatchTools(server: McpServer): void {
         runLogPath: z.string().optional(),
         worktree: z.string().optional(),
         summary: z.string().optional(),
+        branch: z.string().optional(),
+        commitsAhead: z.number().int().optional(),
+        commits: z.array(z.string()).optional(),
       })),
     },
     annotations: { title: "List dispatches", readOnlyHint: true },
@@ -118,6 +121,29 @@ export function registerDispatchTools(server: McpServer): void {
     annotations: { title: "Cancel dispatch", destructiveHint: true, idempotentHint: true },
     timeoutMs: 30_000,
     argv: ({ ledger_id }) => ["dispatch-cancel", String(ledger_id)],
+  });
+
+  defineTool(server, {
+    name: "dispatch_discard",
+    description:
+      "Discard a succeeded worktree branch by ledger id: force-remove the worktree, delete the " +
+      "agent/<agent>-<id> branch, mark the row reviewed. Returns {discarded:false, note:'already reviewed'} " +
+      "if the row was already reviewed.",
+    input: {
+      ledger_id: z.number().int().describe("Ledger row id from dispatch_list (status pending-review)."),
+    },
+    // DispatchDiscard.DiscardResult | DispatchDiscard.AlreadyReviewed
+    output: {
+      id: z.number().int(),
+      branch: z.string().optional(),
+      worktreeRemoved: z.boolean().optional(),
+      branchDeleted: z.boolean().optional(),
+      discarded: z.boolean().optional(),
+      note: z.string().optional(),
+    },
+    annotations: { title: "Discard reviewed branch", destructiveHint: true, idempotentHint: true },
+    timeoutMs: 60_000,
+    argv: ({ ledger_id }) => ["dispatch-discard", String(ledger_id)],
   });
 
   const runLogDescription =

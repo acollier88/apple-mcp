@@ -173,4 +173,59 @@ final class AuditDBTests: XCTestCase {
         XCTAssertEqual(row?.command, "ls")
         XCTAssertEqual(row?.status, "running")
     }
+
+    // MARK: schema v2 — verification + pending review
+
+    private func finished(_ db: AuditDB, task: String, agent: String = "cursor", status: String,
+                          worktree: String? = nil) -> Int64 {
+        guard case .claimed(let id) = db.claimDispatch(taskId: task, agent: agent, command: "x", cwd: "/r") else {
+            XCTFail("claim failed"); return -1
+        }
+        if let worktree { db.setDispatchPaths(id: id, runLogPath: nil, worktree: worktree) }
+        db.finishDispatch(id: id, status: status, exitCode: status == "succeeded" ? 0 : 1)
+        return id
+    }
+
+    func testSetVerificationAndLatestSucceeded() {
+        let db = openDB()
+        let first = finished(db, task: "t", status: "succeeded")
+        db.setVerification(id: first, fingerprint: "fp1", modifiedAt: "2026-09-08T00:00:00Z", verification: "open-claimed")
+        let second = finished(db, task: "t", status: "failed")
+        db.setVerification(id: second, fingerprint: "fp2", modifiedAt: nil, verification: "open-untagged")
+
+        let latest = db.latestSucceeded(taskId: "t")
+        XCTAssertEqual(latest?.id, Int(first), "failed row must not be the latest *succeeded*")
+        XCTAssertEqual(latest?.taskFingerprint, "fp1")
+        XCTAssertEqual(latest?.taskModifiedAt, "2026-09-08T00:00:00Z")
+        XCTAssertEqual(latest?.verification, "open-claimed")
+        XCTAssertNil(db.latestSucceeded(taskId: "never-ran"))
+
+        let third = finished(db, task: "t", status: "succeeded")
+        db.setVerification(id: third, fingerprint: "fp3", modifiedAt: nil, verification: "completed")
+        XCTAssertEqual(db.latestSucceeded(taskId: "t")?.taskFingerprint, "fp3")
+    }
+
+    func testPendingReviewRowsAndMarkReviewed() {
+        let db = openDB()
+        let review = finished(db, task: "a", status: "succeeded", worktree: "/wt/1")
+        _ = finished(db, task: "b", status: "failed", worktree: "/wt/2")     // failed: not review
+        _ = finished(db, task: "c", status: "succeeded")                    // no worktree: not review
+        let reviewed = finished(db, task: "d", status: "succeeded", worktree: "/wt/4")
+        db.markReviewed(id: reviewed)
+
+        let pending = db.pendingReviewRows()
+        XCTAssertEqual(pending.map(\.id), [Int(review)])
+        XCTAssertEqual(pending.first?.branch, "agent/cursor-\(review)")
+        XCTAssertNil(pending.first?.reviewedAt)
+        XCTAssertNotNil(db.dispatchRow(id: reviewed)?.reviewedAt)
+
+        db.markReviewed(id: review)
+        XCTAssertTrue(db.pendingReviewRows().isEmpty)
+    }
+
+    func testBranchIsNilWithoutWorktree() {
+        let db = openDB()
+        let id = finished(db, task: "x", status: "succeeded")
+        XCTAssertNil(db.dispatchRow(id: id)?.branch)
+    }
 }
