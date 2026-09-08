@@ -37,9 +37,28 @@ Or write `~/.config/apple-tasks/serve.json`:
 | GET | `/v1/health` | — |
 | GET | `/v1/dispatches?status=&limit=` | `dispatches` |
 | GET | `/v1/log?limit=&since=&task=&caller=` | `log` |
-| POST | `/v1/dispatch` `{dryRun,agent,list}` | `dispatch` / `--dry-run` |
-| GET | `/v1/runs/{id}/log` | file under `~/.config/apple-tasks/runs/` |
-| POST | `/v1/triage` `{apply,list}` | `triage` / `--apply` |
+| POST | `/v1/dispatch` `{dryRun,agent,list,reapOnly}` | `dispatch`. **`dryRun` defaults to true** (omit/`true` → `--dry-run`, 60s). Only the literal `"dryRun": false` is a live run (1800s). `reapOnly: true` → `--reap-only`. |
+| GET | `/v1/runs/{id}/log?tail=` | last `tail` bytes of `~/.config/apple-tasks/runs/{id}.log` (default 262144, max 4 MiB) |
+| POST | `/v1/triage` `{apply,list,agent,notes}` | `triage` / `--apply` / `--inbox <list>` / `--agent` / `--notes` |
 
 All routes except `/v1/health` require `Authorization: Bearer <token>`.
 There is no dispatch-cancel route.
+
+## Limits
+
+- Header block larger than 16 KiB → `431`
+- Declared `Content-Length` larger than 1 MiB → `413`
+- Request not finished within 10s of the first byte → connection closed (`408` when a response can be sent)
+- At most 4 concurrent CLI executions; waiting longer than 1s → `503`
+
+## Errors
+
+Every non-2xx JSON body is:
+
+```json
+{"error": "<message>", "code": "<snake_case_code>"}
+```
+
+Codes: `unauthorized`, `not_found`, `bad_request`, `payload_too_large`, `headers_too_large`, `timeout`, `busy`, `cli_failed`.
+
+When the CLI process fails, the body also includes `"exitCode": <n>` if the exit status is known.

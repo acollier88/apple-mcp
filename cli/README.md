@@ -38,13 +38,22 @@ swift build -c release   # CLI only; everything works without the helper
 When tags are written (`add -t`, `update --add-tag`), the CLI also mirrors them
 to **real Reminders tags** via `apple-tasks-private`, a small helper that uses
 Apple's private ReminderKit framework (see `docs/remctl-spike.md`). The `[tag]`
-title prefix remains the source of truth — the mirror is additive-only and
+title prefix remains the source of truth — the mirror is idempotent and
 best-effort:
 
 - Output gains `"nativeTags": true|false` on add/update (omitted if no tags).
 - A failed mirror warns on stderr but never fails the command.
-- Removal only updates the prefix; ReminderKit exposes no tag-removal API, so
-  stale native tags must be removed in the Reminders app.
+- A name already present natively is skipped, never duplicated (compared in
+  Reminders' stored form: `dispatched:mbp` is stored as `dispatchedmbp`).
+- Removal follows the title: `update --remove-tag`, shedding a claim tag on
+  finish, and the recurrence roll in `complete` all remove the matching
+  native hashtag too (`REMReminderHashtagContextChangeItem.removeHashtag:`).
+- `remirror-tags [--dry-run] [--id …] [--list …]` reconciles: adds missing
+  hashtags, drops duplicates, and prunes stale `#dispatched…`/`#failed…`
+  chips the title no longer carries. It never removes other native tags.
+  Before 2026-09-07 the mirror was additive and blind, so every dispatch
+  pass on a recurring task appended another copy — run `remirror-tags`
+  once to clean up.
 - `--no-native-tags` skips the mirror; deleting the helper binary disables it
   globally. `APPLE_TASKS_PRIVATE_BIN` overrides the helper path.
 - Private API caveat: may break on any macOS update (the helper probes every
@@ -308,11 +317,15 @@ make install-digest HOUR=7 MINUTE=30
 make uninstall-digest
 ```
 
-`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch` with a
-PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` / `hermes` usually
-live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
-before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
-`~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
+`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch --quiet`
+with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
+`hermes` usually live). `--quiet` emits `[]` when a pass produced only the
+same GC/skip/gate/schedule noise as the previous one, so launchd's stdout
+log does not grow on idle cycles. Optional secrets go in
+`~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
+`export CURSOR_API_KEY=…`). The wrapper rotates
+`~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
+Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
 (`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
 (from argv) and, for Cursor `agent`, a `# resolved model=` line from Auto.
 `doctor` reports
@@ -357,7 +370,10 @@ the design):
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is
-  written after the claim and is only the human-visible mirror.
+  written after the claim and is only the human-visible mirror. If the
+  ledger DB is unavailable the pass **fails closed** (stderr warning, no
+  unledgered run). A claim-tag save failure aborts that task only and the
+  rest of the pass continues.
 - **Concurrency** (`maxConcurrent`, global and per-agent) — agent runs
   execute in a capped task group; the global default of 1 preserves
   sequential behavior until you opt in. Outcomes are recorded as each run
@@ -372,7 +388,9 @@ the design):
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
-  only if empty). `--no-gc` skips the pass.
+  only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
+  for finished (or orphan) ledger rows older than the same cutoff are
+  removed too. `--no-gc` skips the pass.
 - **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
   macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to

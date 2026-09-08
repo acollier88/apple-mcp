@@ -12,4 +12,15 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
   set +a
 fi
+# Rotate launchd logs before they grow without bound (5 MiB).
+LOG_DIR="${HOME}/.config/apple-tasks/logs"
+if [[ -d "$LOG_DIR" ]]; then
+  for f in "$LOG_DIR"/*.log; do
+    [[ -f "$f" ]] || continue
+    size="$(stat -f %z "$f" 2>/dev/null || echo 0)"
+    if [[ "$size" -gt 5242880 ]]; then
+      mv -f "$f" "${f}.1"
+    fi
+  done
+fi
 exec "$BIN" "$@"

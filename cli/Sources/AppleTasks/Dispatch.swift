@@ -1,4 +1,5 @@
 import ArgumentParser
+import CryptoKit
 import EventKit
 import Foundation
 
@@ -227,11 +228,15 @@ enum ClaimTags {
     static let host: String = {
         var buf = [CChar](repeating: 0, count: 256)
         gethostname(&buf, buf.count)
-        let raw = String(cString: buf)
+        return sanitizeHost(String(cString: buf))
+    }()
+
+    /// First DNS label, lowercased, keeping letters/digits/hyphen. `"mac"` if empty.
+    static func sanitizeHost(_ raw: String) -> String {
         let label = raw.split(separator: ".").first.map(String.init) ?? raw
         let cleaned = label.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }
         return cleaned.isEmpty ? "mac" : cleaned
-    }()
+    }
 
     static var dispatched: String { "dispatched:\(host)" }
     static var failed: String { "failed:\(host)" }
@@ -283,6 +288,9 @@ struct Dispatch: AsyncParsableCommand {
     @Flag(name: .customLong("no-gc"), help: "Skip worktree garbage collection this run.")
     var noGC = false
 
+    @Flag(name: .customLong("quiet"), help: "Emit [] when this pass produced only repeat GC/skip reports identical to the previous pass (for launchd logs).")
+    var quiet = false
+
     struct DispatchReport: Codable {
         let taskId: String
         let title: String
@@ -322,6 +330,10 @@ struct Dispatch: AsyncParsableCommand {
 
     func run() async throws {
         let config = try AgentsConfig.load()
+        if !AuditDB.shared.isAvailable {
+            FileHandle.standardError.write(Data(
+                "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))
+        }
         let requireAuto = config.requireAutoTag ?? true
 
         let store = Store()
@@ -388,10 +400,38 @@ struct Dispatch: AsyncParsableCommand {
                                                   exitCode: nil, runLog: row.runLogPath, worktree: wt))
                 }
             }
+            let scratchBase = AgentsConfig.url.deletingLastPathComponent()
+                .appendingPathComponent("scratch")
+            // Without the ledger every dir looks orphaned — skip rather than
+            // delete a running agent's scratch space.
+            if AuditDB.shared.isAvailable,
+               let names = try? FileManager.default.contentsOfDirectory(atPath: scratchBase.path) {
+                for name in names {
+                    guard let id = Int64(name) else { continue }
+                    let dir = scratchBase.appendingPathComponent(name)
+                    var isDir: ObjCBool = false
+                    guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir),
+                          isDir.boolValue else { continue }
+                    let row = AuditDB.shared.dispatchRow(id: id)
+                    if let row {
+                        guard row.status != "running" else { continue }
+                        guard let finished = row.finishedAt,
+                              let date = iso.date(from: finished), date < keepCutoff else { continue }
+                    }
+                    try? FileManager.default.removeItem(at: dir)
+                    reports.append(DispatchReport(
+                        taskId: row?.taskId ?? String(id),
+                        title: row.map { "(ledger #\($0.id))" } ?? "(scratch #\(id))",
+                        agent: row?.agent ?? "-",
+                        cwd: dir.path,
+                        action: "gc: removed scratch dir (>\(keepDays)d)",
+                        exitCode: nil, runLog: row?.runLogPath, worktree: nil))
+                }
+            }
         }
 
         if reapOnly {
-            emit(reports)
+            emitReports(reports)
             return
         }
 
@@ -710,9 +750,20 @@ struct Dispatch: AsyncParsableCommand {
 
             // Atomic claim first: the ledger row is the lock (single-statement
             // insert-if-absent), so two dispatchers can't both take the task.
-            guard let ledgerId = AuditDB.shared.claimDispatch(
-                taskId: taskId, agent: agentTag, command: argv.joined(separator: " "), cwd: cwd) else {
-                continue // another dispatcher claimed it between our scan and now
+            // Fail closed when the ledger is unavailable — never run unledgered.
+            let ledgerId: Int64
+            switch AuditDB.shared.claimDispatch(
+                taskId: taskId, agent: agentTag, command: argv.joined(separator: " "), cwd: cwd) {
+            case .held:
+                continue
+            case .unavailable:
+                reports.append(DispatchReport(
+                    taskId: taskId, title: parsed.title, agent: agentTag, cwd: cwd,
+                    action: "skipped: ledger unavailable — refusing to dispatch unledgered",
+                    exitCode: nil, runLog: nil, worktree: nil))
+                continue
+            case .claimed(let id):
+                ledgerId = id
             }
 
             // Mark dispatched (visible everywhere via tag + native mirror);
@@ -730,7 +781,20 @@ struct Dispatch: AsyncParsableCommand {
                 try store.save(reminder)
             } catch {
                 AuditDB.shared.finishDispatch(id: ledgerId, status: "aborted", exitCode: -1)
-                throw error
+                AuditDB.shared.record(command: "dispatch", taskId: taskId,
+                                      list: reminder.calendar?.title,
+                                      detail: "\(agentTag): \(parsed.title)",
+                                      result: "error",
+                                      error: "claim tag save failed: \(error)")
+                reports.append(DispatchReport(
+                    taskId: taskId, title: parsed.title, agent: agentTag, cwd: cwd,
+                    action: "aborted: could not save claim tag: \(error.localizedDescription)",
+                    exitCode: -1, runLog: nil, worktree: nil))
+                continue
+            }
+            let shedFailed = parsed.tags.filter { ClaimTags.isFailed($0) }
+            if !shedFailed.isEmpty {
+                _ = NativeTags.remove(tags: shedFailed, externalId: reminder.calendarItemExternalIdentifier)
             }
             _ = NativeTags.mirror(tags: [ClaimTags.dispatched], externalId: reminder.calendarItemExternalIdentifier)
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
@@ -847,6 +911,27 @@ struct Dispatch: AsyncParsableCommand {
                 at: 0
             )
         }
+        emitReports(reports)
+    }
+
+    /// Emit the pass report, or `[]` under `--quiet` when this pass only
+    /// repeated the same GC/skip noise as the previous one.
+    private func emitReports(_ reports: [DispatchReport]) {
+        let key = reports.map { $0.action + $0.taskId }.sorted().joined()
+        let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        let noiseOnly = reports.allSatisfy { report in
+            let action = report.action
+            if action.hasPrefix("skipped: ledger") { return false }
+            return action.hasPrefix("gc:")
+                || action.hasPrefix("skipped:")
+                || action.hasPrefix("gated:")
+                || action.hasPrefix("scheduled:")
+        }
+        if quiet, noiseOnly, AuditDB.shared.getState("dispatch.lastReportHash") == hash {
+            emit([DispatchReport]())
+            return
+        }
+        AuditDB.shared.setState("dispatch.lastReportHash", hash)
         emit(reports)
     }
 
@@ -1037,6 +1122,9 @@ struct Dispatch: AsyncParsableCommand {
         }
         current.title = Tags.compose(tags: tags, title: title)
         try? store.save(current)
+        // Native side follows the title: drop this Mac's #dispatched chip,
+        // paint #failed once.
+        _ = NativeTags.remove(tags: [ClaimTags.dispatched, "dispatched"], externalId: current.calendarItemExternalIdentifier)
         _ = NativeTags.mirror(tags: [ClaimTags.failed], externalId: current.calendarItemExternalIdentifier)
     }
 

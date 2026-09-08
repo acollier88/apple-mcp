@@ -31,6 +31,14 @@ Env overrides:
 TCC grants are **per host process**. If tools fail after working in Terminal,
 run the `doctor` tool from the MCP host.
 
+## Develop
+
+```bash
+bun install
+bun run typecheck
+bun test
+```
+
 ## Structured output
 
 Every JSON-emitting tool declares an `outputSchema` and returns

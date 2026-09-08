@@ -16,7 +16,7 @@ HOUR ?= 7
 MINUTE ?= 0
 
 .PHONY: all cli helper mcp app server install-server clean betacheck mail-rule \
-	install-agent uninstall-agent install-digest uninstall-digest
+	install-agent uninstall-agent install-digest uninstall-digest test
 
 all: cli helper
 
@@ -46,6 +46,11 @@ install-server: server
 
 app: cli
 	cd apps/AgentTasks && ./build.sh
+
+test:
+	$(MAKE) -C $(CLI_DIR) test
+	cd server && swift test
+	cd mcp && bun run typecheck && bun test
 
 clean:
 	$(MAKE) -C $(CLI_DIR) clean
