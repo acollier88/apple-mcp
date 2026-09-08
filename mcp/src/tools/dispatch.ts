@@ -65,7 +65,7 @@ export function registerDispatchTools(server: McpServer): void {
     description:
       "Show the dispatch ledger: agent runs with status, exit code, outcome summary, run log path, worktree.",
     input: {
-      status: z.enum(["running", "succeeded", "failed", "timeout", "aborted"]).optional(),
+      status: z.enum(["running", "succeeded", "failed", "timeout", "cancelled", "aborted"]).optional(),
       limit: z.number().int().optional().describe("Max rows (default 50, newest first)."),
     },
     // AuditDB.DispatchRow (Sources/AppleTasks/Audit.swift)
@@ -93,6 +93,31 @@ export function registerDispatchTools(server: McpServer): void {
       return args;
     },
     wrap: (parsed) => ({ dispatches: parsed }),
+  });
+
+  defineTool(server, {
+    name: "dispatch_cancel",
+    description:
+      "Cancel a running dispatch by ledger id: signal the agent process (and its children), mark the " +
+      "row 'cancelled', shed this Mac's [dispatched] claim. Does NOT write [failed], so no retry/backoff. " +
+      "The worktree is left for GC. Returns {cancelled:false, note:'not running'} if the row already finished.",
+    input: {
+      ledger_id: z.number().int().describe("Ledger row id from dispatch_list (status running)."),
+    },
+    // DispatchCancel.Result | DispatchCancel.NotRunning (Dispatch/LedgerCommands.swift)
+    output: {
+      id: z.number().int(),
+      status: z.string(),
+      taskId: z.string().optional(),
+      agent: z.string().optional(),
+      process: z.string().optional().describe("terminated | killed | gone | not found"),
+      tagShed: z.boolean().optional(),
+      cancelled: z.boolean().optional(),
+      note: z.string().optional(),
+    },
+    annotations: { title: "Cancel dispatch", destructiveHint: true, idempotentHint: true },
+    timeoutMs: 30_000,
+    argv: ({ ledger_id }) => ["dispatch-cancel", String(ledger_id)],
   });
 
   const runLogDescription =

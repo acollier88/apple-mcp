@@ -27,6 +27,10 @@ public enum RouteArgs {
             return .cli(args: args, timeout: 30)
         case ("POST", "/v1/dispatch"):
             return dispatch(body)
+        case ("POST", let p) where p.hasPrefix("/v1/dispatches/") && p.hasSuffix("/cancel"):
+            let id = String(p.dropFirst("/v1/dispatches/".count).dropLast("/cancel".count))
+            guard !id.isEmpty, id.allSatisfy(\.isNumber) else { return .badRequest("bad ledger id") }
+            return .cli(args: ["dispatch-cancel", id], timeout: 30)
         case ("POST", "/v1/triage"):
             return triage(body)
         case ("GET", let p) where p.hasPrefix("/v1/runs/") && p.hasSuffix("/log"):

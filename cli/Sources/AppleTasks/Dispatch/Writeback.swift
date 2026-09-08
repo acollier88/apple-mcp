@@ -5,7 +5,17 @@ import Foundation
 extension Dispatch {
     func writeBack(_ outcome: RunOutcome, store: Store, config: AgentsConfig) async -> DispatchReport {
         let spec = outcome.spec
-        let trailerText = trailer(ledgerId: spec.ledgerId, status: outcome.status,
+        // Another process (`dispatch-cancel`, or a reap from a concurrent pass)
+        // may have already killed this agent and finished the row. Its exit
+        // then looks like a failure to us; keep their status (cancelled /
+        // timeout) — they already wrote the tag and trailer — and don't page.
+        if let current = AuditDB.shared.dispatchRow(id: spec.ledgerId), current.status != "running" {
+            return DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
+                                  cwd: spec.runCwd, action: "\(current.status) (finished by another process)",
+                                  exitCode: outcome.exitCode.map(Int.init),
+                                  runLog: spec.logPath, worktree: spec.worktree)
+        }
+        let trailerText = Self.trailer(ledgerId: spec.ledgerId, status: outcome.status,
                                   exitCode: outcome.exitCode, branch: spec.branch,
                                   repo: spec.repo, logPath: spec.logPath,
                                   seat: outcome.seat)
@@ -16,7 +26,7 @@ extension Dispatch {
         if outcome.status != "succeeded" {
             await markFailed(store: store, taskId: spec.taskId)
         }
-        await appendNotesTrailer(store: store, taskId: spec.taskId, trailer: trailerText)
+        await Self.appendNotesTrailer(store: store, taskId: spec.taskId, trailer: trailerText)
         let notifyOn = config.notifyOn ?? "failure"
         let summaryLine = trailerText.components(separatedBy: "\n").first ?? outcome.status
         if notifyOn == "all" || (notifyOn == "failure" && outcome.status != "succeeded") {
@@ -57,9 +67,9 @@ extension Dispatch {
 
     /// One-line run outcome for the ledger, plus (for succeeded worktree
     /// runs) up to 3 commit oneliners showing what the branch produced.
-    private func trailer(ledgerId: Int64, status: String, exitCode: Int32?,
-                         branch: String?, repo: String?, logPath: String?,
-                         seat: AgentSeat.Info?) -> String {
+    static func trailer(ledgerId: Int64, status: String, exitCode: Int32?,
+                        branch: String?, repo: String?, logPath: String?,
+                        seat: AgentSeat.Info?) -> String {
         var line = "[dispatch #\(ledgerId)] \(status)"
         if let exitCode { line += " exit=\(exitCode)" }
         if let seat { line += " \(seat.summary)" }
@@ -75,7 +85,7 @@ extension Dispatch {
 
     /// Append the run trailer to the task notes, re-fetching first because
     /// the agent may have edited the task meanwhile. Best-effort.
-    private func appendNotesTrailer(store: Store, taskId: String, trailer: String) async {
+    static func appendNotesTrailer(store: Store, taskId: String, trailer: String) async {
         guard let current = try? await store.reminder(id: taskId) else { return }
         let existing = current.notes.map { $0.isEmpty ? "" : $0 + "\n\n" } ?? ""
         current.notes = existing + trailer
@@ -98,5 +108,20 @@ extension Dispatch {
         // paint #failed once.
         _ = NativeTags.remove(tags: [ClaimTags.dispatched, "dispatched"], externalId: current.calendarItemExternalIdentifier)
         _ = NativeTags.mirror(tags: [ClaimTags.failed], externalId: current.calendarItemExternalIdentifier)
+    }
+
+    /// Shed this Mac's [dispatched] claim (host-scoped or bare) without
+    /// writing [failed]. Used by `dispatch-cancel`. Returns false if the
+    /// reminder is gone or had no own claim tag.
+    static func shedOwnDispatchedClaim(store: Store, taskId: String) async -> Bool {
+        guard let current = try? await store.reminder(id: taskId) else { return false }
+        var (tags, title) = Tags.parse(current.title ?? "")
+        let hadClaim = tags.contains { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
+        tags.removeAll { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
+        current.title = Tags.compose(tags: tags, title: title)
+        try? store.save(current)
+        _ = NativeTags.remove(tags: [ClaimTags.dispatched, "dispatched"],
+                              externalId: current.calendarItemExternalIdentifier)
+        return hadClaim
     }
 }
