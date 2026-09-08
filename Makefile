@@ -15,16 +15,25 @@ INTERVAL ?= 300
 HOUR ?= 7
 MINUTE ?= 0
 
+# sign-identity: once-per-machine self-signed "AgentTasks Dev" cert so TCC
+# and Keychain ACLs survive rebuilds (ad-hoc identities change every link).
 .PHONY: all cli helper mcp app server install-server clean betacheck mail-rule \
-	install-agent uninstall-agent install-digest uninstall-digest test
+	install-agent uninstall-agent install-digest uninstall-digest test sign-identity
 
 all: cli helper
 
 cli:
 	$(MAKE) -C $(CLI_DIR) cli
+	tools/sign.sh $(RELEASE_DIR)/apple-tasks
 
 helper: cli
 	$(MAKE) -C $(CLI_DIR) helper
+	tools/sign.sh $(RELEASE_DIR)/apple-tasks-private
+
+# Persistent self-signed codesigning identity in the login keychain (idempotent).
+# KEYCHAIN=/tmp/foo.keychain-db KEYCHAIN_PASSWORD=... for a throwaway keychain.
+sign-identity:
+	tools/sign-identity.sh
 
 mcp:
 	cd mcp && bun install
