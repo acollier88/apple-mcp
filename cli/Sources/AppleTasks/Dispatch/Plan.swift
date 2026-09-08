@@ -437,7 +437,7 @@ extension Dispatch {
 
             // Run log: everything the agent prints, kept per ledger row.
             let runsDir = AgentsConfig.url.deletingLastPathComponent().appendingPathComponent("runs")
-            try? FileManager.default.createDirectory(at: runsDir, withIntermediateDirectories: true)
+            RunLogs.ensureDirectory(runsDir)
             let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
             AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: worktreePath)
 
@@ -448,7 +448,7 @@ extension Dispatch {
             if promptVia != .argv {
                 let promptURL = runsDir.appendingPathComponent("\(ledgerId).prompt")
                 do {
-                    try prompt.write(to: promptURL, atomically: true, encoding: .utf8)
+                    try RunLogs.writePrivate(Data(prompt.utf8), to: promptURL)
                 } catch {
                     AuditDB.shared.finishDispatch(id: ledgerId, status: "failed", exitCode: -1)
                     await markFailed(store: store, taskId: taskId)

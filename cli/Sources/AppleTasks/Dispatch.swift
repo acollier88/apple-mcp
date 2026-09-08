@@ -9,6 +9,16 @@ struct Dispatch: AsyncParsableCommand {
         A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto \
         (any available worker). Config: ~/.config/apple-tasks/agents.json. \
         Dedupe via the dispatch ledger + a [dispatched] tag.
+        """,
+        discussion: """
+        dispatch-pause stops new claims; reap and worktree GC still run. \
+        --reap-only ignores the pause. --dry-run still plans and prefixes \
+        a 'paused until <ISO> [(reason)]' report so you see both. Without \
+        --dry-run the pass stops after reap/GC and appends that report. \
+        --quiet (launchd) emits the paused report only when until/reason \
+        changed since the last pass (dispatch.pauseLastReported); an \
+        unchanged pause plus repeat GC/skip noise collapses to [] so \
+        logs do not fill with 'paused' lines.
         """
     )
 
@@ -31,7 +41,11 @@ struct Dispatch: AsyncParsableCommand {
     @Flag(name: .customLong("no-gc"), help: "Skip worktree garbage collection this run.")
     var noGC = false
 
-    @Flag(name: .customLong("quiet"), help: "Emit [] when this pass produced only repeat GC/skip reports identical to the previous pass (for launchd logs).")
+    @Flag(name: .customLong("quiet"), help: """
+        Emit [] when this pass produced only repeat GC/skip reports identical \
+        to the previous pass (for launchd logs). A paused report is included \
+        only when the pause until/reason changed since the last pass.
+        """)
     var quiet = false
 
     struct DispatchReport: Codable {
@@ -109,7 +123,20 @@ struct Dispatch: AsyncParsableCommand {
         var openReminderCount: Int
     }
 
+    /// Live dispatch is refused when a dispatched agent is the caller.
+    /// `--dry-run` and `--reap-only` stay allowed (inspect / housekeeping).
+    static func recursionRefusal(caller: String?, dryRun: Bool, reapOnly: Bool) -> String? {
+        guard let caller, caller.hasPrefix("agent:") else { return nil }
+        if dryRun || reapOnly { return nil }
+        return "dispatch is not available to dispatched agents (APPLE_TASKS_CALLER=\(caller)); use --dry-run to inspect"
+    }
+
     func run() async throws {
+        if let message = Self.recursionRefusal(
+            caller: ProcessInfo.processInfo.environment["APPLE_TASKS_CALLER"],
+            dryRun: dryRun, reapOnly: reapOnly) {
+            throw AppleTasksError.invalidInput(message)
+        }
         let config = try AgentsConfig.load()
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
@@ -126,6 +153,14 @@ struct Dispatch: AsyncParsableCommand {
             emitReports(reports)
             return
         }
+
+        let pause = Self.resolvedPause(db: .shared)
+        if let pause, !dryRun {
+            attachPausedReport(&reports, pause: pause)
+            emitReports(reports)
+            return
+        }
+
         let plan = try await plan(config: config, store: store, requireAuto: requireAuto)
         reports += plan.reports
         reports += await executeAll(plan.specs, config: config, store: store)
@@ -138,6 +173,20 @@ struct Dispatch: AsyncParsableCommand {
                 at: 0
             )
         }
+        if let pause {
+            reports.insert(pause.report, at: 0)
+        }
         emitReports(reports)
+    }
+
+    /// Append the paused-until report, or omit it under `--quiet` when the
+    /// pause identity matches `dispatch.pauseLastReported`.
+    func attachPausedReport(_ reports: inout [DispatchReport], pause: PauseState) {
+        let last = Self.nonempty(AuditDB.shared.getState(Self.pauseLastReportedKey))
+        guard Self.shouldEmitPausedReport(quiet: quiet, lastReported: last, pause: pause) else {
+            return
+        }
+        reports.append(pause.report)
+        AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
     }
 }

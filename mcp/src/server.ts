@@ -9,9 +9,13 @@ import { registerMailTools } from "./tools/mail";
 import { registerMiscTools } from "./tools/misc";
 import { registerNotesTools } from "./tools/notes";
 import { registerTaskTools } from "./tools/tasks";
+import { registerPrompts } from "./prompts";
+import { registerResources } from "./resources";
 
 export function createServer(): McpServer {
   const server = new McpServer({ name: "apple-tasks", version: "0.1.0" });
+  registerResources(server);
+  registerPrompts(server);
   registerTaskTools(server);
   registerCalendarTools(server);
   registerNotesTools(server);
