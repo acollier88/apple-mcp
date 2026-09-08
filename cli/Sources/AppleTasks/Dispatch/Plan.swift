@@ -98,6 +98,25 @@ extension Dispatch {
                 continue
             }
 
+            // Completion guard (P3): when claimGuard is "modified", skip a
+            // task whose content fingerprint matches the last succeeded run
+            // (agent exited 0 without completing, nothing has changed since).
+            // Pre-v2 rows with no stored fingerprint never block. The
+            // `[dispatched]` check above still wins first (another Mac, or a
+            // run in flight). Default "running" leaves this gate off.
+            if (config.claimGuard ?? "running") == "modified",
+               let lastId = Self.unchangedSinceSuccess(
+                   current: TaskFingerprint.of(reminder),
+                   last: AuditDB.shared.latestSucceeded(taskId: taskId)) {
+                if dryRun {
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                  cwd: nil,
+                                                  action: "skipped: unchanged since succeeded #\(lastId) — edit the task or complete it to re-run",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                }
+                continue
+            }
+
             // Not due yet: stays queued until its due time. This is what
             // makes recurrence useful for agent work (IDEAS #36) — completing
             // a recurring task rolls it to the next occurrence, and without
@@ -454,6 +473,21 @@ extension Dispatch {
         }
 
         return PlanResult(specs: specs, reports: reports, openReminderCount: reminders.count)
+    }
+
+    /// Ledger id of the last succeeded run that still matches `current`,
+    /// or nil when the guard should not fire: no prior success, pre-v2 row
+    /// without a fingerprint, the task has changed — or the last run did
+    /// NOT end `open-claimed`. That last condition matters: an agent that
+    /// ran `apple-tasks complete` on a recurring task rolled its due date
+    /// during the run, so Phase C stored the post-roll fingerprint; when
+    /// the next occurrence comes due nothing has changed since, and without
+    /// this check the recurrence would be blocked forever. Only "agent
+    /// exited 0 and walked away" is the idempotent case worth guarding.
+    static func unchangedSinceSuccess(current fingerprint: String, last: AuditDB.DispatchRow?) -> Int? {
+        guard let last, last.verification == "open-claimed",
+              let stored = last.taskFingerprint, stored == fingerprint else { return nil }
+        return last.id
     }
 
     /// nil = this lane can take the task this pass.

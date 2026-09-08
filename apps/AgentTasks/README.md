@@ -22,12 +22,20 @@ run logs and the ledger live here (and in `~/.config/apple-tasks/`).
 |-----|---------------|---------|
 | **Queue** | Open `[auto]` tasks | Filter by agent; **Add Task** (workdir picker / Choose Folder…); **Set Folder…** when a task has no `workdirs` match; **Complete** / **Fail** |
 | **Activity** | Audit log (`apple-tasks log`) | Filter by command type, caller (agents/mcp/launchd/…), failures; Triage Inbox |
-| **Dispatches** | Ledger (`apple-tasks dispatches`) | Status filter; **Dry Run** / **Dispatch Now**; **Open Log** for a run |
+| **Dispatches** | Ledger (`apple-tasks dispatches`) | Status filter; **Awaiting review**; **Dry Run** / **Dispatch Now**; **Open Log** / **Open in Terminal** / **Discard…** |
 | **Settings** | TCC status for this app | **Prompt for Permissions** (Reminders, Calendars, Contacts, Location, Speech) |
 
 **Dispatch Now** is the same as `apple-tasks dispatch` / the LaunchAgent from
 `make install-agent` — it can launch agents and consume their budgets. Prefer
 Dry Run first. Optional `APPLE_TASKS_BIN` overrides the CLI path.
+
+**Awaiting review** loads `apple-tasks dispatches --status pending-review` (unmerged
+worktree branches). Those rows show a **Review** badge, the branch name, how many
+commits are ahead, and the first commit line. **Open in Terminal** opens the
+worktree in Terminal.app; **Open Log** is the same run-log action as the default
+ledger view; **Discard…** confirms, then runs `apple-tasks dispatch-discard` to
+delete the branch and remove the worktree (commits are lost unless pushed). A
+count appears next to the Dispatches header when any items are waiting.
 
 ## Relationship to the CLI / MCP
 

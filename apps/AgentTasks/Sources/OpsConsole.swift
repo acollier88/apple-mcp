@@ -45,6 +45,30 @@ struct DispatchLedgerRow: Codable, Identifiable {
     let runLogPath: String?
     let worktree: String?
     let summary: String?
+    let verification: String?
+    let reviewedAt: String?
+    let taskFingerprint: String?
+    let taskModifiedAt: String?
+    let branch: String?
+    let commitsAhead: Int?
+    let commits: [String]?
+
+    /// Small caption when verification is present and not `completed`.
+    var verificationCaption: String? {
+        guard let verification, verification != "completed" else { return nil }
+        switch verification {
+        case "open-claimed": return "agent exited without completing"
+        case "open-untagged": return "task still open"
+        default: return verification
+        }
+    }
+}
+
+struct DispatchDiscardResult: Codable {
+    let id: Int
+    let branch: String
+    let worktreeRemoved: Bool
+    let branchDeleted: Bool
 }
 
 struct DispatchReportRow: Codable {
@@ -401,8 +425,12 @@ struct DispatchesTab: View {
     @State private var isLoading = false
     @State private var isDispatching = false
     @State private var statusFilter: String? = nil // nil = All
+    @State private var awaitingReview = false
+    @State private var pendingReviewCount = 0
     @State private var caption: String?
     @State private var confirmDispatch = false
+    @State private var confirmDiscard = false
+    @State private var discardTarget: DispatchLedgerRow?
 
     private let statusOptions: [(label: String, value: String?)] = [
         ("All", nil),
@@ -411,6 +439,11 @@ struct DispatchesTab: View {
         ("Failed", "failed"),
         ("Timeout", "timeout"),
     ]
+
+    /// Combined filter key so switching All ↔ Awaiting review refreshes once.
+    private var listQueryKey: String {
+        awaitingReview ? "pending-review" : (statusFilter ?? "all")
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -428,8 +461,18 @@ struct DispatchesTab: View {
         } message: {
             Text("Runs apple-tasks dispatch for open [auto] tasks. Agents may start and consume their budgets. Prefer Dry Run first.")
         }
+        .alert("Discard?", isPresented: $confirmDiscard) {
+            Button("Cancel", role: .cancel) {}
+            Button("Discard", role: .destructive) {
+                if let target = discardTarget {
+                    Task { await discardDispatch(target) }
+                }
+            }
+        } message: {
+            Text("Delete branch \(discardTarget?.branch ?? "the branch") and its worktree? The commits are lost unless pushed.")
+        }
         .onAppear { Task { await refresh() } }
-        .onChange(of: statusFilter) { _, _ in Task { await refresh() } }
+        .onChange(of: listQueryKey) { _, _ in Task { await refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refresh() }
         }
@@ -443,6 +486,11 @@ struct DispatchesTab: View {
                     .foregroundStyle(.orange)
                 Text("Dispatches")
                     .font(.headline)
+                if pendingReviewCount > 0 {
+                    Text("\(pendingReviewCount) awaiting review")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -483,9 +531,14 @@ struct DispatchesTab: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             ForEach(statusOptions, id: \.label) { opt in
-                FilterChip(title: opt.label, selected: statusFilter == opt.value) {
+                FilterChip(title: opt.label, selected: !awaitingReview && statusFilter == opt.value) {
+                    awaitingReview = false
                     statusFilter = opt.value
                 }
+            }
+            Divider().frame(height: 18)
+            FilterChip(title: "Awaiting review", selected: awaitingReview) {
+                awaitingReview = true
             }
             Spacer()
         }
@@ -499,11 +552,13 @@ struct DispatchesTab: View {
         if rows.isEmpty && !isLoading {
             VStack(spacing: 8) {
                 Spacer()
-                Text("No dispatch ledger rows")
+                Text(awaitingReview ? "No dispatches awaiting review" : "No dispatch ledger rows")
                     .foregroundStyle(.secondary)
-                Text("Dry Run or wait for the LaunchAgent pass.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                if !awaitingReview {
+                    Text("Dry Run or wait for the LaunchAgent pass.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -511,7 +566,10 @@ struct DispatchesTab: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
-                        DispatchRowView(row: row)
+                        DispatchRowView(row: row, reviewMode: awaitingReview) {
+                            discardTarget = row
+                            confirmDiscard = true
+                        }
                     }
                 }
             }
@@ -523,23 +581,64 @@ struct DispatchesTab: View {
     private func refresh() async {
         guard !isLoading else { return }
         isLoading = true
+        let review = awaitingReview
         let filter = statusFilter
         do {
             let jsonString = try await Task.detached {
                 var args = ["dispatches", "--limit", "50"]
-                if let filter { args += ["--status", filter] }
+                if review {
+                    args += ["--status", "pending-review"]
+                } else if let filter {
+                    args += ["--status", filter]
+                }
                 return try CLI.run(args, timeout: 30)
             }.value
             let decoded = try JSONDecoder().decode([DispatchLedgerRow].self, from: Data(jsonString.utf8))
             await MainActor.run {
                 self.rows = decoded
                 self.isLoading = false
+                if review { self.pendingReviewCount = decoded.count }
             }
+            if !review { await refreshPendingReviewCount() }
         } catch {
             await MainActor.run {
                 self.rows = []
                 self.isLoading = false
                 self.caption = "Ledger failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Best-effort count for the header; ignore errors if the CLI lacks this filter yet.
+    private func refreshPendingReviewCount() async {
+        do {
+            let jsonString = try await Task.detached {
+                try CLI.run(["dispatches", "--status", "pending-review", "--limit", "50"], timeout: 30)
+            }.value
+            let decoded = try JSONDecoder().decode([DispatchLedgerRow].self, from: Data(jsonString.utf8))
+            await MainActor.run { self.pendingReviewCount = decoded.count }
+        } catch {
+            // Leave the last known count; the Awaiting review chip surfaces a real error on click.
+        }
+    }
+
+    private func discardDispatch(_ row: DispatchLedgerRow) async {
+        do {
+            let json = try await Task.detached {
+                try CLI.run(["dispatch-discard", String(row.id)], timeout: 60)
+            }.value
+            let result = try? JSONDecoder().decode(DispatchDiscardResult.self, from: Data(json.utf8))
+            await MainActor.run {
+                if let result {
+                    self.caption = "Discarded \(result.branch)"
+                } else {
+                    self.caption = "Discarded #\(row.id)"
+                }
+            }
+            await refresh()
+        } catch {
+            await MainActor.run {
+                self.caption = "Discard failed: \(error.localizedDescription)"
             }
         }
     }
@@ -587,7 +686,14 @@ struct DispatchesTab: View {
 
 struct DispatchRowView: View {
     let row: DispatchLedgerRow
+    var reviewMode: Bool = false
+    var onDiscard: (() -> Void)? = nil
     @State private var isHovered = false
+
+    private var logAvailable: Bool {
+        guard let path = row.runLogPath else { return false }
+        return FileManager.default.fileExists(atPath: path)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -613,22 +719,57 @@ struct DispatchRowView: View {
 
                 StatusBadge(status: row.status)
 
-                Text(row.summary ?? row.taskId)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if reviewMode {
+                    Label("Review", systemImage: "eye")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .foregroundStyle(.indigo)
+                        .background(Color.indigo.opacity(0.1))
+                        .clipShape(Capsule())
+                        .labelStyle(.titleAndIcon)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.summary ?? row.taskId)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let caption = row.verificationCaption {
+                        Text(caption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if reviewMode {
+                        reviewMeta
+                    }
+                }
 
                 Spacer()
 
-                Button("Open Log") {
-                    if let path = row.runLogPath {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                if reviewMode {
+                    Button("Open in Terminal") {
+                        openInTerminal()
                     }
+                    .buttonStyle(.borderless)
+                    .disabled(row.worktree?.isEmpty ?? true)
+                    .help(row.worktree ?? "No worktree")
+                }
+
+                Button("Open Log") {
+                    openLog()
                 }
                 .buttonStyle(.borderless)
-                .disabled(row.runLogPath == nil
-                    || !FileManager.default.fileExists(atPath: row.runLogPath ?? ""))
+                .disabled(!logAvailable)
                 .help(row.runLogPath ?? "No run log")
+
+                if reviewMode {
+                    Button("Discard…", role: .destructive) {
+                        onDiscard?()
+                    }
+                    .buttonStyle(.borderless)
+                }
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 14)
@@ -639,6 +780,76 @@ struct DispatchRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+        }
+        .modifier(ReviewModeContextMenu(enabled: reviewMode) {
+            Button {
+                openInTerminal()
+            } label: {
+                Label("Open in Terminal", systemImage: "terminal")
+            }
+            .disabled(row.worktree?.isEmpty ?? true)
+
+            Button {
+                openLog()
+            } label: {
+                Label("Open Log", systemImage: "doc.text")
+            }
+            .disabled(!logAvailable)
+
+            Button("Discard…", role: .destructive) {
+                onDiscard?()
+            }
+        })
+    }
+
+    @ViewBuilder
+    private var reviewMeta: some View {
+        HStack(spacing: 8) {
+            if let branch = row.branch, !branch.isEmpty {
+                Text(branch)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            if let ahead = row.commitsAhead {
+                Text("\(ahead) commit\(ahead == 1 ? "" : "s") ahead")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if let first = row.commits?.first, !first.isEmpty {
+            Text(first)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
+    private func openLog() {
+        if let path = row.runLogPath {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+        }
+    }
+
+    private func openInTerminal() {
+        guard let worktree = row.worktree, !worktree.isEmpty else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Terminal", worktree]
+        try? process.run()
+    }
+}
+
+/// Attaches a context menu only in review mode so default rows don't get an empty menu.
+private struct ReviewModeContextMenu<Menu: View>: ViewModifier {
+    let enabled: Bool
+    @ViewBuilder var menu: () -> Menu
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.contextMenu(menuItems: menu)
+        } else {
+            content
         }
     }
 }

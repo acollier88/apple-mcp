@@ -384,6 +384,14 @@ the design):
   line in the ledger's `summary` column. Agents are prompted to record their
   own 1–3 sentence outcome first via `apple-tasks update <id> --append-notes`
   (non-destructive; appends a paragraph).
+- **Completion guard** (`claimGuard: "modified"`) — if an agent exits 0
+  without `apple-tasks complete`, the dispatcher sheds our `[dispatched]`
+  claim, appends a notes line, and stores a content fingerprint. The next
+  pass then skips while that fingerprint is unchanged (`skipped: unchanged
+  since succeeded #N — edit the task or complete it to re-run`); a human
+  edit or recurrence roll makes it eligible again. Default is still
+  `"running"` (any `[dispatched…]` tag blocks, today's behavior); the plan
+  is to flip the default after a week live.
 - **Worktree GC** — every pass reclaims finished runs' worktrees: merged
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
@@ -432,6 +440,11 @@ the design):
   tasks are re-dispatched up to `maxRetries` times once the backoff has
   elapsed (it scales linearly with the attempt count). After the budget is
   spent the task stays `[failed]` for a human or triage agent.
+- **Pending review** — `apple-tasks dispatches --status pending-review`
+  (or `--pending-review`) lists succeeded worktree runs whose agent branch
+  is still unmerged. Merged or deleted branches are marked reviewed and
+  drop off the list. `apple-tasks dispatch-discard <ledgerId>` force-removes
+  the worktree, deletes the branch, and marks the row reviewed.
 
 > **Subscription note (Claude Pro/Max):** the dispatcher invokes the official
 > `claude` CLI, which Anthropic permits for scripted/headless use under a

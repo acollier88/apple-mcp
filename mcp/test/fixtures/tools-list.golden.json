@@ -1027,6 +1027,55 @@
     }
   },
   {
+    "name": "dispatch_discard",
+    "description": "Discard a succeeded worktree branch by ledger id: force-remove the worktree, delete the agent/<agent>-<id> branch, mark the row reviewed. Returns {discarded:false, note:'already reviewed'} if the row was already reviewed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ledger_id": {
+          "type": "integer",
+          "description": "Ledger row id from dispatch_list (status pending-review)."
+        }
+      },
+      "required": [
+        "ledger_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "worktreeRemoved": {
+          "type": "boolean"
+        },
+        "branchDeleted": {
+          "type": "boolean"
+        },
+        "discarded": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
     "name": "dispatch_list",
     "description": "Show the dispatch ledger: agent runs with status, exit code, outcome summary, run log path, worktree.",
     "inputSchema": {
@@ -1040,7 +1089,8 @@
             "failed",
             "timeout",
             "cancelled",
-            "aborted"
+            "aborted",
+            "pending-review"
           ]
         },
         "limit": {
@@ -1094,6 +1144,18 @@
               },
               "summary": {
                 "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commitsAhead": {
+                "type": "integer"
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [

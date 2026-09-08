@@ -37,11 +37,48 @@ extension Dispatch {
         if outcome.status != "succeeded" {
             await Notifier.push(title: "agent \(outcome.status): \(spec.title)", body: summaryLine)
         }
-        let action = outcome.spawnError.map { "spawn failed: \($0)" } ?? outcome.status
+
+        // Phase C verification (P3): record what the task looks like after
+        // our trailer/notes write-back. An agent that exited 0 without
+        // `apple-tasks complete` leaves our claim tag in place — shed it
+        // so the task is not stranded, then re-fetch so the stored
+        // fingerprint is the post-shed title + extra note.
+        var reminder = try? await store.reminder(id: spec.taskId)
+        let verification = Self.verification(
+            isCompleted: reminder.map(\.isCompleted),
+            tags: Tags.parse(reminder?.title ?? "").tags)
+        if outcome.status == "succeeded", verification == "open-claimed" {
+            _ = await Self.shedOwnDispatchedClaim(store: store, taskId: spec.taskId)
+            await Self.appendNotesTrailer(
+                store: store, taskId: spec.taskId,
+                trailer: "[dispatch #\(spec.ledgerId)] agent exited 0 without completing the task — re-dispatch is blocked until the task changes")
+            reminder = try? await store.reminder(id: spec.taskId)
+        }
+        AuditDB.shared.setVerification(
+            id: spec.ledgerId,
+            fingerprint: reminder.map(TaskFingerprint.of),
+            modifiedAt: Dates.formatTimestamp(reminder?.lastModifiedDate),
+            verification: verification)
+
+        var action = outcome.spawnError.map { "spawn failed: \($0)" } ?? outcome.status
+        if outcome.status == "succeeded", verification == "open-claimed" {
+            action = "succeeded (open, claim shed)"
+        }
         return DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
                               cwd: spec.runCwd, action: action,
                               exitCode: outcome.exitCode.map(Int.init),
                               runLog: spec.logPath, worktree: spec.worktree)
+    }
+
+    /// Post-run reminder state for the ledger. `isCompleted` nil means the
+    /// reminder is gone (deleted) and counts as completed. A foreign Mac's
+    /// `[dispatched:other]` is not ours, so that is `open-untagged`.
+    static func verification(isCompleted: Bool?, tags: [String]) -> String {
+        guard let isCompleted, !isCompleted else { return "completed" }
+        if tags.contains(where: { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }) {
+            return "open-claimed"
+        }
+        return "open-untagged"
     }
 
     /// Emit the pass report, or `[]` under `--quiet` when this pass only
