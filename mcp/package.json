@@ -6,7 +6,8 @@
   "scripts": {
     "start": "bun src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "tools:table": "bun scripts/tools-table.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
