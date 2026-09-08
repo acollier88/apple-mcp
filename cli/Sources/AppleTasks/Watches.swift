@@ -368,14 +368,22 @@ struct WebGet: AsyncParsableCommand {
         return data
     }
 
+    /// Shared session so redirects re-run `HostPolicy` (cap 5). Escape hatch
+    /// `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` skips the policy for LAN watches.
+    private static let session = URLSession(
+        configuration: .default, delegate: WebGetRedirects.shared, delegateQueue: nil)
+
     static func request(_ urlString: String) async throws -> (Data, HTTPURLResponse) {
         guard let url = URL(string: urlString), let scheme = url.scheme,
               ["http", "https"].contains(scheme.lowercased()) else {
             throw AppleTasksError.saveFailed("not an http(s) URL: \(urlString)")
         }
+        if !HostPolicy.allowsPrivateURLs(), let reason = HostPolicy.refusal(for: url) {
+            throw AppleTasksError.saveFailed("refused URL (\(reason)): \(urlString)")
+        }
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("apple-tasks/0.1 (+watch-scan)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw AppleTasksError.automationFailed("non-HTTP response from \(urlString)")
         }
@@ -409,5 +417,44 @@ struct WebGet: AsyncParsableCommand {
         AuditDB.shared.record(command: "web fetch", detail: url)
         emit(Out(url: url, status: response.statusCode, contentType: contentType,
                  title: title, text: text, truncated: truncated))
+    }
+}
+
+/// Re-checks `HostPolicy.refusal` on each hop and stops after 5 redirects.
+private final class WebGetRedirects: NSObject, URLSessionTaskDelegate {
+    static let shared = WebGetRedirects()
+    private let lock = NSLock()
+    private var counts: [Int: Int] = [:]
+    private let maxRedirects = 5
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        lock.lock()
+        let count = (counts[task.taskIdentifier] ?? 0) + 1
+        counts[task.taskIdentifier] = count
+        lock.unlock()
+
+        guard count <= maxRedirects, let url = request.url else {
+            completionHandler(nil)
+            return
+        }
+        let scheme = url.scheme?.lowercased() ?? ""
+        guard ["http", "https"].contains(scheme) else {
+            completionHandler(nil)
+            return
+        }
+        if !HostPolicy.allowsPrivateURLs(), HostPolicy.refusal(for: url) != nil {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        counts.removeValue(forKey: task.taskIdentifier)
+        lock.unlock()
     }
 }

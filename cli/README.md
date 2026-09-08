@@ -321,7 +321,9 @@ make uninstall-digest
 with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
 `hermes` usually live). `--quiet` emits `[]` when a pass produced only the
 same GC/skip/gate/schedule noise as the previous one, so launchd's stdout
-log does not grow on idle cycles. Optional secrets go in
+log does not grow on idle cycles. `dispatch-pause` stops new claims but
+reaping continues; `--quiet` prints the paused line once per until/reason
+change, then collapses it the same way. Optional secrets go in
 `~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
 `export CURSOR_API_KEY=…`). The wrapper rotates
 `~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
@@ -436,6 +438,14 @@ the design):
   `[dispatched]` claim without writing `[failed]` (a cancel is a human
   decision and does not count toward retry/backoff). The worktree is left
   for GC. `apple-tasks dispatches --status cancelled` lists those rows.
+- **Pause** — `apple-tasks dispatch-pause --for 2h` (or `--until <ISO8601>`)
+  with optional `--reason` writes `dispatch.pausedUntil` in the state KV.
+  The next launchd pass still reaps and GCs, then stops before claiming
+  (`--dry-run` still plans and prefixes a paused report). `--quiet` prints
+  the paused line only when until/reason changed; otherwise idle cycles
+  stay `[]`. `dispatch-resume` clears the pause; `dispatch-status` reports
+  it. `digest` is unaffected. Doctor shows `dispatch.paused` and an info
+  issue while paused.
 - **Retries** (`maxRetries` / `retryBackoffMinutes`, default off) — `[failed]`
   tasks are re-dispatched up to `maxRetries` times once the backoff has
   elapsed (it scales linearly with the attempt count). After the budget is

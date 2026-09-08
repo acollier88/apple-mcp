@@ -28,9 +28,16 @@ struct DoctorOut: Codable {
     let homeAssistant: String
     let budget: String
     let deployment: DeploymentStatus
+    let dispatch: DispatchPauseInfo
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
+
+    struct DispatchPauseInfo: Codable {
+        let paused: Bool
+        let until: String?
+        let reason: String?
+    }
 
     struct PrivateHelperStatus: Codable {
         let present: Bool
@@ -521,13 +528,19 @@ struct Doctor: AsyncParsableCommand {
         let hermesCron = Self.hermesCronStatus()
         let hermesHaLink = Self.hermesHaLinkStatus()
         let homeAssistant = Self.homeAssistantStatus()
-        let issues = Self.collectIssues(
+        let pause = Dispatch.resolvedPause(db: .shared)
+        let dispatchInfo = DoctorOut.DispatchPauseInfo(
+            paused: pause != nil, until: pause?.untilISO, reason: pause?.reason)
+        var issues = Self.collectIssues(
             hermes: hermes,
             hermesGateway: hermesGateway,
             hermesCron: hermesCron,
             hermesHaLink: hermesHaLink,
             homeAssistant: homeAssistant
         )
+        if let pause, let issue = Self.pauseIssue(pause) {
+            issues.append(issue)
+        }
         var heals: HealReport?
         if enqueueHeals {
             heals = await Self.enqueueHeals(issues: issues, listName: listName)
@@ -563,6 +576,7 @@ struct Doctor: AsyncParsableCommand {
             homeAssistant: homeAssistant,
             budget: Self.budgetStatus(),
             deployment: Self.deploymentStatus(),
+            dispatch: dispatchInfo,
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
             heals: heals
@@ -643,6 +657,13 @@ struct Doctor: AsyncParsableCommand {
         return issues
     }
 
+    static func pauseIssue(_ pause: Dispatch.PauseState) -> DoctorIssue? {
+        var summary = "dispatcher paused until \(pause.untilISO)"
+        if let reason = pause.reason { summary += " (\(reason))" }
+        return DoctorIssue(system: "dispatch", severity: "info",
+                           summary: summary, signature: "dispatch-pause")
+    }
+
     /// Copilot 403 on a job already pinned to ollama-launch is stale, not a heal.
     private static func cronHealSummary(_ cron: String) -> String? {
         guard cron.localizedCaseInsensitiveContains(": error")
@@ -675,6 +696,7 @@ struct Doctor: AsyncParsableCommand {
         let open = (await store.reminders(in: nil)).filter { !$0.isCompleted }
         var actions: [HealAction] = []
         for issue in issues {
+            if issue.severity == "info" || issue.severity == "notice" { continue }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")
