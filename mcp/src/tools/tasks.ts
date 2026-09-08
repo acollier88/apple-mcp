@@ -3,6 +3,14 @@ import { z } from "zod";
 import { defineTool } from "../lib";
 import { deletedShape, tagsField, taskSchema, taskShape, listShape } from "../schemas";
 
+const nativeTagsField = z
+  .boolean()
+  .optional()
+  .describe(
+    "Default true: also mirror [tag] prefixes as native Reminders hashtags (needs the private helper). " +
+      "false skips the mirror (--no-native-tags)."
+  );
+
 export function registerTaskTools(server: McpServer): void {
   defineTool(server, {
     name: "task_list",
@@ -51,10 +59,11 @@ export function registerTaskTools(server: McpServer): void {
         .optional()
         .describe(
           "Repeat rule, requires due. RRULE subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n. Completing an occurrence rolls the task to the next one."),
+      native_tags: nativeTagsField,
     },
     output: taskShape,
     annotations: { title: "Create task", destructiveHint: false },
-    argv: ({ list, title, tags, notes, due, priority, url, recurrence }) => {
+    argv: ({ list, title, tags, notes, due, priority, url, recurrence, native_tags }) => {
       const args = ["add", "--list", list];
       for (const t of tags ?? []) args.push("--tag", t);
       if (notes) args.push("--notes", notes);
@@ -62,6 +71,7 @@ export function registerTaskTools(server: McpServer): void {
       if (priority) args.push("--priority", priority);
       if (url) args.push("--url", url);
       if (recurrence) args.push("--recurrence", recurrence);
+      if (native_tags === false) args.push("--no-native-tags");
       args.push(title);
       return args;
     },
@@ -88,6 +98,7 @@ export function registerTaskTools(server: McpServer): void {
         )
         .min(1)
         .describe("Tasks to create, in order."),
+      native_tags: nativeTagsField,
     },
     output: {
       created: z.array(taskSchema),
@@ -100,7 +111,7 @@ export function registerTaskTools(server: McpServer): void {
       ),
     },
     annotations: { title: "Create tasks", destructiveHint: false },
-    argv: () => ["add-batch"],
+    argv: ({ native_tags }) => (native_tags === false ? ["add-batch", "--no-native-tags"] : ["add-batch"]),
     stdin: ({ items }) => JSON.stringify(items),
   });
 
@@ -134,6 +145,11 @@ export function registerTaskTools(server: McpServer): void {
       attach_url: z.string().optional().describe("Attach a URL as a rich attachment (distinct from the url field)."),
       clear_parent: z.boolean().optional().describe("Detach from the parent task (stays in its list)."),
       section: z.string().optional().describe("Move into this section of the task's list, creating it if needed."),
+      native_tags: nativeTagsField,
+      mirror_tags: z
+        .boolean()
+        .optional()
+        .describe("Re-apply every [tag] title prefix as a native Reminders hashtag, even when not adding tags."),
     },
     output: taskShape,
     annotations: { title: "Update task", idempotentHint: true },
@@ -157,6 +173,8 @@ export function registerTaskTools(server: McpServer): void {
       attach_url,
       clear_parent,
       section,
+      native_tags,
+      mirror_tags,
     }) => {
       const args = ["update", id];
       if (title) args.push("--title", title);
@@ -177,8 +195,54 @@ export function registerTaskTools(server: McpServer): void {
       if (attach_url) args.push("--attach-url", attach_url);
       if (clear_parent) args.push("--clear-parent");
       if (section) args.push("--section", section);
+      if (native_tags === false) args.push("--no-native-tags");
+      if (mirror_tags) args.push("--mirror-tags");
       return args;
     },
+  });
+
+  defineTool(server, {
+    name: "task_remirror_tags",
+    description:
+      "Reconcile native Reminders hashtags with [tag] title prefixes: add missing hashtags, drop duplicate " +
+      "hashtag objects, prune stale claim chips ([dispatched]/[failed]-style tags the title no longer carries). " +
+      "Safe to rerun. dry_run reports the plan without writing. Needs the private helper.",
+    input: {
+      dry_run: z.boolean().optional().describe("Report nativeBefore/pruned/duplicates without writing."),
+      list: z.string().optional().describe("Only tasks in this Reminders list."),
+      tags: tagsField,
+      status: z.enum(["open", "completed", "all"]).optional().describe("Default: open."),
+      id: z.string().optional().describe("Single task id (internal or external)."),
+    },
+    // RemirrorTags.Report (Sources/AppleTasks/Commands.swift)
+    output: {
+      reports: z.array(
+        z.object({
+          id: z.string(),
+          externalId: z.string().optional(),
+          rawTitle: z.string(),
+          tags: z.array(z.string()),
+          nativeBefore: z.array(z.string()).optional().describe("Native hashtags before reconcile, duplicates included."),
+          pruned: z.array(z.string()).describe("Stale claim chips removed (or that would be)."),
+          duplicatesRemoved: z.number().int().optional(),
+          added: z.number().int().optional(),
+          nativeTags: z.boolean().optional(),
+          note: z.string().optional(),
+        })
+      ),
+    },
+    annotations: { title: "Reconcile native tags", readOnlyHint: false, idempotentHint: true },
+    timeoutMs: 120_000, // one helper call per task
+    argv: ({ dry_run, list, tags, status, id }) => {
+      const args = ["remirror-tags"];
+      if (dry_run) args.push("--dry-run");
+      if (list) args.push("--list", list);
+      for (const t of tags ?? []) args.push("--tag", t);
+      if (status) args.push("--status", status);
+      if (id) args.push("--id", id);
+      return args;
+    },
+    wrap: (parsed) => ({ reports: parsed }),
   });
 
   defineTool(server, {
