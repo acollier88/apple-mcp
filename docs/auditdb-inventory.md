@@ -12,6 +12,21 @@ the dispatcher will silently skip work / lose audit.
 - `state` — KV (watermarks)
 - `approvals` — ntfy approval tokens (Mac-side; not Gatehouse)
 
+## Schema versioning
+
+`PRAGMA user_version` drives forward-only migrations in `AuditDB.migrate()`;
+`AuditDB.schemaVersion` is the version the code expects. Version 0 is any DB
+created before 2026-09-07 (columns were added by error-ignored `ALTER`s on
+every open). Each case is idempotent (`addColumnIfMissing`) because v0 DBs
+may or may not already carry the ad-hoc columns.
+
+| Version | Adds |
+|---|---|
+| 1 | `dispatches.run_log_path/worktree/summary` (formalized), `dispatches.pid` (agent process id for reap/cancel), `dispatches.task_modified_at` (P3 re-dispatch guard) |
+
+`AuditDBTests.testMigratesVersionZeroDatabase` builds a v0 DB by hand and
+asserts the upgrade keeps rows and is a no-op on reopen.
+
 ## Methods and callers
 
 ### `record(command:taskId:list:detail:result:error:)`
