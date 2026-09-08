@@ -417,6 +417,9 @@ struct Update: AsyncParsableCommand {
         // Mirror the full title-tag set (not only newly added ones) so a
         // tag edit in Reminders → update path still paints native hashtags.
         if !noNativeTags && (!addTags.isEmpty || !removeTags.isEmpty || mirrorNativeTags) {
+            if !removeTags.isEmpty {
+                _ = NativeTags.remove(tags: removeTags, externalId: reminder.calendarItemExternalIdentifier)
+            }
             out.nativeTags = NativeTags.mirror(tags: tags, externalId: reminder.calendarItemExternalIdentifier)
         }
         // Subtask relationship (IDEAS #26) via the private helper. Resolve the
@@ -457,8 +460,12 @@ struct Update: AsyncParsableCommand {
 struct RemirrorTags: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "remirror-tags",
-        abstract: "Re-apply [tag] title prefixes as native Reminders hashtags (private helper backfill)."
+        abstract: "Reconcile native Reminders hashtags with the [tag] title prefixes: add missing, drop duplicates, and prune stale claim chips (#dispatched…/#failed…) the title no longer carries. Never removes other native tags.",
+        discussion: "Use --dry-run to list what would change; the private helper is required."
     )
+
+    @Flag(name: .customLong("dry-run"), help: "Report native hashtags and the planned adds/removals without writing.")
+    var dryRun = false
 
     @Option(name: .customLong("list"), help: "Only tasks in this Reminders list.")
     var listName: String?
@@ -477,8 +484,31 @@ struct RemirrorTags: AsyncParsableCommand {
         let externalId: String?
         let rawTitle: String
         let tags: [String]
+        /// Native hashtag names before the reconcile (duplicates included).
+        let nativeBefore: [String]?
+        /// Stale claim chips the title no longer carries, removed (or would be).
+        let pruned: [String]
+        let duplicatesRemoved: Int?
+        let added: Int?
         let nativeTags: Bool?
         let note: String?
+    }
+
+    /// Reminders stores "dispatched:mbp" as "dispatchedmbp"; compare in that form.
+    private static func storedForm(_ tag: String) -> String {
+        tag.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
+    }
+
+    /// Native claim chips (any host) whose title counterpart is gone.
+    static func staleClaimChips(native: [String], titleTags: [String]) -> [String] {
+        let present = Set(titleTags.map(storedForm))
+        var seen = Set<String>()
+        return native.filter { name in
+            let l = name.lowercased()
+            guard l.hasPrefix("dispatched") || l.hasPrefix("failed") else { return false }
+            guard !present.contains(storedForm(name)) else { return false }
+            return seen.insert(l).inserted
+        }
     }
 
     func run() async throws {
@@ -508,34 +538,50 @@ struct RemirrorTags: AsyncParsableCommand {
             }
         }
 
+        let externalIds = reminders.compactMap(\.calendarItemExternalIdentifier)
+        let nativeByExt = NativeTags.hashtags(externalIds: externalIds) ?? [:]
+
         var reports: [Report] = []
         for reminder in reminders {
             let parsed = Tags.parse(reminder.title ?? "")
-            guard !parsed.tags.isEmpty else {
+            let ext = reminder.calendarItemExternalIdentifier
+            let native = ext.flatMap { nativeByExt[$0] }
+            let stale = Self.staleClaimChips(native: native ?? [], titleTags: parsed.tags)
+            let dupes = (native?.count ?? 0) - Set((native ?? []).map { $0.lowercased() }).count
+            let missing = parsed.tags.filter { tag in
+                !(native ?? []).contains { Self.storedForm($0) == Self.storedForm(tag) }
+            }
+            // Nothing to paint and nothing to clean: leave it alone.
+            guard !parsed.tags.isEmpty || !stale.isEmpty || dupes > 0 else {
                 reports.append(Report(
-                    id: reminder.calendarItemIdentifier,
-                    externalId: reminder.calendarItemExternalIdentifier,
-                    rawTitle: reminder.title ?? "",
-                    tags: [],
-                    nativeTags: nil,
+                    id: reminder.calendarItemIdentifier, externalId: ext,
+                    rawTitle: reminder.title ?? "", tags: [], nativeBefore: native,
+                    pruned: [], duplicatesRemoved: nil, added: nil, nativeTags: nil,
                     note: "skipped: no [tag] prefixes"))
                 continue
             }
-            let ok = NativeTags.mirror(tags: parsed.tags,
-                                       externalId: reminder.calendarItemExternalIdentifier)
+            if dryRun {
+                reports.append(Report(
+                    id: reminder.calendarItemIdentifier, externalId: ext,
+                    rawTitle: reminder.title ?? "", tags: parsed.tags, nativeBefore: native,
+                    pruned: stale, duplicatesRemoved: dupes, added: missing.count, nativeTags: nil,
+                    note: "dry-run: would add \(missing.count), prune \(stale.count), dedupe \(dupes)"))
+                continue
+            }
+            let result = NativeTags.reconcile(externalId: ext, ensure: parsed.tags, remove: stale)
+            let ok = result != nil
             reports.append(Report(
-                id: reminder.calendarItemIdentifier,
-                externalId: reminder.calendarItemExternalIdentifier,
-                rawTitle: reminder.title ?? "",
-                tags: parsed.tags,
-                nativeTags: ok,
-                note: ok == true ? nil : "mirror failed (see stderr)"))
+                id: reminder.calendarItemIdentifier, externalId: ext,
+                rawTitle: reminder.title ?? "", tags: parsed.tags, nativeBefore: native,
+                pruned: stale, duplicatesRemoved: result?.removed, added: result?.tagged, nativeTags: ok,
+                note: ok ? nil : "reconcile failed (see stderr)"))
             AuditDB.shared.record(command: "remirror-tags",
-                                  taskId: reminder.calendarItemExternalIdentifier
-                                      ?? reminder.calendarItemIdentifier,
+                                  taskId: ext ?? reminder.calendarItemIdentifier,
                                   list: reminder.calendar?.title,
-                                  detail: parsed.tags.joined(separator: ","),
-                                  result: ok == true ? "ok" : "failed")
+                                  detail: parsed.tags.joined(separator: ",")
+                                      + (stale.isEmpty ? "" : " -\(stale.joined(separator: ","))")
+                                      + (result.map { " removed=\($0.removed)" } ?? ""),
+                                  result: ok ? "ok" : "failed")
         }
         emit(reports)
     }
@@ -569,9 +615,14 @@ struct Complete: AsyncParsableCommand {
             // picks it up next (IDEAS #13).
             let isLifecycle = { ClaimTags.isDispatched($0) || ClaimTags.isFailed($0) }
             if parsed.tags.contains(where: isLifecycle) {
+                let shed = parsed.tags.filter(isLifecycle)
                 let tags = parsed.tags.filter { !isLifecycle($0) }
                 reminder.title = Tags.compose(tags: tags, title: parsed.title)
                 try store.save(reminder)
+                // The rolled occurrence keeps the native hashtags of the
+                // finished run unless we remove them too — this is how
+                // #dispatched… chips piled up on weekly tasks.
+                _ = NativeTags.remove(tags: shed, externalId: reminder.calendarItemExternalIdentifier)
             }
             out = TaskOut(reminder)
             out.recurred = true

@@ -38,13 +38,22 @@ swift build -c release   # CLI only; everything works without the helper
 When tags are written (`add -t`, `update --add-tag`), the CLI also mirrors them
 to **real Reminders tags** via `apple-tasks-private`, a small helper that uses
 Apple's private ReminderKit framework (see `docs/remctl-spike.md`). The `[tag]`
-title prefix remains the source of truth — the mirror is additive-only and
+title prefix remains the source of truth — the mirror is idempotent and
 best-effort:
 
 - Output gains `"nativeTags": true|false` on add/update (omitted if no tags).
 - A failed mirror warns on stderr but never fails the command.
-- Removal only updates the prefix; ReminderKit exposes no tag-removal API, so
-  stale native tags must be removed in the Reminders app.
+- A name already present natively is skipped, never duplicated (compared in
+  Reminders' stored form: `dispatched:mbp` is stored as `dispatchedmbp`).
+- Removal follows the title: `update --remove-tag`, shedding a claim tag on
+  finish, and the recurrence roll in `complete` all remove the matching
+  native hashtag too (`REMReminderHashtagContextChangeItem.removeHashtag:`).
+- `remirror-tags [--dry-run] [--id …] [--list …]` reconciles: adds missing
+  hashtags, drops duplicates, and prunes stale `#dispatched…`/`#failed…`
+  chips the title no longer carries. It never removes other native tags.
+  Before 2026-09-07 the mirror was additive and blind, so every dispatch
+  pass on a recurring task appended another copy — run `remirror-tags`
+  once to clean up.
 - `--no-native-tags` skips the mirror; deleting the helper binary disables it
   globally. `APPLE_TASKS_PRIVATE_BIN` overrides the helper path.
 - Private API caveat: may break on any macOS update (the helper probes every

@@ -792,6 +792,10 @@ struct Dispatch: AsyncParsableCommand {
                     exitCode: -1, runLog: nil, worktree: nil))
                 continue
             }
+            let shedFailed = parsed.tags.filter { ClaimTags.isFailed($0) }
+            if !shedFailed.isEmpty {
+                _ = NativeTags.remove(tags: shedFailed, externalId: reminder.calendarItemExternalIdentifier)
+            }
             _ = NativeTags.mirror(tags: [ClaimTags.dispatched], externalId: reminder.calendarItemExternalIdentifier)
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
                                   taskId: taskId, list: reminder.calendar?.title,
@@ -1118,6 +1122,9 @@ struct Dispatch: AsyncParsableCommand {
         }
         current.title = Tags.compose(tags: tags, title: title)
         try? store.save(current)
+        // Native side follows the title: drop this Mac's #dispatched chip,
+        // paint #failed once.
+        _ = NativeTags.remove(tags: [ClaimTags.dispatched, "dispatched"], externalId: current.calendarItemExternalIdentifier)
         _ = NativeTags.mirror(tags: [ClaimTags.failed], externalId: current.calendarItemExternalIdentifier)
     }
 
