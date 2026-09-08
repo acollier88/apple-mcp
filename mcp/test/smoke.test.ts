@@ -110,6 +110,47 @@ describe("apple-tasks MCP smoke", () => {
     }
   });
 
+  test("every tool has annotations with a title and at least one hint", async () => {
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      expect(tool.annotations, tool.name).toBeDefined();
+      expect(tool.annotations?.title, tool.name).toBeTruthy();
+      const hints = [
+        tool.annotations?.readOnlyHint,
+        tool.annotations?.destructiveHint,
+        tool.annotations?.idempotentHint,
+        tool.annotations?.openWorldHint,
+      ];
+      expect(hints.some((h) => h !== undefined), tool.name).toBe(true);
+    }
+  });
+
+  test("task_list is read-only; dispatch_run and task_delete are destructive", async () => {
+    const { tools } = await client.listTools();
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    expect(byName.task_list?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.dispatch_run?.annotations?.destructiveHint).toBe(true);
+    expect(byName.task_delete?.annotations?.destructiveHint).toBe(true);
+  });
+
+  test("tools/list matches golden except for annotations", async () => {
+    const { tools } = await client.listTools();
+    const stripped = [...tools]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((tool) => {
+        const { annotations: _annotations, ...rest } = tool;
+        return rest;
+      });
+    const goldenPath = path.join(here, "fixtures/tools-list.golden.json");
+    if (process.env.UPDATE_GOLDEN) {
+      // Intentional tool additions/changes: `bun run test:update-golden`.
+      await writeFile(goldenPath, JSON.stringify(stripped, null, 2) + "\n");
+      return;
+    }
+    const golden = JSON.parse(await readFile(goldenPath, "utf8")) as typeof stripped;
+    expect(stripped).toEqual(golden);
+  });
+
   test("task_list returns one Inbox task and logs list --list Inbox", async () => {
     const before = await readFile(argvLog, "utf8");
     const result = await client.callTool({
@@ -164,5 +205,10 @@ describe("apple-tasks MCP smoke", () => {
     const result = await session.client.callTool({ name: "doctor", arguments: {} });
     expect("isError" in result && result.isError).toBe(true);
     expect(textOf(result)).toContain("fake failure");
+    const structured =
+      result && typeof result === "object" && "structuredContent" in result
+        ? (result.structuredContent as { exitCode?: unknown } | undefined)
+        : undefined;
+    expect(structured?.exitCode).toBe(3);
   });
 });

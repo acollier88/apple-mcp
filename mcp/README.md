@@ -37,6 +37,7 @@ run the `doctor` tool from the MCP host.
 bun install
 bun run typecheck
 bun test
+bun run tools:table   # regenerate the tool name/title/description table
 ```
 
 ## Structured output
@@ -48,6 +49,12 @@ mirror the Swift CLI's output structs (`TaskOut`, `EventOut`, `DoctorOut`,
 top-level array nest it under a named key (`tasks`, `events`, `items`, …)
 because `structuredContent` must be an object. Free-form tools
 (`shortcut_run`, `run_log`) intentionally stay text-only.
+
+Every tool advertises MCP `ToolAnnotations` (`title` plus `readOnlyHint` /
+`destructiveHint` / `idempotentHint` / `openWorldHint`). On CLI failure the
+tool returns `isError: true` with `structuredContent: { error, exitCode?,
+stderr? }` (timeouts surface as `error: "timeout after N ms"`). Regenerate
+the name/title/description table with `bun run tools:table`.
 
 ## Tools (51)
 
@@ -107,8 +114,9 @@ ntfy — respects the quiet-hours window in `notify.json`).
 
 **Dispatcher ops** — `dispatch_run` (dry-run by default; `[auto]` with no
 lane tag walks any available worker; refuses recursive dispatch from
-agent-spawned sessions), `dispatch_list`, `run_log` — a supervisor agent
-can reap, retry, and read failure logs over MCP.
+agent-spawned sessions), `dispatch_list`, `dispatch_cancel` (kills the agent
+tree, marks `cancelled`, no `[failed]`/retry), `run_log` — a supervisor agent
+can reap, retry, cancel, and read failure logs over MCP.
 
 **Location** — `whereami` (this Mac, CoreLocation), `findmy_devices` /
 `findmy_locate` (AirTags via the optional FindMy.py sidecar — setup in

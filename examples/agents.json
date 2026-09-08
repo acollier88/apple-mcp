@@ -19,10 +19,10 @@
       "command": [
         "claude",
         "-p",
-        "{prompt}",
         "--permission-mode",
         "acceptEdits"
       ],
+      "promptVia": "stdin",
       "worktree": true,
       "timeoutMinutes": 60,
       "maxConcurrent": 1

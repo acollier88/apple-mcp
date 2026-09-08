@@ -68,10 +68,12 @@ if something mysteriously fails.
 - **Notes domain** — create note via `apple-tasks notes create`
   (`Sources/NotesSchemaIntents.swift`).
 - **Custom intents** — Check Agent Tasks, Add Agent Task, Triage Inbox,
-  Agent Status (digest-style spoken summary), Ask Agent Tasks (on-device
-  `SpotlightSearchTool` over donated tasks).
-- **Spotlight** — open tasks donated as `IndexedEntity` on launch; the Ask
-  bar / intent re-donates then lets the on-device model search that index.
+  Agent Status (digest-style spoken summary), Ask Agent Tasks (ledger for
+  “last successful *lane*” questions, else on-device `SpotlightSearchTool`
+  over donated open tasks).
+- **Spotlight** — open tasks donated as `IndexedEntity` on launch. Ask
+  answers completed work from `apple-tasks log` / `dispatches` (Spotlight
+  never sees finished heals; the on-device model also treats “heal” as medical).
 
 There is no Xcode project: `build.sh` compiles with `swiftc`, runs
 `appintentsmetadataprocessor`, and ad-hoc signs.

@@ -62,10 +62,6 @@ final class AuditDB {
             exit_code INTEGER
         )
         """)
-        // Older DBs predate these columns; ALTER errors are ignored when they exist.
-        exec("ALTER TABLE dispatches ADD COLUMN run_log_path TEXT")
-        exec("ALTER TABLE dispatches ADD COLUMN worktree TEXT")
-        exec("ALTER TABLE dispatches ADD COLUMN summary TEXT")
         exec("""
         CREATE TABLE IF NOT EXISTS state (
             key TEXT PRIMARY KEY,
@@ -85,6 +81,60 @@ final class AuditDB {
             answered_via TEXT
         )
         """)
+        migrate()
+    }
+
+    /// Schema version the code expects. Bump when adding a migration case.
+    static let schemaVersion: Int32 = 1
+
+    var schemaVersion: Int32 { Int32(scalarInt("PRAGMA user_version") ?? 0) }
+
+    /// Forward-only migrations keyed on `PRAGMA user_version`. Version 0 is
+    /// every DB created before 2026-09-07 (three ad-hoc, error-ignored
+    /// ALTERs). Each case must be idempotent against a DB that already has
+    /// the shape, because v0 databases may or may not carry those columns.
+    private func migrate() {
+        var version = schemaVersion
+        while version < Self.schemaVersion {
+            switch version {
+            case 0:
+                // Columns that used to be added by unguarded ALTERs at every open.
+                addColumnIfMissing(table: "dispatches", column: "run_log_path", type: "TEXT")
+                addColumnIfMissing(table: "dispatches", column: "worktree", type: "TEXT")
+                addColumnIfMissing(table: "dispatches", column: "summary", type: "TEXT")
+                // Agent process id, so reap/cancel can signal it (review P2 §3–4).
+                addColumnIfMissing(table: "dispatches", column: "pid", type: "INTEGER")
+                // Reminder lastModifiedDate captured at finish, for the
+                // "unchanged since we last succeeded" re-dispatch guard (P3).
+                addColumnIfMissing(table: "dispatches", column: "task_modified_at", type: "TEXT")
+            default:
+                return
+            }
+            version += 1
+            exec("PRAGMA user_version = \(version)")
+        }
+    }
+
+    private func addColumnIfMissing(table: String, column: String, type: String) {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return }
+        var present = false
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column {
+                present = true
+                break
+            }
+        }
+        sqlite3_finalize(stmt)
+        if !present { exec("ALTER TABLE \(table) ADD COLUMN \(column) \(type)") }
+    }
+
+    private func scalarInt(_ sql: String) -> Int64? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int64(stmt, 0)
     }
 
     deinit {
@@ -187,12 +237,26 @@ final class AuditDB {
         let runLogPath: String?
         let worktree: String?
         let summary: String?
+        /// Agent process id while running (nil before spawn / for old rows).
+        let pid: Int?
+    }
+
+    /// Record the spawned agent's pid so reap/cancel can signal it.
+    @discardableResult
+    func setDispatchPid(id: Int64, pid: Int32?) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET pid = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        if let pid { sqlite3_bind_int(stmt, 1, pid) } else { sqlite3_bind_null(stmt, 1) }
+        sqlite3_bind_int64(stmt, 2, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     /// Finished runs that still have a worktree on record (GC candidates).
     func worktreeRows() -> [DispatchRow] {
         selectDispatches(
-            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout')",
+            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout','cancelled')",
             binds: [], limit: 500)
     }
 
@@ -295,6 +359,7 @@ final class AuditDB {
     }
 
     /// Failed/timed-out attempt count and latest finish time, for retry backoff.
+    /// `cancelled` is a human decision and must not count (no retry/backoff).
     func failedAttempts(taskId: String) -> (count: Int, lastFinishedAt: String?) {
         guard db != nil else { return (0, nil) }
         var stmt: OpaquePointer?
@@ -342,7 +407,7 @@ final class AuditDB {
         guard db != nil else { return [] }
         let sql = """
         SELECT id, task_id, agent, command, cwd, started_at, finished_at, status, exit_code, \
-        run_log_path, worktree, summary FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
+        run_log_path, worktree, summary, pid FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -361,7 +426,8 @@ final class AuditDB {
                 cwd: col(4), startedAt: col(5) ?? "", finishedAt: col(6),
                 status: col(7) ?? "",
                 exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8)),
-                runLogPath: col(9), worktree: col(10), summary: col(11)))
+                runLogPath: col(9), worktree: col(10), summary: col(11),
+                pid: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12))))
         }
         return rows
     }

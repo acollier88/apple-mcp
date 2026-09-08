@@ -386,7 +386,7 @@ the design):
   (non-destructive; appends a paragraph).
 - **Worktree GC** — every pass reclaims finished runs' worktrees: merged
   branches are removed immediately, unmerged succeeded branches are kept and
-  surfaced as pending deliverables, failed/timeout worktrees are kept
+  surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
   only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
   for finished (or orphan) ledger rows older than the same cutoff are
@@ -402,12 +402,32 @@ the design):
   edits to the main checkout — this is what makes `acceptEdits` reasonable
   unattended. If worktree creation fails the dispatch is aborted, not run
   unisolated.
+- **Prompt delivery** (`"promptVia"` per agent: `argv` default | `stdin` |
+  `file`) — `argv` substitutes `{prompt}` inline (visible in `ps`, subject to
+  ARG_MAX, copied into the ledger's command column). `stdin` pipes the
+  prompt and drops `{prompt}` from argv (`claude -p`, `codex exec -`).
+  `file` writes it to `~/.config/apple-tasks/runs/<ledger-id>.prompt` and
+  substitutes `{promptFile}`. Both non-argv modes keep that `.prompt` copy
+  next to the run log.
 - **Timeouts** (`"timeoutMinutes"` per agent) — overrunning agents get
-  SIGTERM (SIGKILL after 5s) and the run is marked `timeout`.
+  SIGTERM (SIGKILL after 5s) and the run is marked `timeout`. Signals go to
+  the whole descendant tree (found via `pgrep -P`), so the node/shell
+  children that `agent`/`claude` spawn go down too.
 - **Reaper** — every dispatch pass first marks ledger rows stuck in
   `running` longer than `--reap-hours` (default 4) as `timeout` and swaps the
-  task's `[dispatched]` tag for `[failed]`, recovering from a dispatcher
-  killed mid-run. `apple-tasks dispatch --reap-only` runs just this step.
+  task's `[dispatched]` tag for `[failed]`. If the recorded agent pid is
+  still alive and still looks like this run, its process tree is SIGTERM'd
+  (SIGKILL after 5s). Running rows whose pid is already dead, older than 10
+  minutes, and whose run log has been quiet for 2 minutes are treated as a
+  crashed dispatcher (`timeout`, `[failed]`). A dispatcher whose agent was
+  finished externally (reap or cancel from another process) keeps that
+  status rather than overwriting it with `failed`.
+  `apple-tasks dispatch --reap-only` runs just this step.
+- **Cancel** — `apple-tasks dispatch-cancel <ledgerId>` signals a still-
+  running agent, marks the row `cancelled`, and sheds this Mac's
+  `[dispatched]` claim without writing `[failed]` (a cancel is a human
+  decision and does not count toward retry/backoff). The worktree is left
+  for GC. `apple-tasks dispatches --status cancelled` lists those rows.
 - **Retries** (`maxRetries` / `retryBackoffMinutes`, default off) — `[failed]`
   tasks are re-dispatched up to `maxRetries` times once the backoff has
   elapsed (it scales linearly with the attempt count). After the budget is

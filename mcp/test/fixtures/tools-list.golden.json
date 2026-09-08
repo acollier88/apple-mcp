@@ -1,0 +1,4922 @@
+[
+  {
+    "name": "approval_check",
+    "description": "Check an approval request's status, polling ntfy for a button answer. wait_seconds blocks until answered/expired or the wait elapses (poll every 3s). Act only on status 'approved'; treat 'denied' and 'expired' as no. There is deliberately no MCP tool to ANSWER an approval — answering your own request defeats the protocol.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "Token from approval_request."
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "description": "Keep polling this long (default: one poll, no wait)."
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "expired"
+          ]
+        },
+        "requestedAt": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "answeredAt": {
+          "type": "string"
+        },
+        "answeredVia": {
+          "type": "string",
+          "description": "'ntfy' (phone button), 'cli' (answered on the Mac), or 'timeout'."
+        },
+        "pushSuppressed": {
+          "type": "string",
+          "description": "request only: quiet-hours window that held the push. The request still exists and is answerable."
+        }
+      },
+      "required": [
+        "token",
+        "question",
+        "status",
+        "requestedAt"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "approval_list",
+    "description": "List approval requests, newest first. Filter by status to see what's pending.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "expired"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max rows (default 50)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "approvals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string"
+              },
+              "question": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "approved",
+                  "denied",
+                  "expired"
+                ]
+              },
+              "requestedAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "answeredAt": {
+                "type": "string"
+              },
+              "answeredVia": {
+                "type": "string",
+                "description": "'ntfy' (phone button), 'cli' (answered on the Mac), or 'timeout'."
+              },
+              "pushSuppressed": {
+                "type": "string",
+                "description": "request only: quiet-hours window that held the push. The request still exists and is answerable."
+              }
+            },
+            "required": [
+              "token",
+              "question",
+              "status",
+              "requestedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "approvals"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "approval_request",
+    "description": "Ask the human for approval via an ntfy push with [Approve] [Deny] buttons; returns a token to poll with approval_check. Use before doing anything consequential you were not explicitly asked to do (sending, buying, deleting). Requires ntfy in ~/.config/apple-tasks/notify.json.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "What is being asked, e.g. 'Send the reply draft to Sarah?'"
+        },
+        "task": {
+          "type": "string",
+          "description": "Task id this approval belongs to (audit trail)."
+        },
+        "expires_minutes": {
+          "type": "integer",
+          "description": "Pending requests expire after this long (default 240)."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Priority: push even during quiet hours."
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "expired"
+          ]
+        },
+        "requestedAt": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "answeredAt": {
+          "type": "string"
+        },
+        "answeredVia": {
+          "type": "string",
+          "description": "'ntfy' (phone button), 'cli' (answered on the Mac), or 'timeout'."
+        },
+        "pushSuppressed": {
+          "type": "string",
+          "description": "request only: quiet-hours window that held the push. The request still exists and is answerable."
+        }
+      },
+      "required": [
+        "token",
+        "question",
+        "status",
+        "requestedAt"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "audio_scan",
+    "description": "Transcribe audio notes dropped in the iCloud inbox folder since the last scan (watermark auto-advances; first run looks back 24h). On-device Speech recognition; emits {file, modified, transcript, error?}. Failed files are retried next scan. Set archive:true to move transcribed files into a done/ subfolder.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Folder to scan (default: iCloud Drive/AgentInbox)."
+        },
+        "since": {
+          "type": "string",
+          "description": "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate each transcript (default 4000)."
+        },
+        "archive": {
+          "type": "boolean",
+          "description": "Move transcribed files into a done/ subfolder."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "recordings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "modified": {
+                "type": "string"
+              },
+              "transcript": {
+                "type": "string",
+                "description": "Absent when transcription failed (see error)."
+              },
+              "archivedTo": {
+                "type": "string",
+                "description": "Destination path when archive: true."
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "file",
+              "modified"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "recordings"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "audit_log",
+    "description": "Read the apple-tasks audit log: every mutation (task/event create/update/complete/delete, dispatches) with timestamp and caller (mcp/app/dispatcher/terminal). Use to check 'did I already do this?' before acting.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "ISO8601 or yyyy-MM-dd lower bound."
+        },
+        "task": {
+          "type": "string",
+          "description": "Only entries for this task id."
+        },
+        "caller": {
+          "type": "string",
+          "description": "Caller substring filter (mcp, agent:claude, ...)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max rows, newest first (default 50)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ts": {
+                "type": "string"
+              },
+              "caller": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "list": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "result": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "caller",
+              "command",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "calendar_list",
+    "description": "List Calendar calendars with writability.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "calendars": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "writable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "writable"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "calendars"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "clipboard_scan",
+    "description": "Emit the clipboard's text if it changed since the last scan (changeCount watermark). At most one clipping per call — the pasteboard has no history. Password-manager/transient clippings are never surfaced, and the first call only records a baseline. Feed hits to triage like any capture channel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate the clipping (default 4000)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "clippings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ts": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "ts",
+              "content",
+              "truncated"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "clippings"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "contact_search",
+    "description": "Search Apple Contacts by name, or by email address when the query contains '@'. Read-only, always. Returns id, name, emails, phones, birthday, postal addresses. Use to resolve WHICH person a task/event refers to (put their email in the event notes) or to rank known senders in mail triage.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Name fragment (e.g. 'sarah') or an email address."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max results (default 10)."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "nickname": {
+                "type": "string"
+              },
+              "organization": {
+                "type": "string"
+              },
+              "emails": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "phones": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "birthday": {
+                "type": "string",
+                "description": "yyyy-MM-dd, or MM-dd when the year is unknown."
+              },
+              "postalAddresses": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "emails",
+              "phones",
+              "postalAddresses"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "contacts"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "contact_show",
+    "description": "Show one Apple Contact by identifier (from contact_search). Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Contact identifier."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "nickname": {
+          "type": "string"
+        },
+        "organization": {
+          "type": "string"
+        },
+        "emails": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "phones": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "birthday": {
+          "type": "string",
+          "description": "yyyy-MM-dd, or MM-dd when the year is unknown."
+        },
+        "postalAddresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "emails",
+        "phones",
+        "postalAddresses"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "digest",
+    "description": "Morning digest: agent activity since yesterday (audit log), dispatch outcomes, tasks due today, and today's calendar, as one JSON blob. Optionally writes it as a new Apple Note (note: true) and/or pushes a one-line summary to the configured ntfy topic (push: true).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "Look-back start (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601; default 24h ago)."
+        },
+        "note": {
+          "type": "boolean",
+          "description": "Write the digest as a new Apple Note."
+        },
+        "note_folder": {
+          "type": "string",
+          "description": "Notes folder for the digest note."
+        },
+        "push": {
+          "type": "boolean",
+          "description": "Send a short summary to the configured ntfy topic."
+        },
+        "suggest": {
+          "type": "boolean",
+          "description": "Append on-device model proposals (never auto-created)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string"
+        },
+        "generatedAt": {
+          "type": "string"
+        },
+        "dispatches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "agent",
+              "status",
+              "taskId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "auditActions": {
+          "type": "integer"
+        },
+        "auditByCommand": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "dueToday": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string",
+                "description": "Sync-stable identifier; also accepted wherever a task id is."
+              },
+              "title": {
+                "type": "string",
+                "description": "Title with [tag] prefixes stripped."
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "list": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "nativeTags": {
+                "type": "boolean",
+                "description": "add/update only: whether tags were mirrored to native Reminders tags."
+              },
+              "subtask": {
+                "type": "boolean",
+                "description": "update only: whether a --parent subtask change was applied."
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+              },
+              "recurred": {
+                "type": "boolean",
+                "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image",
+                        "url",
+                        "other"
+                      ]
+                    },
+                    "uti": {
+                      "type": "string"
+                    },
+                    "fileURL": {
+                      "type": "string",
+                      "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+                    },
+                    "fileSize": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "task_show with attachments: true only."
+              },
+              "attached": {
+                "type": "boolean",
+                "description": "task_update attach_* only: whether the attach succeeded."
+              },
+              "section": {
+                "type": "string",
+                "description": "task_show with section: true only — the task's section name."
+              },
+              "sectionApplied": {
+                "type": "boolean",
+                "description": "task_update section only: whether the assign succeeded."
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "rawTitle",
+              "tags",
+              "list",
+              "priority",
+              "completed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "description": "Title with [tag] prefixes stripped."
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "calendar": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string",
+                "description": "yyyy-MM-dd for all-day events, ISO8601 otherwise."
+              },
+              "end": {
+                "type": "string"
+              },
+              "allDay": {
+                "type": "boolean"
+              },
+              "location": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "rawTitle",
+              "tags",
+              "calendar",
+              "allDay"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "noteCreated": {
+          "type": "string",
+          "description": "Created note id when note: true."
+        },
+        "pushed": {
+          "type": "boolean",
+          "description": "Whether the ntfy push succeeded when push: true."
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "event",
+                  "drop"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why this is worth raising, citing the signal."
+              },
+              "due": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "title",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "description": "suggest: true only — proposals, never applied."
+        },
+        "suggestError": {
+          "type": "string",
+          "description": "suggest: true only — why proposals were unavailable."
+        }
+      },
+      "required": [
+        "since",
+        "generatedAt",
+        "dispatches",
+        "auditActions",
+        "auditByCommand",
+        "dueToday",
+        "events"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "dispatch_cancel",
+    "description": "Cancel a running dispatch by ledger id: signal the agent process (and its children), mark the row 'cancelled', shed this Mac's [dispatched] claim. Does NOT write [failed], so no retry/backoff. The worktree is left for GC. Returns {cancelled:false, note:'not running'} if the row already finished.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ledger_id": {
+          "type": "integer",
+          "description": "Ledger row id from dispatch_list (status running)."
+        }
+      },
+      "required": [
+        "ledger_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "process": {
+          "type": "string",
+          "description": "terminated | killed | gone | not found"
+        },
+        "tagShed": {
+          "type": "boolean"
+        },
+        "cancelled": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "dispatch_list",
+    "description": "Show the dispatch ledger: agent runs with status, exit code, outcome summary, run log path, worktree.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "succeeded",
+            "failed",
+            "timeout",
+            "cancelled",
+            "aborted"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max rows (default 50, newest first)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "dispatches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "finishedAt": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "exitCode": {
+                "type": "integer"
+              },
+              "runLogPath": {
+                "type": "string"
+              },
+              "worktree": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "taskId",
+              "agent",
+              "command",
+              "startedAt",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "dispatches"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "dispatch_run",
+    "description": "Run the agent dispatcher: scan open [auto] tasks, launch configured agents, reap stale runs, GC worktrees. A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto (any available worker). dry_run defaults to TRUE (reports what would run, launches nothing); a real run (dry_run: false) spawns agent processes, waits for them, and consumes their session budgets. reap_only reaps + GCs without dispatching.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "Default true. Set false to actually launch agents."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Only dispatch tasks for this agent tag."
+        },
+        "list": {
+          "type": "string",
+          "description": "Only scan this Reminders list."
+        },
+        "reap_only": {
+          "type": "boolean",
+          "description": "Only reap stale ledger rows and GC worktrees."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "reports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "description": "What happened (dispatched/would dispatch/reaped/gc/skipped...)."
+              },
+              "exitCode": {
+                "type": "integer"
+              },
+              "runLog": {
+                "type": "string"
+              },
+              "worktree": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "taskId",
+              "title",
+              "agent",
+              "action"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "reports"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "doctor",
+    "description": "Diagnose apple-tasks setup for THIS host process: Reminders/Calendar permission status, dispatcher config, independent Hermes vs Home Assistant healthchecks, Budget Tracker bandwidth, structured issues[], and optional --enqueue-heals (creates [heal][auto] tasks for unhealthy systems; launchd dispatch picks them up — this tool does not spawn agents). TCC grants are per-host-process.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "enqueue_heals": {
+          "type": "boolean",
+          "description": "If true, create one [heal][auto] task per unhealthy system (deduped). Does not dispatch."
+        },
+        "list": {
+          "type": "string",
+          "description": "Reminders list for heal tasks (default: Code Tasks). Only used with enqueue_heals."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "binary": {
+          "type": "string"
+        },
+        "hostProcess": {
+          "type": "string"
+        },
+        "reminders": {
+          "type": "string"
+        },
+        "calendars": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "contacts": {
+          "type": "string"
+        },
+        "foundationModels": {
+          "type": "string"
+        },
+        "findmySidecar": {
+          "type": "string"
+        },
+        "mailRule": {
+          "type": "string"
+        },
+        "dropFolder": {
+          "type": "string"
+        },
+        "privateHelper": {
+          "type": "object",
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "present"
+          ],
+          "additionalProperties": false
+        },
+        "notesScanWatermark": {
+          "type": "string"
+        },
+        "speech": {
+          "type": "string"
+        },
+        "fullDiskAccess": {
+          "type": "string"
+        },
+        "agentsConfig": {
+          "type": "string"
+        },
+        "cursorAgent": {
+          "type": "string"
+        },
+        "launchAgent": {
+          "type": "string"
+        },
+        "hermes": {
+          "type": "string"
+        },
+        "hermesGateway": {
+          "type": "string"
+        },
+        "hermesCron": {
+          "type": "string"
+        },
+        "hermesHaLink": {
+          "type": "string"
+        },
+        "homeAssistant": {
+          "type": "string"
+        },
+        "budget": {
+          "type": "string"
+        },
+        "automationNote": {
+          "type": "string"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "signature": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "system",
+              "severity",
+              "summary",
+              "signature"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "heals": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "list": {
+                  "type": "string"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "system": {
+                        "type": "string"
+                      },
+                      "action": {
+                        "type": "string"
+                      },
+                      "taskId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "system",
+                      "action"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "list",
+                "actions"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "binary",
+        "hostProcess",
+        "reminders",
+        "calendars",
+        "location",
+        "contacts",
+        "foundationModels",
+        "findmySidecar",
+        "mailRule",
+        "dropFolder",
+        "privateHelper",
+        "speech",
+        "fullDiskAccess",
+        "agentsConfig",
+        "cursorAgent",
+        "launchAgent",
+        "hermes",
+        "hermesGateway",
+        "hermesCron",
+        "hermesHaLink",
+        "homeAssistant",
+        "budget",
+        "automationNote",
+        "issues"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "event_create",
+    "description": "Create a Calendar event. A date-only start (yyyy-MM-dd) makes an all-day event. Tags become a [tag] title prefix.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "calendar": {
+          "type": "string",
+          "description": "Calendar name. Omit for the system default calendar."
+        },
+        "title": {
+          "type": "string",
+          "description": "Event title, without tag prefix."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+        },
+        "start": {
+          "type": "string",
+          "description": "yyyy-MM-dd (all-day), 'yyyy-MM-dd HH:mm', or ISO8601."
+        },
+        "end": {
+          "type": "string",
+          "description": "Same formats. Mutually exclusive with duration."
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Duration in minutes (default 60 when end omitted)."
+        },
+        "location": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL to attach (PR/artifact links)."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "Repeat rule. RRULE subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n."
+        }
+      },
+      "required": [
+        "title",
+        "start"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calendar": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string",
+          "description": "yyyy-MM-dd for all-day events, ISO8601 otherwise."
+        },
+        "end": {
+          "type": "string"
+        },
+        "allDay": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "calendar",
+        "allDay"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "event_delete",
+    "description": "Delete a Calendar event permanently.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "string",
+          "description": "Id of the deleted item."
+        }
+      },
+      "required": [
+        "deleted"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "event_list",
+    "description": "List Calendar events in a date range (default: today through +7 days). Filter by calendar and tags (AND). Same [tag] title convention as tasks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "calendar": {
+          "type": "string",
+          "description": "Calendar name. Omit for all calendars."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+        },
+        "from": {
+          "type": "string",
+          "description": "Range start: yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601. Default: start of today."
+        },
+        "to": {
+          "type": "string",
+          "description": "Range end, same formats. Default: from + 7 days."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "description": "Title with [tag] prefixes stripped."
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "calendar": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string",
+                "description": "yyyy-MM-dd for all-day events, ISO8601 otherwise."
+              },
+              "end": {
+                "type": "string"
+              },
+              "allDay": {
+                "type": "boolean"
+              },
+              "location": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "rawTitle",
+              "tags",
+              "calendar",
+              "allDay"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "event_show",
+    "description": "Show a single Calendar event by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Event id from event_list/event_create."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calendar": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string",
+          "description": "yyyy-MM-dd for all-day events, ISO8601 otherwise."
+        },
+        "end": {
+          "type": "string"
+        },
+        "allDay": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "calendar",
+        "allDay"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "event_update",
+    "description": "Update a Calendar event: retitle, add/remove tags, retime, location, notes, or move calendars.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Event id from event_list/event_create."
+        },
+        "title": {
+          "type": "string",
+          "description": "New title (tags are preserved)."
+        },
+        "add_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remove_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "start": {
+          "type": "string",
+          "description": "yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."
+        },
+        "end": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "calendar": {
+          "type": "string",
+          "description": "Move the event to this calendar."
+        },
+        "url": {
+          "type": "string",
+          "description": "Set the event URL (PR/artifact links)."
+        },
+        "clear_url": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calendar": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string",
+          "description": "yyyy-MM-dd for all-day events, ISO8601 otherwise."
+        },
+        "end": {
+          "type": "string"
+        },
+        "allDay": {
+          "type": "boolean"
+        },
+        "location": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "calendar",
+        "allDay"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "files_scan",
+    "description": "Read .txt/.md files dropped in the iCloud inbox folder since the last scan (watermark auto-advances; first run looks back 24h). The universal capture escape hatch — any device drops a file, this emits {file, modified, content}. Set archive:true to move processed files into a done/ subfolder.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Folder to scan (default: iCloud Drive/AgentInbox)."
+        },
+        "since": {
+          "type": "string",
+          "description": "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate each file's content (default 8000)."
+        },
+        "archive": {
+          "type": "boolean",
+          "description": "Move processed files into a done/ subfolder."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "modified": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "archivedTo": {
+                "type": "string",
+                "description": "Destination path when archive: true."
+              }
+            },
+            "required": [
+              "file",
+              "modified",
+              "content"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findmy_devices",
+    "description": "List Find My accessories configured for the FindMy.py sidecar (AirTags/OpenHaystack tags whose pairing files are in ~/.config/apple-tasks/findmy/accessories/). Requires one-time interactive setup: 'python3 tools/findmy/findmy-sidecar.py login'. Returns {error, hint} JSON when unconfigured.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "identifier": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "serialNumber": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "error": {
+                "type": "string",
+                "description": "Present when this accessory's pairing file failed to load."
+              }
+            },
+            "required": [
+              "name",
+              "file"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "devices"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "findmy_locate",
+    "description": "Fetch the latest Find My network location report for a configured accessory by name (see findmy_devices). Uses the owner's own Apple account via the FindMy.py sidecar; read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Accessory name (file stem or pairing name)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "latitude": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "longitude": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "latitude",
+        "longitude",
+        "timestamp",
+        "confidence",
+        "status"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "github_sync",
+    "description": "Two-way GitHub issue sync via the gh CLI: assigned open issues become [github]-tagged tasks (issue URL = dedupe key), closed issues complete their reminders, and completed reminders close their issues only when close_issues is true. dry_run defaults TRUE from MCP — pass dry_run: false to apply.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "GitHub repository, owner/repo."
+        },
+        "list": {
+          "type": "string",
+          "description": "Reminders list for created tasks (default \"Code Tasks\")."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+        },
+        "assignee": {
+          "type": "string",
+          "description": "Issue assignee filter for gh (default @me; \"all\" disables)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max issues fetched (default 50)."
+        },
+        "close_issues": {
+          "type": "boolean",
+          "description": "Close GitHub issues whose reminders are completed (outbound writes; default false)."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Default TRUE from MCP: report without changing anything."
+        }
+      },
+      "required": [
+        "repo"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "issuesSeen": {
+          "type": "integer"
+        },
+        "created": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string",
+                "description": "Sync-stable identifier; also accepted wherever a task id is."
+              },
+              "title": {
+                "type": "string",
+                "description": "Title with [tag] prefixes stripped."
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "list": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "nativeTags": {
+                "type": "boolean",
+                "description": "add/update only: whether tags were mirrored to native Reminders tags."
+              },
+              "subtask": {
+                "type": "boolean",
+                "description": "update only: whether a --parent subtask change was applied."
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+              },
+              "recurred": {
+                "type": "boolean",
+                "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image",
+                        "url",
+                        "other"
+                      ]
+                    },
+                    "uti": {
+                      "type": "string"
+                    },
+                    "fileURL": {
+                      "type": "string",
+                      "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+                    },
+                    "fileSize": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "task_show with attachments: true only."
+              },
+              "attached": {
+                "type": "boolean",
+                "description": "task_update attach_* only: whether the attach succeeded."
+              },
+              "section": {
+                "type": "string",
+                "description": "task_show with section: true only — the task's section name."
+              },
+              "sectionApplied": {
+                "type": "boolean",
+                "description": "task_update section only: whether the assign succeeded."
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "rawTitle",
+              "tags",
+              "list",
+              "priority",
+              "completed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "completedReminders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "closedIssues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wouldCloseIssues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Completed reminders' open issues; rerun with close_issues to close."
+        },
+        "unchanged": {
+          "type": "integer"
+        },
+        "dryRun": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repo",
+        "issuesSeen",
+        "created",
+        "completedReminders",
+        "closedIssues",
+        "wouldCloseIssues",
+        "unchanged",
+        "dryRun"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "gmail_scan",
+    "description": "List Gmail inbox messages newer than the last scan (watermarked capture feed; first call looks back 24h). Headers + snippet only, newest first; use gmail_show for a body. Read-only scope — no send path exists. Needs a one-time 'apple-tasks gmail login' from a terminal.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "description": "Max messages, newest first (default 50)."
+        },
+        "query": {
+          "type": "string",
+          "description": "Extra Gmail search terms ANDed with the watermark (e.g. 'from:boss@example.com')."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "threadId": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "received": {
+                "type": "string"
+              },
+              "read": {
+                "type": "boolean"
+              },
+              "snippet": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "threadId",
+              "subject",
+              "from",
+              "received",
+              "read",
+              "snippet"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "messages"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "gmail_show",
+    "description": "Show one Gmail message including its plain-text body. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message id from gmail_scan."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate the body (default 4000)."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "received": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "threadId",
+        "subject",
+        "from",
+        "received",
+        "read",
+        "body"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "mail_draft",
+    "description": "Create a DRAFT in Mail.app — never sends; the human reviews and hits send. Either a new message (to + subject) or a reply (reply_to: an RFC Message-ID from a [mail] task's notes, or a numeric id from mail_scan; threading preserved, subject defaults to Re: <original>).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Recipient addresses. Required unless reply_to."
+        },
+        "subject": {
+          "type": "string",
+          "description": "Required for new drafts; optional override for replies."
+        },
+        "body": {
+          "type": "string",
+          "description": "Draft body text."
+        },
+        "reply_to": {
+          "type": "string",
+          "description": "Message to reply to (RFC Message-ID or mail_scan numeric id)."
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "drafted": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "new",
+            "reply"
+          ]
+        },
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subject": {
+          "type": "string"
+        },
+        "inReplyTo": {
+          "type": "string",
+          "description": "Reply mode: id of the message being replied to."
+        }
+      },
+      "required": [
+        "drafted",
+        "mode",
+        "to",
+        "subject"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "mail_scan",
+    "description": "List Mail.app inbox message headers (id, subject, from, received, read) since a timestamp. Headers only, newest first; use mail_show for a body. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601 (default: 24h ago)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max messages (default 50)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "received": {
+                "type": "string"
+              },
+              "read": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "subject",
+              "from",
+              "received",
+              "read"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "messages"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "mail_show",
+    "description": "Show one Mail.app inbox message including its plain-text body.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Message id from mail_scan."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate the body (default 4000)."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "received": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "from",
+        "received",
+        "read",
+        "body"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "note_create",
+    "description": "Create a NEW Apple Note (existing notes are never edited). Body is HTML; the title is prepended as an <h1> and becomes the note's name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Note title (first line of the note)."
+        },
+        "body_html": {
+          "type": "string",
+          "description": "Note body as HTML."
+        },
+        "folder": {
+          "type": "string",
+          "description": "Notes folder (default: the default folder)."
+        }
+      },
+      "required": [
+        "title",
+        "body_html"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "notes_scan",
+    "description": "List Apple Notes modified since the last scan (watermark auto-advances; first run looks back 24h). Returns plain-text bodies. Read-only. Use this to find action items that should become tasks (task_create) or events (event_create); put the source note's name in the created item's notes field for provenance.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "type": "string",
+          "description": "Only scan this Notes folder."
+        },
+        "since": {
+          "type": "string",
+          "description": "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate each note body (default 4000)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string",
+                "description": "Present only when the scan was folder-filtered."
+              },
+              "body": {
+                "type": "string",
+                "description": "Plain text (HTML stripped), truncated to max_chars."
+              },
+              "created": {
+                "type": "string"
+              },
+              "modified": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "body",
+              "created",
+              "modified"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "notes"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "notify",
+    "description": "Show a local macOS notification banner (e.g. to report a finished task). push: true also sends it via ntfy so it reaches the user's phone off-Mac (requires ~/.config/apple-tasks/notify.json). Respects the config's quietHours window (suppressed but still succeeds); force: true overrides for priority pings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "sound": {
+          "type": "boolean",
+          "description": "Play the default notification sound."
+        },
+        "push": {
+          "type": "boolean",
+          "description": "Also push via ntfy."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Send even during quiet hours."
+        }
+      },
+      "required": [
+        "title",
+        "message"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "banner": {
+          "type": "boolean"
+        },
+        "pushed": {
+          "type": "boolean"
+        },
+        "suppressedQuietHours": {
+          "type": "string",
+          "description": "Window that suppressed this notification, when it did."
+        }
+      },
+      "required": [
+        "banner",
+        "pushed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "plan_create",
+    "description": "Create a new Reminders list to serve as a plan.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name for the new list/plan."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "plan_list",
+    "description": "List Reminders lists. Each list is a plan; its reminders are the plan's tasks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "plans": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "plans"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "readinglist_scan",
+    "description": "Read Safari Reading List items added since the last scan (watermark auto-advances; first run looks back 24h). Emits {title, url, dateAdded, previewText}, oldest first. Requires Full Disk Access for the host process; the doctor command reports FDA status. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "string",
+          "description": "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+        },
+        "max_items": {
+          "type": "integer",
+          "description": "Limit output to this many items (default 50)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "dateAdded": {
+                "type": "string"
+              },
+              "previewText": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "url",
+              "dateAdded"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "run_log",
+    "description": "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). Header lines record provider/model (and Cursor Auto's resolved model). Returns the last `tail` lines (reads at most the final 256 KB).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ledger_id": {
+          "type": "integer",
+          "description": "Ledger row id from dispatch_list."
+        },
+        "tail": {
+          "type": "integer",
+          "description": "Lines from the end (default 100)."
+        }
+      },
+      "required": [
+        "ledger_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "screenshots_scan",
+    "description": "OCR screenshots/images modified since the last scan (watermark auto-advances; first run looks back 24h). On-device Vision, read-only. Returns {file, modified, text} per image. Use to turn 'screenshot it to deal with later' captures into tasks/events (task_create/event_create); keep the file path as provenance.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Folder to scan (default: ~/Desktop)."
+        },
+        "since": {
+          "type": "string",
+          "description": "Override watermark (yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601). Stateless: does not advance the stored watermark."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate each image's text (default 4000)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "screenshots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "modified": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string",
+                "description": "Recognized text; empty when the image has none."
+              }
+            },
+            "required": [
+              "file",
+              "modified",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "screenshots"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "shortcut_list",
+    "description": "List the names of all Shortcuts available on this Mac (via the macOS 'shortcuts' CLI).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "shortcut_run",
+    "description": "Run a macOS Shortcut by name, optionally passing text input, and return its text output. Escape hatch to anything Shortcuts can do: HomeKit, Focus modes, notifications, etc.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Exact shortcut name (see shortcut_list)."
+        },
+        "input": {
+          "type": "string",
+          "description": "Text passed to the shortcut as input."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "suggest",
+    "description": "Proactive suggestions: reviews the next week's calendar, upcoming birthdays, stale tasks, and recent agent activity, and PROPOSES tasks/events/drops. Nothing is ever created — apply accepted proposals yourself via task_create/event_create.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "days": {
+          "type": "integer",
+          "description": "Calendar look-ahead in days (default 7)."
+        },
+        "stale_weeks": {
+          "type": "integer",
+          "description": "Open [read]/claimed/overdue tasks older than this count as stale (default 4)."
+        },
+        "max": {
+          "type": "integer",
+          "description": "Suggestion cap (default 8)."
+        },
+        "no_contacts": {
+          "type": "boolean",
+          "description": "Skip the birthday feed (no Contacts prompt)."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Model seat: 'local' (on-device Apple model) or an agents.json lane (CLI or BYOM llm). Default: agents.json suggest.agent, else local."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "generatedAt": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "integer"
+            },
+            "birthdays": {
+              "type": "integer"
+            },
+            "staleTasks": {
+              "type": "integer"
+            },
+            "auditActions": {
+              "type": "integer"
+            },
+            "contactsNote": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "events",
+            "birthdays",
+            "staleTasks",
+            "auditActions"
+          ],
+          "additionalProperties": false
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "event",
+                  "drop"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why this is worth raising, citing the signal."
+              },
+              "due": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "title",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "generatedAt",
+        "inputs",
+        "suggestions"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_complete",
+    "description": "Mark a task completed. Recurring tasks roll to their next occurrence instead (response has recurred=true, completed=false, and the next due date).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string",
+          "description": "Sync-stable identifier; also accepted wherever a task id is."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "due": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "nativeTags": {
+          "type": "boolean",
+          "description": "add/update only: whether tags were mirrored to native Reminders tags."
+        },
+        "subtask": {
+          "type": "boolean",
+          "description": "update only: whether a --parent subtask change was applied."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        },
+        "recurred": {
+          "type": "boolean",
+          "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "image",
+                  "url",
+                  "other"
+                ]
+              },
+              "uti": {
+                "type": "string"
+              },
+              "fileURL": {
+                "type": "string",
+                "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+              },
+              "fileSize": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "description": "task_show with attachments: true only."
+        },
+        "attached": {
+          "type": "boolean",
+          "description": "task_update attach_* only: whether the attach succeeded."
+        },
+        "section": {
+          "type": "string",
+          "description": "task_show with section: true only — the task's section name."
+        },
+        "sectionApplied": {
+          "type": "boolean",
+          "description": "task_update section only: whether the assign succeeded."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "list",
+        "priority",
+        "completed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_create",
+    "description": "Create a task in a Reminders list. Tags become a [tag] prefix on the title (e.g. '[claude][repo2] Add MFA').",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "list": {
+          "type": "string",
+          "description": "Reminders list name to create the task in (required)."
+        },
+        "title": {
+          "type": "string",
+          "description": "Task title, without tag prefix."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+        },
+        "notes": {
+          "type": "string"
+        },
+        "due": {
+          "type": "string",
+          "description": "yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "description": "URL to attach (PR/artifact links)."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "Repeat rule, requires due. RRULE subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n. Completing an occurrence rolls the task to the next one."
+        }
+      },
+      "required": [
+        "list",
+        "title"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string",
+          "description": "Sync-stable identifier; also accepted wherever a task id is."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "due": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "nativeTags": {
+          "type": "boolean",
+          "description": "add/update only: whether tags were mirrored to native Reminders tags."
+        },
+        "subtask": {
+          "type": "boolean",
+          "description": "update only: whether a --parent subtask change was applied."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        },
+        "recurred": {
+          "type": "boolean",
+          "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "image",
+                  "url",
+                  "other"
+                ]
+              },
+              "uti": {
+                "type": "string"
+              },
+              "fileURL": {
+                "type": "string",
+                "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+              },
+              "fileSize": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "description": "task_show with attachments: true only."
+        },
+        "attached": {
+          "type": "boolean",
+          "description": "task_update attach_* only: whether the attach succeeded."
+        },
+        "section": {
+          "type": "string",
+          "description": "task_show with section: true only — the task's section name."
+        },
+        "sectionApplied": {
+          "type": "boolean",
+          "description": "task_update section only: whether the assign succeeded."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "list",
+        "priority",
+        "completed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_create_batch",
+    "description": "Create several tasks in one call (e.g. a whole triage run). Items are processed independently: failures are reported per-item under `failed` and never abort the rest of the batch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "list": {
+                "type": "string",
+                "description": "Reminders list name to create the task in (required)."
+              },
+              "title": {
+                "type": "string",
+                "description": "Task title, without tag prefix."
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+              },
+              "notes": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string",
+                "description": "yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "description": "URL to attach (PR/artifact links)."
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "Repeat rule, requires due. Same RRULE subset as task_create."
+              }
+            },
+            "required": [
+              "list",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "description": "Tasks to create, in order."
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "created": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string",
+                "description": "Sync-stable identifier; also accepted wherever a task id is."
+              },
+              "title": {
+                "type": "string",
+                "description": "Title with [tag] prefixes stripped."
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "list": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "nativeTags": {
+                "type": "boolean",
+                "description": "add/update only: whether tags were mirrored to native Reminders tags."
+              },
+              "subtask": {
+                "type": "boolean",
+                "description": "update only: whether a --parent subtask change was applied."
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+              },
+              "recurred": {
+                "type": "boolean",
+                "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image",
+                        "url",
+                        "other"
+                      ]
+                    },
+                    "uti": {
+                      "type": "string"
+                    },
+                    "fileURL": {
+                      "type": "string",
+                      "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+                    },
+                    "fileSize": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "task_show with attachments: true only."
+              },
+              "attached": {
+                "type": "boolean",
+                "description": "task_update attach_* only: whether the attach succeeded."
+              },
+              "section": {
+                "type": "string",
+                "description": "task_show with section: true only — the task's section name."
+              },
+              "sectionApplied": {
+                "type": "boolean",
+                "description": "task_update section only: whether the assign succeeded."
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "rawTitle",
+              "tags",
+              "list",
+              "priority",
+              "completed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "description": "Index into the submitted items array."
+              },
+              "title": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "index",
+              "title",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "created",
+        "failed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_delete",
+    "description": "Delete a task permanently.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "deleted": {
+          "type": "string",
+          "description": "Id of the deleted item."
+        }
+      },
+      "required": [
+        "deleted"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_list",
+    "description": "List tasks from Apple Reminders. Filter by list (plan), tags (AND), and status. Returns JSON tasks with parsed tags.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "list": {
+          "type": "string",
+          "description": "Reminders list name (a plan). Omit for all lists."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "completed",
+            "all"
+          ],
+          "description": "Default: open."
+        },
+        "due_before": {
+          "type": "string",
+          "description": "Only tasks due before this date (yyyy-MM-dd inclusive of that day, 'yyyy-MM-dd HH:mm', or ISO8601). Undated tasks are excluded."
+        },
+        "overdue": {
+          "type": "boolean",
+          "description": "Only tasks whose due date has passed (excludes undated tasks)."
+        },
+        "search": {
+          "type": "string",
+          "description": "Case-insensitive substring match over title and notes."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string",
+                "description": "Sync-stable identifier; also accepted wherever a task id is."
+              },
+              "title": {
+                "type": "string",
+                "description": "Title with [tag] prefixes stripped."
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "list": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "completed": {
+                "type": "boolean"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "nativeTags": {
+                "type": "boolean",
+                "description": "add/update only: whether tags were mirrored to native Reminders tags."
+              },
+              "subtask": {
+                "type": "boolean",
+                "description": "update only: whether a --parent subtask change was applied."
+              },
+              "recurrence": {
+                "type": "string",
+                "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+              },
+              "recurred": {
+                "type": "boolean",
+                "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "file",
+                        "image",
+                        "url",
+                        "other"
+                      ]
+                    },
+                    "uti": {
+                      "type": "string"
+                    },
+                    "fileURL": {
+                      "type": "string",
+                      "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+                    },
+                    "fileSize": {
+                      "type": "integer"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "task_show with attachments: true only."
+              },
+              "attached": {
+                "type": "boolean",
+                "description": "task_update attach_* only: whether the attach succeeded."
+              },
+              "section": {
+                "type": "string",
+                "description": "task_show with section: true only — the task's section name."
+              },
+              "sectionApplied": {
+                "type": "boolean",
+                "description": "task_update section only: whether the assign succeeded."
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "rawTitle",
+              "tags",
+              "list",
+              "priority",
+              "completed"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_show",
+    "description": "Show a single task by id: full JSON including notes (with dispatch trailers) and tags.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Task id from task_list/dispatch_list."
+        },
+        "attachments": {
+          "type": "boolean",
+          "description": "Include attachments (kind/uti/fileURL/url). Reading a fileURL's content needs Full Disk Access."
+        },
+        "section": {
+          "type": "boolean",
+          "description": "Include the task's section name."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string",
+          "description": "Sync-stable identifier; also accepted wherever a task id is."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "due": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "nativeTags": {
+          "type": "boolean",
+          "description": "add/update only: whether tags were mirrored to native Reminders tags."
+        },
+        "subtask": {
+          "type": "boolean",
+          "description": "update only: whether a --parent subtask change was applied."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        },
+        "recurred": {
+          "type": "boolean",
+          "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "image",
+                  "url",
+                  "other"
+                ]
+              },
+              "uti": {
+                "type": "string"
+              },
+              "fileURL": {
+                "type": "string",
+                "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+              },
+              "fileSize": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "description": "task_show with attachments: true only."
+        },
+        "attached": {
+          "type": "boolean",
+          "description": "task_update attach_* only: whether the attach succeeded."
+        },
+        "section": {
+          "type": "string",
+          "description": "task_show with section: true only — the task's section name."
+        },
+        "sectionApplied": {
+          "type": "boolean",
+          "description": "task_update section only: whether the assign succeeded."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "list",
+        "priority",
+        "completed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_uncomplete",
+    "description": "Mark a completed task open again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Task id."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string",
+          "description": "Sync-stable identifier; also accepted wherever a task id is."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "due": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "nativeTags": {
+          "type": "boolean",
+          "description": "add/update only: whether tags were mirrored to native Reminders tags."
+        },
+        "subtask": {
+          "type": "boolean",
+          "description": "update only: whether a --parent subtask change was applied."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        },
+        "recurred": {
+          "type": "boolean",
+          "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "image",
+                  "url",
+                  "other"
+                ]
+              },
+              "uti": {
+                "type": "string"
+              },
+              "fileURL": {
+                "type": "string",
+                "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+              },
+              "fileSize": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "description": "task_show with attachments: true only."
+        },
+        "attached": {
+          "type": "boolean",
+          "description": "task_update attach_* only: whether the attach succeeded."
+        },
+        "section": {
+          "type": "string",
+          "description": "task_show with section: true only — the task's section name."
+        },
+        "sectionApplied": {
+          "type": "boolean",
+          "description": "task_update section only: whether the assign succeeded."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "list",
+        "priority",
+        "completed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_update",
+    "description": "Update a task: retitle, add/remove tags, notes, due date, priority, or move to another list.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Task id from task_list/task_create."
+        },
+        "title": {
+          "type": "string",
+          "description": "New title (tags are preserved)."
+        },
+        "add_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remove_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string",
+          "description": "Replace the notes body."
+        },
+        "append_notes": {
+          "type": "string",
+          "description": "Append a paragraph to the notes, keeping the existing body (use for outcome summaries)."
+        },
+        "due": {
+          "type": "string",
+          "description": "yyyy-MM-dd, 'yyyy-MM-dd HH:mm', or ISO8601."
+        },
+        "clear_due": {
+          "type": "boolean"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "list": {
+          "type": "string",
+          "description": "Move the task to this list."
+        },
+        "url": {
+          "type": "string",
+          "description": "Set the task URL (PR/artifact links)."
+        },
+        "clear_url": {
+          "type": "boolean"
+        },
+        "parent": {
+          "type": "string",
+          "description": "Make this task a subtask of the given task id (native Reminders subtask, via the private helper)."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "Set/replace the repeat rule (task must have a due date). Same RRULE subset as task_create."
+        },
+        "clear_recurrence": {
+          "type": "boolean",
+          "description": "Remove the repeat rule (series stops recurring)."
+        },
+        "attach_file": {
+          "type": "string",
+          "description": "Attach a file by absolute path (copied into the Reminders store)."
+        },
+        "attach_url": {
+          "type": "string",
+          "description": "Attach a URL as a rich attachment (distinct from the url field)."
+        },
+        "clear_parent": {
+          "type": "boolean",
+          "description": "Detach from the parent task (stays in its list)."
+        },
+        "section": {
+          "type": "string",
+          "description": "Move into this section of the task's list, creating it if needed."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string",
+          "description": "Sync-stable identifier; also accepted wherever a task id is."
+        },
+        "title": {
+          "type": "string",
+          "description": "Title with [tag] prefixes stripped."
+        },
+        "rawTitle": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "due": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "nativeTags": {
+          "type": "boolean",
+          "description": "add/update only: whether tags were mirrored to native Reminders tags."
+        },
+        "subtask": {
+          "type": "boolean",
+          "description": "update only: whether a --parent subtask change was applied."
+        },
+        "recurrence": {
+          "type": "string",
+          "description": "RRULE subset (e.g. 'FREQ=WEEKLY;BYDAY=MO'); absent = one-shot."
+        },
+        "recurred": {
+          "type": "boolean",
+          "description": "complete only: completing this recurring task rolled it to the next occurrence (shown still open)."
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "file",
+                  "image",
+                  "url",
+                  "other"
+                ]
+              },
+              "uti": {
+                "type": "string"
+              },
+              "fileURL": {
+                "type": "string",
+                "description": "Path in the Reminders store; reading the file needs Full Disk Access."
+              },
+              "fileSize": {
+                "type": "integer"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "description": "task_show with attachments: true only."
+        },
+        "attached": {
+          "type": "boolean",
+          "description": "task_update attach_* only: whether the attach succeeded."
+        },
+        "section": {
+          "type": "string",
+          "description": "task_show with section: true only — the task's section name."
+        },
+        "sectionApplied": {
+          "type": "boolean",
+          "description": "task_update section only: whether the assign succeeded."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "rawTitle",
+        "tags",
+        "list",
+        "priority",
+        "completed"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "triage_inbox",
+    "description": "One-shot triage of untagged inbox reminders: a cheap classifier agent tags each as agent-work or personal and routes agent work to a plan list. dry_run defaults to TRUE (reports proposed changes, mutates nothing); pass dry_run: false to apply. Replaces the /loop triage pattern.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "inbox": {
+          "type": "string",
+          "description": "Reminders list to triage (default: Reminders)."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Classifier: an agents.json tag, or \"local\" for the on-device Apple model (macOS 26+)."
+        },
+        "include_notes": {
+          "type": "boolean",
+          "description": "Also scan Apple Notes (shared watermark; advanced only when applying) and turn action items into tasks/events with the source note's name for provenance."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Default true. Set false to apply tags/list moves."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "inbox": {
+          "type": "string"
+        },
+        "untaggedCount": {
+          "type": "integer"
+        },
+        "applied": {
+          "type": "boolean"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "description": "\"agent\" or \"personal\"."
+              },
+              "addedTags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "movedTo": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "kind",
+              "addedTags"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "noteActions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "Source note name."
+              },
+              "kind": {
+                "type": "string",
+                "description": "\"task\" or \"event\"."
+              },
+              "title": {
+                "type": "string"
+              },
+              "due": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "list": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string",
+                "description": "Skip/downgrade reason."
+              }
+            },
+            "required": [
+              "source",
+              "kind",
+              "title",
+              "tags"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Present only when include_notes: true."
+        }
+      },
+      "required": [
+        "inbox",
+        "untaggedCount",
+        "applied",
+        "actions"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "watch_list",
+    "description": "Show configured topic watches and their scan state (last fetch, due now?).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "watches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rss",
+                  "url"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "cadenceMinutes": {
+                "type": "integer"
+              },
+              "lastFetch": {
+                "type": "string"
+              },
+              "due": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "kind",
+              "url",
+              "cadenceMinutes",
+              "due"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "watches"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "watch_scan",
+    "description": "Fetch each due topic watch (RSS feeds / web pages from ~/.config/apple-tasks/watches.json) and emit items new since the last scan. Per-watch cadence and seen-state; first run records a baseline. Failed watches are reported per-watch, never fatal.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "watch": {
+          "type": "string",
+          "description": "Only scan this watch (by name)."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Fetch every watch now, ignoring cadence."
+        },
+        "max_items": {
+          "type": "integer",
+          "description": "Per-watch cap on emitted items (default 20)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "scannedAt": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "watch": {
+                "type": "string",
+                "description": "Name of the watch that produced this item."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "rss",
+                  "url"
+                ]
+              },
+              "ts": {
+                "type": "string",
+                "description": "Item timestamp (feed pubDate when parseable, else scan time), ISO8601."
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string",
+                "description": "'content changed' for url watches; feed summary for rss."
+              }
+            },
+            "required": [
+              "watch",
+              "kind",
+              "ts",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "watches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "description": "'ok', 'skipped: not due', 'baseline recorded', or 'error: ...'."
+              },
+              "newItems": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "status",
+              "newItems"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "scannedAt",
+        "items",
+        "watches"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "web_fetch",
+    "description": "Fetch a URL and return {url, status, title, text} with HTML reduced to readable text. Minimal web primitive for agents without their own web access; prefer your native web tools if you have them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "http(s) URL to fetch."
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "Truncate extracted text (default 4000)."
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "url",
+        "status",
+        "text",
+        "truncated"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "whereami",
+    "description": "Get this Mac's current location (CoreLocation): lat/lon, accuracy, and reverse-geocoded place. Use for location context (am I home? what city am I in?). First use needs a Location Services grant for the MCP host process — run doctor if it times out.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeout": {
+          "type": "integer",
+          "description": "Seconds to wait for a fix (default 15)."
+        },
+        "no_geocode": {
+          "type": "boolean",
+          "description": "Skip reverse geocoding (coordinates only)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "accuracyMeters": {
+          "type": "number"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "place": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "locality": {
+              "type": "string"
+            },
+            "administrativeArea": {
+              "type": "string"
+            },
+            "postalCode": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Absent with no_geocode or when reverse geocoding fails."
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude",
+        "accuracyMeters",
+        "timestamp"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  }
+]

@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import apple_tasks
 
@@ -23,7 +24,41 @@ final class AuditDBTests: XCTestCase {
     }
 
     func testOpensTempDatabase() {
-        XCTAssertTrue(openDB().isAvailable)
+        let db = openDB()
+        XCTAssertTrue(db.isAvailable)
+        XCTAssertEqual(db.schemaVersion, AuditDB.schemaVersion)
+    }
+
+    /// A pre-2026-09 database (user_version 0, no pid/task_modified_at, the
+    /// old ad-hoc columns present) migrates in place without losing rows.
+    func testMigratesVersionZeroDatabase() throws {
+        let url = tempDir.appendingPathComponent("v0.db")
+        var raw: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &raw), SQLITE_OK)
+        let legacy = """
+        CREATE TABLE dispatches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, agent TEXT NOT NULL,
+            command TEXT NOT NULL, cwd TEXT, started_at TEXT NOT NULL, finished_at TEXT,
+            status TEXT NOT NULL, exit_code INTEGER, run_log_path TEXT, worktree TEXT, summary TEXT);
+        INSERT INTO dispatches (task_id, agent, command, started_at, status)
+            VALUES ('legacy', 'cursor', 'echo', '2026-08-01T00:00:00Z', 'succeeded');
+        """
+        XCTAssertEqual(sqlite3_exec(raw, legacy, nil, nil, nil), SQLITE_OK)
+        sqlite3_close(raw)
+
+        let db = AuditDB(url: url)
+        XCTAssertTrue(db.isAvailable)
+        XCTAssertEqual(db.schemaVersion, AuditDB.schemaVersion)
+        let row = db.dispatchRow(id: 1)
+        XCTAssertEqual(row?.taskId, "legacy")
+        XCTAssertNil(row?.pid)
+        // New column is writable after migration.
+        XCTAssertTrue(db.setDispatchPid(id: 1, pid: 4242))
+        XCTAssertEqual(db.dispatchRow(id: 1)?.pid, 4242)
+        // Reopening does not re-run the migration or fail on existing columns.
+        let again = AuditDB(url: url)
+        XCTAssertEqual(again.schemaVersion, AuditDB.schemaVersion)
+        XCTAssertEqual(again.dispatchRow(id: 1)?.pid, 4242)
     }
 
     func testClaimDispatchHeldThenReclaimAfterSuccess() {
@@ -88,6 +123,33 @@ final class AuditDBTests: XCTestCase {
         let attempts = db.failedAttempts(taskId: "retries")
         XCTAssertEqual(attempts.count, 2)
         XCTAssertNotNil(attempts.lastFinishedAt)
+    }
+
+    func testCancelledDoesNotCountAsFailedAttempt() {
+        let db = openDB()
+        let claim = db.claimDispatch(taskId: "cancel-me", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let id) = claim else {
+            return XCTFail("expected claimed, got \(claim)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: id, status: "cancelled", exitCode: -1,
+                                        summary: "cancelled by test"))
+        XCTAssertEqual(db.dispatchRow(id: id)?.status, "cancelled")
+        let attempts = db.failedAttempts(taskId: "cancel-me")
+        XCTAssertEqual(attempts.count, 0)
+        XCTAssertNil(attempts.lastFinishedAt)
+    }
+
+    func testSetDispatchPidRoundTrip() {
+        let db = openDB()
+        let claim = db.claimDispatch(taskId: "pid-row", agent: "cursor", command: "sleep", cwd: nil)
+        guard case .claimed(let id) = claim else {
+            return XCTFail("expected claimed, got \(claim)")
+        }
+        XCTAssertNil(db.dispatchRow(id: id)?.pid)
+        XCTAssertTrue(db.setDispatchPid(id: id, pid: 4242))
+        XCTAssertEqual(db.dispatchRow(id: id)?.pid, 4242)
+        XCTAssertTrue(db.finishDispatch(id: id, status: "succeeded", exitCode: 0))
+        XCTAssertEqual(db.dispatchRow(id: id)?.pid, 4242)
     }
 
     func testGetStateSetStateUpserts() {
