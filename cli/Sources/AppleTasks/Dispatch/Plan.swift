@@ -303,7 +303,10 @@ extension Dispatch {
                                               exitCode: nil, runLog: nil, worktree: nil))
                 continue
             }
-            let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+            let promptVia = agent.promptVia ?? .argv
+            // For file mode the path isn't known until the ledger row exists;
+            // substitute a placeholder now and patch it after the claim.
+            let argv = Self.renderArgv(template, prompt: prompt, via: promptVia, promptFile: "{promptFile}")
 
             if dryRun {
                 var action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
@@ -419,11 +422,34 @@ extension Dispatch {
             let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
             AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: worktreePath)
 
+            // Non-argv prompt delivery: persist the prompt beside the run log
+            // (it is the file for `file` mode; a debugging copy for `stdin`).
+            var finalArgv = argv
+            var promptFile: String?
+            if promptVia != .argv {
+                let promptURL = runsDir.appendingPathComponent("\(ledgerId).prompt")
+                do {
+                    try prompt.write(to: promptURL, atomically: true, encoding: .utf8)
+                } catch {
+                    AuditDB.shared.finishDispatch(id: ledgerId, status: "failed", exitCode: -1)
+                    await markFailed(store: store, taskId: taskId)
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
+                                                  cwd: cwd, action: "failed: could not write prompt file \(promptURL.path)",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                    continue
+                }
+                promptFile = promptURL.path
+                finalArgv = Self.renderArgv(template, prompt: prompt, via: promptVia, promptFile: promptURL.path)
+            }
+
             specs.append(RunSpec(ledgerId: ledgerId, taskId: taskId, title: parsed.title,
-                                 agentTag: agentTag, argv: argv, repo: cwd, runCwd: runCwd,
+                                 agentTag: agentTag, argv: finalArgv, repo: cwd, runCwd: runCwd,
                                  worktree: worktreePath, branch: branchName,
                                  timeoutMinutes: agent.timeoutMinutes, env: agent.env,
-                                 logPath: logURL.path))
+                                 logPath: logURL.path,
+                                 promptVia: promptVia,
+                                 stdinPrompt: promptVia == .stdin ? prompt : nil,
+                                 promptFile: promptFile))
             specsPerAgent[agentTag, default: 0] += 1
         }
 
@@ -467,5 +493,25 @@ extension Dispatch {
     private static func stripLanePrefix(_ note: String) -> String {
         guard let idx = note.firstIndex(of: ":") else { return note }
         return String(note[note.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Substitute the prompt into an argv template according to `promptVia`.
+    /// - argv: `{prompt}` → the prompt, inline.
+    /// - stdin: entries that are exactly `{prompt}` are dropped (the prompt
+    ///   is piped); any embedded `{prompt}` becomes "".
+    /// - file: as stdin, plus `{promptFile}` → the prompt file path.
+    static func renderArgv(_ template: [String], prompt: String,
+                           via: AgentsConfig.PromptVia, promptFile: String) -> [String] {
+        switch via {
+        case .argv:
+            return template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
+        case .stdin, .file:
+            return template.compactMap { arg in
+                if arg == "{prompt}" { return nil }
+                return arg
+                    .replacingOccurrences(of: "{prompt}", with: "")
+                    .replacingOccurrences(of: "{promptFile}", with: promptFile)
+            }
+        }
     }
 }

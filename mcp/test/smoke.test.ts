@@ -141,9 +141,13 @@ describe("apple-tasks MCP smoke", () => {
         const { annotations: _annotations, ...rest } = tool;
         return rest;
       });
-    const golden = JSON.parse(
-      await readFile(path.join(here, "fixtures/tools-list.golden.json"), "utf8")
-    ) as typeof stripped;
+    const goldenPath = path.join(here, "fixtures/tools-list.golden.json");
+    if (process.env.UPDATE_GOLDEN) {
+      // Intentional tool additions/changes: `bun run test:update-golden`.
+      await writeFile(goldenPath, JSON.stringify(stripped, null, 2) + "\n");
+      return;
+    }
+    const golden = JSON.parse(await readFile(goldenPath, "utf8")) as typeof stripped;
     expect(stripped).toEqual(golden);
   });
 

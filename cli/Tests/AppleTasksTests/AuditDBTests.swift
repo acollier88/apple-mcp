@@ -125,6 +125,33 @@ final class AuditDBTests: XCTestCase {
         XCTAssertNotNil(attempts.lastFinishedAt)
     }
 
+    func testCancelledDoesNotCountAsFailedAttempt() {
+        let db = openDB()
+        let claim = db.claimDispatch(taskId: "cancel-me", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let id) = claim else {
+            return XCTFail("expected claimed, got \(claim)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: id, status: "cancelled", exitCode: -1,
+                                        summary: "cancelled by test"))
+        XCTAssertEqual(db.dispatchRow(id: id)?.status, "cancelled")
+        let attempts = db.failedAttempts(taskId: "cancel-me")
+        XCTAssertEqual(attempts.count, 0)
+        XCTAssertNil(attempts.lastFinishedAt)
+    }
+
+    func testSetDispatchPidRoundTrip() {
+        let db = openDB()
+        let claim = db.claimDispatch(taskId: "pid-row", agent: "cursor", command: "sleep", cwd: nil)
+        guard case .claimed(let id) = claim else {
+            return XCTFail("expected claimed, got \(claim)")
+        }
+        XCTAssertNil(db.dispatchRow(id: id)?.pid)
+        XCTAssertTrue(db.setDispatchPid(id: id, pid: 4242))
+        XCTAssertEqual(db.dispatchRow(id: id)?.pid, 4242)
+        XCTAssertTrue(db.finishDispatch(id: id, status: "succeeded", exitCode: 0))
+        XCTAssertEqual(db.dispatchRow(id: id)?.pid, 4242)
+    }
+
     func testGetStateSetStateUpserts() {
         let db = openDB()
         XCTAssertNil(db.getState("watermark"))

@@ -25,8 +25,9 @@ extension Dispatch {
         return reports
     }
 
-    /// Runs one agent process to completion. No EventKit, no AuditDB — safe
-    /// to run concurrently; all recording happens serially in Phase C.
+    /// Runs one agent process to completion. No EventKit — safe to run
+    /// concurrently. The pid is written to the ledger right after spawn so
+    /// reap/cancel can signal it; Phase C still records the outcome.
     private static func execute(_ spec: RunSpec) async -> RunOutcome {
         var argv = spec.argv
         var seat = AgentSeat.from(argv: argv)
@@ -74,12 +75,30 @@ extension Dispatch {
             }
         }
 
+        // promptVia stdin: pipe the prompt in after spawn (written off-thread so
+        // a prompt larger than the pipe buffer can't deadlock against a child
+        // that hasn't started reading yet), then close so the agent sees EOF.
+        let stdinPipe: Pipe? = spec.promptVia == .stdin ? Pipe() : nil
+        if let stdinPipe { process.standardInput = stdinPipe }
+
         do {
             try process.run()
         } catch {
             return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
                               spawnError: error.localizedDescription, seat: seat)
         }
+        if let stdinPipe {
+            let data = Data((spec.stdinPrompt ?? "").utf8)
+            let writer = stdinPipe.fileHandleForWriting
+            DispatchQueue.global(qos: .utility).async {
+                try? writer.write(contentsOf: data)
+                try? writer.close()
+            }
+        }
+        // Leave pid set after exit (informational). finishDispatch marks done.
+        // Foundation.Process has no process-group hook, so kills below and in
+        // reap/cancel walk the descendant tree (AgentProcess) instead.
+        AuditDB.shared.setDispatchPid(id: spec.ledgerId, pid: process.processIdentifier)
         var timedOut = false
         if let minutes = spec.timeoutMinutes {
             let deadline = Date().addingTimeInterval(TimeInterval(minutes) * 60)
@@ -88,11 +107,11 @@ extension Dispatch {
             }
             if process.isRunning {
                 timedOut = true
-                process.terminate()
-                for _ in 0..<5 where process.isRunning {
+                let tree = AgentProcess.signalTree(process.processIdentifier, SIGTERM)
+                for _ in 0..<5 where tree.contains(where: AgentProcess.isAlive) {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                 }
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                for p in tree where AgentProcess.isAlive(p) { kill(p, SIGKILL) }
             }
         }
         process.waitUntilExit()

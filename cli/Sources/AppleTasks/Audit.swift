@@ -256,7 +256,7 @@ final class AuditDB {
     /// Finished runs that still have a worktree on record (GC candidates).
     func worktreeRows() -> [DispatchRow] {
         selectDispatches(
-            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout')",
+            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout','cancelled')",
             binds: [], limit: 500)
     }
 
@@ -359,6 +359,7 @@ final class AuditDB {
     }
 
     /// Failed/timed-out attempt count and latest finish time, for retry backoff.
+    /// `cancelled` is a human decision and must not count (no retry/backoff).
     func failedAttempts(taskId: String) -> (count: Int, lastFinishedAt: String?) {
         guard db != nil else { return (0, nil) }
         var stmt: OpaquePointer?

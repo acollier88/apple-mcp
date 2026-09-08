@@ -23,6 +23,15 @@ struct AgentsConfig: Codable {
         /// Extra environment variables for the agent process (IDEAS #51) —
         /// endpoint overrides, API keys — merged over the inherited env.
         let env: [String: String]?
+        /// How the rendered prompt reaches the agent (default `argv`):
+        /// - `argv`: `{prompt}` in `command` is replaced inline (visible in
+        ///   `ps`, subject to ARG_MAX, echoed into the ledger's command column).
+        /// - `stdin`: the prompt is piped to the process; `{prompt}` entries
+        ///   are dropped from argv. Use with `claude -p` / `codex exec -`.
+        /// - `file`: the prompt is written to `runs/<ledgerId>.prompt` and
+        ///   `{promptFile}` in `command` is replaced with that path.
+        /// Both non-argv modes keep a copy at `runs/<ledgerId>.prompt`.
+        let promptVia: PromptVia?
 
         /// The argv template for this lane ({prompt} not yet substituted),
         /// or nil when neither `command` nor `llm` is configured. BYOM lanes
@@ -36,6 +45,10 @@ struct AgentsConfig: Codable {
         /// Context gates (IDEAS #22): all must pass or the task stays queued
         /// (no claim, no [failed]) and is retried next pass.
         let conditions: Conditions?
+    }
+
+    enum PromptVia: String, Codable, Sendable {
+        case argv, stdin, file
     }
 
     struct Conditions: Codable {

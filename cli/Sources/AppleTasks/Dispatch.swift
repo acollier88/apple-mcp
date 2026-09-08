@@ -87,6 +87,12 @@ struct Dispatch: AsyncParsableCommand {
         let timeoutMinutes: Int?
         let env: [String: String]?
         let logPath: String
+        /// How Phase B hands the prompt over (see AgentsConfig.Agent.promptVia).
+        var promptVia: AgentsConfig.PromptVia = .argv
+        /// Set only for `.stdin`: piped to the process after spawn.
+        var stdinPrompt: String? = nil
+        /// Set for `.stdin` and `.file`: `runs/<ledgerId>.prompt`.
+        var promptFile: String? = nil
     }
 
     struct RunOutcome: Sendable {

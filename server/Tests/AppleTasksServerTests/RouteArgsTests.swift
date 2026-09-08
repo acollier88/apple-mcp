@@ -108,6 +108,24 @@ final class RouteArgsTests: XCTestCase {
         XCTAssertEqual(args, ["dispatches", "--status", "running", "--limit", "5"])
     }
 
+    func testDispatchCancel() {
+        let route = RouteArgs.build(method: "POST", path: "/v1/dispatches/84/cancel", query: [:], body: Data())
+        guard case .cli(let args, let timeout) = route else {
+            return XCTFail("expected cli, got \(route)")
+        }
+        XCTAssertEqual(args, ["dispatch-cancel", "84"])
+        XCTAssertEqual(timeout, 30)
+        XCTAssertEqual(
+            RouteArgs.build(method: "POST", path: "/v1/dispatches/../cancel", query: [:], body: Data()),
+            .badRequest("bad ledger id")
+        )
+        // GET is not a cancel.
+        XCTAssertEqual(
+            RouteArgs.build(method: "GET", path: "/v1/dispatches/84/cancel", query: [:], body: Data()),
+            .notFound
+        )
+    }
+
     func testHealthAndUnknown() {
         XCTAssertEqual(
             RouteArgs.build(method: "GET", path: "/v1/health", query: [:], body: Data()),

@@ -114,8 +114,9 @@ ntfy — respects the quiet-hours window in `notify.json`).
 
 **Dispatcher ops** — `dispatch_run` (dry-run by default; `[auto]` with no
 lane tag walks any available worker; refuses recursive dispatch from
-agent-spawned sessions), `dispatch_list`, `run_log` — a supervisor agent
-can reap, retry, and read failure logs over MCP.
+agent-spawned sessions), `dispatch_list`, `dispatch_cancel` (kills the agent
+tree, marks `cancelled`, no `[failed]`/retry), `run_log` — a supervisor agent
+can reap, retry, cancel, and read failure logs over MCP.
 
 **Location** — `whereami` (this Mac, CoreLocation), `findmy_devices` /
 `findmy_locate` (AirTags via the optional FindMy.py sidecar — setup in

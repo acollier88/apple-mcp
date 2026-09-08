@@ -125,3 +125,39 @@ notification) with title = task title, body = trailer summary. Config gate
 All five steps landed 2026-07-07. Remaining follow-ups: README + MCP tool
 descriptions still describe v1 (sequential, no summary column, no
 --append-notes); update both.
+
+## v3: reap-kill and cancel (2026-09-07)
+
+Closes review bug #6 (reap flipped the ledger but left the agent running;
+no cancel command).
+
+- **Record pid.** Phase B writes `dispatches.pid` immediately after
+  `Process.run()` succeeds. The column stays after `finishDispatch` as
+  an informational leftover.
+- **Reap kills.** After `reapStale` returns rows, each recorded pid is
+  checked with `AgentProcess.looksLikeOurs` (alive + command line contains
+  the task id, `runs/<ledgerId>.log`, or the agent binary basename). A
+  match is SIGTERM'd, then SIGKILL after 5s. Report action becomes
+  `reaped: killed pid N (terminated|killed)`. Audit `dispatch-reap` detail
+  records the signal result.
+- **Crashed dispatcher.** Running rows whose pid is already dead and
+  `started_at` is older than 10 minutes are finished as `timeout` with
+  summary `dispatcher died`, `[failed]`-tagged, and reported
+  `reaped: dispatcher died, pid N gone`. Protects against a mid-run reboot
+  where there is nothing left to signal.
+- **Process group.** Foundation `Process` has no process-group hook; we
+  do not `posix_spawn` here. `terminate` uses `kill(-pid)` only when
+  `getpgid(pid) == pid` (the agent is already its own leader). Otherwise
+  it signals the pid alone. Grandchildren spawned by `agent` / `claude`
+  may survive a reap or cancel — TODO if `Process` ever exposes a hook.
+- **`apple-tasks dispatch-cancel <ledgerId>`.** If the row is not
+  `running`, emits `cancelled: false` and exits 0. Otherwise signals the
+  process (or notes `process not found`), `finishDispatch(status:
+  "cancelled")`, sheds this Mac's `[dispatched]` / bare `dispatched` tag
+  **without** writing `[failed]`, appends a notes trailer, and leaves the
+  worktree for GC (`keepFailedWorktreeDays`, same as `failed`/`timeout`).
+- **`cancelled` is not a failed attempt.** `failedAttempts` stays
+  `IN ('failed','timeout')` so a human cancel does not trip retry/backoff.
+  Doctor's heal scan queries `failed` only (cancelled is excluded).
+  Digest prints the status string as-is. MCP `dispatch_list` status enum
+  does not yet include `cancelled` (out of scope for this change).
