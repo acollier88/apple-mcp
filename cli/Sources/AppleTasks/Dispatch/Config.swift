@@ -97,6 +97,9 @@ struct AgentsConfig: Codable {
     /// When present, run a one-shot inbox triage (see Triage.swift) at the
     /// start of every dispatch cycle, before scanning for dispatchable tasks.
     var triage: TriageConfig?
+    /// TypeSafe Jev classifier (top-level `jev` block): API-key env and
+    /// apply/review confidence thresholds. Used by `triage --agent jev`.
+    var jev: JevConfig?
     /// Default backend for the `suggest` seat (also digest --suggest).
     var suggest: SeatConfig?
     /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
@@ -166,7 +169,7 @@ struct AgentsConfig: Codable {
     """
 
     /// Lanes never chosen for `[auto]`-only routing (classifiers / ops).
-    static let autoPoolExcluded: Set<String> = ["triage", "local", "doctor", "heal"]
+    static let autoPoolExcluded: Set<String> = ["triage", "local", "jev", "doctor", "heal"]
 
     /// Default walk when `modelPrefs.auto` is absent: local House first, then premium.
     static let autoPoolDefaultOrder = ["hermes", "cursor", "claude", "antigravity"]

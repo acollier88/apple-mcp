@@ -239,7 +239,7 @@ export function registerDispatchTools(server: McpServer): void {
       agent: z
         .string()
         .optional()
-        .describe('Classifier: an agents.json tag, or "local" for the on-device Apple model (macOS 26+).'),
+        .describe('Classifier: an agents.json tag, "local" for the on-device Apple model (macOS 26+), or "jev" (TypeSafe Jev, calibrated confidence; needs TYPESAFE_API_KEY).'),
       include_notes: z
         .boolean()
         .optional()
@@ -257,10 +257,11 @@ export function registerDispatchTools(server: McpServer): void {
       actions: z.array(z.object({
         id: z.string(),
         title: z.string(),
-        kind: z.string().describe('"agent" or "personal".'),
+        kind: z.string().describe('"agent", "personal", or "skipped" (seat declined / no classification)'),
         addedTags: z.array(z.string()),
         movedTo: z.string().optional(),
         note: z.string().optional(),
+        confidence: z.number().optional(),
       })),
       noteActions: z.array(z.object({
         source: z.string().describe("Source note name."),

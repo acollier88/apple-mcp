@@ -434,6 +434,7 @@ export function registerMiscTools(server: McpServer): void {
         location: z.string(),
         contacts: z.string(),
         foundationModels: z.string(),
+        jev: z.string().describe("TypeSafe Jev seat: configured (key env + model) or missing-key hint."),
         findmySidecar: z.string(),
         mailRule: z.string(),
         dropFolder: z.string(),

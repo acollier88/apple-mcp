@@ -107,6 +107,11 @@
     "agent": "local",
     "inbox": "Reminders"
   },
+  "jev": {
+    "apiKeyEnv": "TYPESAFE_API_KEY",
+    "applyConfidence": 0.7,
+    "reviewConfidence": 0.45
+  },
   "workdirs": {
     "apple-mcp": "~/Code/apple-mcp",
     "home-lab": "~/Documents/home-lab",

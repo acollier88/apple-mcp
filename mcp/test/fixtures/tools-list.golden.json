@@ -1419,6 +1419,10 @@
         "foundationModels": {
           "type": "string"
         },
+        "jev": {
+          "type": "string",
+          "description": "TypeSafe Jev seat: configured (key env + model) or missing-key hint."
+        },
         "findmySidecar": {
           "type": "string"
         },
@@ -1578,6 +1582,7 @@
         "location",
         "contacts",
         "foundationModels",
+        "jev",
         "findmySidecar",
         "mailRule",
         "dropFolder",
@@ -4812,7 +4817,7 @@
         },
         "agent": {
           "type": "string",
-          "description": "Classifier: an agents.json tag, or \"local\" for the on-device Apple model (macOS 26+)."
+          "description": "Classifier: an agents.json tag, \"local\" for the on-device Apple model (macOS 26+), or \"jev\" (TypeSafe Jev, calibrated confidence; needs TYPESAFE_API_KEY)."
         },
         "include_notes": {
           "type": "boolean",
@@ -4851,7 +4856,7 @@
               },
               "kind": {
                 "type": "string",
-                "description": "\"agent\" or \"personal\"."
+                "description": "\"agent\", \"personal\", or \"skipped\" (seat declined / no classification)"
               },
               "addedTags": {
                 "type": "array",
@@ -4864,6 +4869,9 @@
               },
               "note": {
                 "type": "string"
+              },
+              "confidence": {
+                "type": "number"
               }
             },
             "required": [

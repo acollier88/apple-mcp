@@ -11,6 +11,7 @@ struct DoctorOut: Codable {
     let location: String
     let contacts: String
     let foundationModels: String
+    let jev: String
     let findmySidecar: String
     let mailRule: String
     let dropFolder: String
@@ -553,6 +554,7 @@ struct Doctor: AsyncParsableCommand {
             location: LocationFetcher.describeAuthorization(),
             contacts: ContactsAccess.describeAuthorization(),
             foundationModels: LocalClassifier.status(),
+            jev: JevClassifier.status(config: (try? AgentsConfig.load())?.jev),
             findmySidecar: Self.findmyStatus(),
             mailRule: FileManager.default.fileExists(
                 atPath: FileManager.default.homeDirectoryForCurrentUser

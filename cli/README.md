@@ -247,7 +247,7 @@ details and self-complete instructions. A leading tag that matches an
 `[auto]` with no lane tag walks `modelPrefs.auto` and takes the first
 **available** worker (command/llm present, under `maxConcurrent`, gates
 pass; `worktree: true` lanes need a workdir tag). Classifier/ops lanes
-(`triage`, `local`, `doctor`, `heal`) are never in the auto pool. If nothing is
+(`triage`, `local`, `jev`, `doctor`, `heal`) are never in the auto pool. If nothing is
 available the task stays queued — it is not `[failed]`. Config at
 `~/.config/apple-tasks/agents.json`:
 
@@ -264,6 +264,7 @@ available the task stays queued — it is not `[failed]`. Config at
   },
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
   "triage": { "agent": "triage", "inbox": "Reminders" },
+  "jev": { "apiKeyEnv": "TYPESAFE_API_KEY", "applyConfidence": 0.7, "reviewConfidence": 0.45 },
   "workdirs": { "repo2": "~/Code/repo2" },
   "requireAutoTag": true,
   "maxRetries": 2,
@@ -301,6 +302,7 @@ Any argv template works; these are the lanes the example config ships:
 | `claude` | `claude` | `-p --permission-mode acceptEdits` |
 | `antigravity` | `agy` | sandbox + skip-permissions |
 | `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
+| `jev` | TypeSafe Jev (cloud) | reserved seat like `local`; `triage --agent jev` or `"triage": {"agent": "jev"}`; typed questions with calibrated confidence; `applyConfidence`/`reviewConfidence` gating; needs `TYPESAFE_API_KEY`; never in the auto pool |
 | *(BYOM)* | — | `"llm": { … }` OpenAI-compatible profile (no tools) |
 
 Prefer apple-tasks `"worktree": true` over Cursor's own `-w` so ledger/GC stay authoritative.
@@ -506,6 +508,20 @@ offline, and `@Generable` structured output instead of parsing agent stdout.
 works in the dispatcher's triage block (`"agent": "local"`) and the MCP tool's
 `agent` param. This is the first rung of the escalation ladder: on-device →
 cheap cloud classifier (`agy` on Flash) → Claude.
+
+`--agent jev` classifies with TypeSafe Jev (cloud, calibrated confidence):
+one request per inbox item, using Choice questions over kind / lane / repo /
+list constrained to your `agents.json` lanes, workdirs, and plan lists.
+Three confidence bands: `>= applyConfidence` (default 0.7) is a full
+classification; between `reviewConfidence` and `applyConfidence` (default
+0.45–0.7) gets a kind tag only; below the review floor the item is reported
+`skipped` and nothing is mutated. Confidence lands in the audit detail
+(e.g. `(jev 0.83)`) so you can tune thresholds from `apple-tasks log`.
+`--notes` is not supported with jev (no text generation) — use `--agent
+local` or an `agents.json` lane. `doctor` reports the seat on its `jev`
+line. Needs `TYPESAFE_API_KEY`. The same reserved value works in the
+dispatcher's triage block (`"agent": "jev"`) and the MCP tool's `agent`
+param.
 
 Also exposed as MCP `triage_inbox` (dry-run by default), a **"Triage Inbox"
 button** in the AgentTasks app's activity view, and a Siri/Shortcuts intent —

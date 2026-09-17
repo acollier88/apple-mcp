@@ -19,7 +19,7 @@ struct Triage: AsyncParsableCommand {
     @Option(help: "Reminders list to triage (default: Reminders).")
     var inbox: String = "Reminders"
 
-    @Option(name: .customLong("agent"), help: "Classifier: an agents.json tag, or 'local' for the on-device Apple model (default: triage).")
+    @Option(name: .customLong("agent"), help: "Classifier: an agents.json tag, 'local' for the on-device Apple model, or 'jev' for TypeSafe Jev (cloud, calibrated confidence) (default: triage).")
     var agentTag: String = "triage"
 
     @Flag(help: "Apply the classifications (default is a dry run that only reports).")
@@ -37,6 +37,12 @@ struct Triage: AsyncParsableCommand {
         let kind: String          // "agent" | "personal"
         let tags: [String]?
         let list: String?         // target plan list for agent work (optional)
+        /// Classifier certainty in `kind` (0–1) when the seat reports one
+        /// (jev). nil for prompt→JSON seats that have no calibrated signal.
+        var confidence: Double? = nil
+        /// Set when the seat declines to decide (e.g. confidence below the
+        /// review floor). Triage reports the item as skipped and mutates nothing.
+        var skipReason: String? = nil
     }
 
     struct NoteClassification: Codable {
@@ -61,6 +67,7 @@ struct Triage: AsyncParsableCommand {
             let addedTags: [String]
             let movedTo: String?
             let note: String?
+            var confidence: Double? = nil
         }
         struct NoteAction: Codable {
             let source: String
@@ -102,10 +109,11 @@ struct Triage: AsyncParsableCommand {
 
         let config = try AgentsConfig.load()
         // Routing targets exclude classifier lanes — never route work TO a classifier.
-        let classifierTags: Set<String> = [agentTag.lowercased(), "triage", LocalClassifier.agentTag]
+        let classifierTags: Set<String> = [agentTag.lowercased(), "triage", LocalClassifier.agentTag, JevClassifier.agentTag]
         let routingAgents = config.agents.keys.filter { !classifierTags.contains($0) }.sorted()
         let workdirs = Array(config.workdirs?.keys ?? [:].keys)
         let useLocal = agentTag.lowercased() == LocalClassifier.agentTag
+        let useJev = agentTag.lowercased() == JevClassifier.agentTag
 
         func externalAgent() throws -> (AgentsConfig.Agent, template: [String]) {
             guard let agent = config.agents[agentTag.lowercased()] else {
@@ -139,6 +147,10 @@ struct Triage: AsyncParsableCommand {
             // IDEAS #27: on-device SystemLanguageModel, no subprocess.
             classifications = try await LocalClassifier.classify(
                 items: items, agents: routingAgents, workdirs: workdirs, planLists: planLists)
+        } else if useJev {
+            classifications = try await JevClassifier.classify(
+                items: items, agents: routingAgents, workdirs: workdirs,
+                planLists: planLists, config: config.jev)
         } else {
             let (agent, template) = try externalAgent()
             let prompt = Self.prompt(items: items, agents: routingAgents,
@@ -155,6 +167,12 @@ struct Triage: AsyncParsableCommand {
             guard let c = byId[id] else {
                 actions.append(.init(id: id, title: parsed.title, kind: "skipped",
                                      addedTags: [], movedTo: nil, note: "agent returned no classification"))
+                continue
+            }
+            if c.skipReason != nil {
+                actions.append(.init(id: id, title: parsed.title, kind: "skipped",
+                                     addedTags: [], movedTo: nil, note: c.skipReason,
+                                     confidence: c.confidence))
                 continue
             }
 
@@ -181,11 +199,16 @@ struct Triage: AsyncParsableCommand {
                 if let moveTo { reminder.calendar = try store.calendar(named: moveTo) }
                 try store.save(reminder)
                 _ = NativeTags.mirror(tags: merged, externalId: reminder.calendarItemExternalIdentifier)
+                var detail = "[\(merged.joined(separator: "]["))] \(parsed.title)"
+                if let conf = c.confidence {
+                    detail += String(format: " (jev %.2f)", conf)
+                }
                 AuditDB.shared.record(command: "triage", taskId: id, list: moveTo ?? inbox,
-                                      detail: "[\(merged.joined(separator: "]["))] \(parsed.title)")
+                                      detail: detail)
             }
             actions.append(.init(id: id, title: parsed.title, kind: c.kind,
-                                 addedTags: addTags, movedTo: moveTo, note: nil))
+                                 addedTags: addTags, movedTo: moveTo, note: nil,
+                                 confidence: c.confidence))
         }
 
         } // untagged classification
@@ -195,6 +218,10 @@ struct Triage: AsyncParsableCommand {
         // advances on --apply so dry runs can be repeated.
         var noteActions: [TriageResult.NoteAction]?
         if includeNotes {
+            if useJev {
+                throw AppleTasksError.invalidInput(
+                    "jev cannot extract notes (no text generation) — use --agent local or an agents.json lane for --notes")
+            }
             let scanStart = Date()
             let notes = try NotesScan.scan(folder: nil,
                                            since: NotesScan.watermarkDate(asOf: scanStart),
