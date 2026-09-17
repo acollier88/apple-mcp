@@ -47,8 +47,13 @@ count appears next to the Dispatches header when any items are waiting.
 
 ## Build
 
-Requires a recent Xcode (Reminders / Notes domain schemas need the Xcode 27+
-SDK). Prefer Xcode-beta when present — `build.sh` sets `DEVELOPER_DIR` for you.
+Requires **macOS 27** (`LSMinimumSystemVersion`, matching `build.sh`'s `DEPLOYMENT`) and a recent Xcode (Reminders /
+Notes domain schemas need the Xcode 27+ SDK). Prefer Xcode-beta when present —
+`build.sh` sets `DEVELOPER_DIR` for you.
+
+Siri / Shortcuts intents time out the `apple-tasks` CLI after **30 s** by default
+(60 s for Triage Inbox, 120 s for Agent Status) so a hung binary cannot stall
+Siri. The ops console keeps its own, usually longer, timeouts.
 
 ```bash
 # from repo root

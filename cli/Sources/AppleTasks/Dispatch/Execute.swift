@@ -36,8 +36,7 @@ extension Dispatch {
             argv = AgentSeat.withStreamJSON(argv)
         }
 
-        FileManager.default.createFile(atPath: spec.logPath, contents: nil)
-        let logHandle = FileHandle(forWritingAtPath: spec.logPath)
+        let logHandle = RunLogs.create(at: spec.logPath)
         logHandle?.write(Data("""
         # dispatch #\(spec.ledgerId) \(ISO8601DateFormatter().string(from: Date()))
         # task \(spec.taskId): \(spec.title)

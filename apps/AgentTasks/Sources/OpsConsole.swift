@@ -4,7 +4,6 @@ import SwiftUI
 // MARK: - Models
 
 struct AuditEvent: Codable, Identifiable {
-    var id = UUID()
     let ts: String
     let caller: String
     let command: String
@@ -13,6 +12,24 @@ struct AuditEvent: Codable, Identifiable {
     let detail: String?
     let result: String
     let error: String?
+
+    /// `Hasher` over every field so SwiftUI rows stay put across in-process
+    /// refreshes (the audit log has no row id). Swift seeds `Hasher` per
+    /// process, so this is deterministic within a run, not across launches.
+    /// Two byte-identical rows logged in the same second would collide (a
+    /// SwiftUI identity warning, not a crash); the log has no row id to avoid it.
+    var id: Int {
+        var hasher = Hasher()
+        hasher.combine(ts)
+        hasher.combine(caller)
+        hasher.combine(command)
+        hasher.combine(taskId)
+        hasher.combine(list)
+        hasher.combine(detail)
+        hasher.combine(result)
+        hasher.combine(error)
+        return hasher.finalize()
+    }
 
     enum CodingKeys: String, CodingKey {
         case ts, caller, command, taskId, list, detail, result, error
@@ -28,7 +45,6 @@ struct AuditEvent: Codable, Identifiable {
         self.detail = try container.decodeIfPresent(String.self, forKey: .detail)
         self.result = (try? container.decode(String.self, forKey: .result)) ?? "ok"
         self.error = try container.decodeIfPresent(String.self, forKey: .error)
-        self.id = UUID()
     }
 }
 
@@ -141,7 +157,7 @@ struct ContentView: View {
             QueueTab(refreshToken: $refreshToken)
                 .tabItem { Label("Queue", systemImage: "tray.full") }
                 .tag(0)
-            ActivityTab(refreshToken: refreshToken)
+            ActivityTab(refreshToken: $refreshToken)
                 .tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }
                 .tag(1)
             DispatchesTab(refreshToken: $refreshToken)
@@ -161,10 +177,12 @@ struct ContentView: View {
 // MARK: - Activity
 
 struct ActivityTab: View {
-    let refreshToken: Int
+    @Binding var refreshToken: Int
 
     @State private var events: [AuditEvent] = []
     @State private var isLoading = false
+    /// Increments every refresh request; in-flight results with an older epoch are dropped.
+    @State private var refreshEpoch = 0
     @State private var isTriaging = false
     @State private var isMirroring = false
     @State private var statusCaption: String?
@@ -366,6 +384,7 @@ struct ActivityTab: View {
         await MainActor.run {
             self.statusCaption = summary
             self.isTriaging = false
+            self.refreshToken += 1
         }
         await refresh()
     }
@@ -390,12 +409,14 @@ struct ActivityTab: View {
         await MainActor.run {
             self.statusCaption = summary
             self.isMirroring = false
+            self.refreshToken += 1
         }
         await refresh()
     }
 
     private func refresh() async {
-        guard !isLoading else { return }
+        refreshEpoch += 1
+        let epoch = refreshEpoch
         isLoading = true
         do {
             let jsonString = try await Task.detached {
@@ -403,11 +424,13 @@ struct ActivityTab: View {
             }.value
             let decoded = try JSONDecoder().decode([AuditEvent].self, from: Data(jsonString.utf8))
             await MainActor.run {
+                guard epoch == refreshEpoch else { return }
                 self.events = decoded
                 self.isLoading = false
             }
         } catch {
             await MainActor.run {
+                guard epoch == refreshEpoch else { return }
                 self.events = []
                 self.isLoading = false
                 self.statusCaption = "Log failed: \(error.localizedDescription)"
@@ -431,6 +454,8 @@ struct DispatchesTab: View {
     @State private var confirmDispatch = false
     @State private var confirmDiscard = false
     @State private var discardTarget: DispatchLedgerRow?
+    /// Increments every refresh request; in-flight results with an older epoch are dropped.
+    @State private var refreshEpoch = 0
 
     private let statusOptions: [(label: String, value: String?)] = [
         ("All", nil),
@@ -472,6 +497,7 @@ struct DispatchesTab: View {
             Text("Delete branch \(discardTarget?.branch ?? "the branch") and its worktree? The commits are lost unless pushed.")
         }
         .onAppear { Task { await refresh() } }
+        .onChange(of: refreshToken) { _, _ in Task { await refresh() } }
         .onChange(of: listQueryKey) { _, _ in Task { await refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refresh() }
@@ -579,7 +605,8 @@ struct DispatchesTab: View {
     }
 
     private func refresh() async {
-        guard !isLoading else { return }
+        refreshEpoch += 1
+        let epoch = refreshEpoch
         isLoading = true
         let review = awaitingReview
         let filter = statusFilter
@@ -595,13 +622,16 @@ struct DispatchesTab: View {
             }.value
             let decoded = try JSONDecoder().decode([DispatchLedgerRow].self, from: Data(jsonString.utf8))
             await MainActor.run {
+                guard epoch == refreshEpoch else { return }
                 self.rows = decoded
                 self.isLoading = false
                 if review { self.pendingReviewCount = decoded.count }
             }
+            guard epoch == refreshEpoch else { return }
             if !review { await refreshPendingReviewCount() }
         } catch {
             await MainActor.run {
+                guard epoch == refreshEpoch else { return }
                 self.rows = []
                 self.isLoading = false
                 self.caption = "Ledger failed: \(error.localizedDescription)"
@@ -634,6 +664,7 @@ struct DispatchesTab: View {
                 } else {
                     self.caption = "Discarded #\(row.id)"
                 }
+                self.refreshToken += 1
             }
             await refresh()
         } catch {

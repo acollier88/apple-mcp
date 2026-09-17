@@ -1181,8 +1181,82 @@
     }
   },
   {
+    "name": "dispatch_pause",
+    "description": "Pause the dispatcher: no new tasks are claimed until the given time. Reaping and worktree GC still run on each launchd pass; running agents are not interrupted (use dispatch_cancel for that). Exactly one of for_duration / until is required.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "for_duration": {
+          "type": "string",
+          "description": "Relative: 30m, 2h, 1d, 90s."
+        },
+        "until": {
+          "type": "string",
+          "description": "Absolute ISO8601 with timezone, e.g. 2026-09-08T12:00:00Z."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Shown in dispatch_status, doctor, and the paused report."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "until": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "paused",
+        "until"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "dispatch_resume",
+    "description": "Clear a dispatcher pause so the next pass can claim work again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "wasPausedUntil": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "paused"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
     "name": "dispatch_run",
-    "description": "Run the agent dispatcher: scan open [auto] tasks, launch configured agents, reap stale runs, GC worktrees. A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto (any available worker). dry_run defaults to TRUE (reports what would run, launches nothing); a real run (dry_run: false) spawns agent processes, waits for them, and consumes their session budgets. reap_only reaps + GCs without dispatching.",
+    "description": "Run the agent dispatcher: scan open [auto] tasks, launch configured agents, reap stale runs, GC worktrees. A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto (any available worker). dry_run defaults to TRUE (reports what would run, launches nothing); a real run (dry_run: false) spawns agent processes, waits for them, and consumes their session budgets. reap_only reaps + GCs without dispatching; reap_hours / no_gc mirror the CLI flags. A dispatch_pause makes a real run stop after reap/GC.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1201,6 +1275,15 @@
         "reap_only": {
           "type": "boolean",
           "description": "Only reap stale ledger rows and GC worktrees."
+        },
+        "reap_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Treat a 'running' row older than this many hours as stale (CLI default 6)."
+        },
+        "no_gc": {
+          "type": "boolean",
+          "description": "Skip worktree garbage collection this pass."
         }
       },
       "additionalProperties": false,
@@ -1252,6 +1335,40 @@
       },
       "required": [
         "reports"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "dispatch_status",
+    "description": "Whether the dispatcher is paused, until when, why, and seconds remaining.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "until": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "remainingSeconds": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "paused"
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
@@ -3422,6 +3539,10 @@
         "recurrence": {
           "type": "string",
           "description": "Repeat rule, requires due. RRULE subset: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY;INTERVAL=n;BYDAY=MO,WE;BYMONTHDAY=1,15;UNTIL=yyyy-MM-dd|COUNT=n. Completing an occurrence rolls the task to the next one."
+        },
+        "native_tags": {
+          "type": "boolean",
+          "description": "Default true: also mirror [tag] prefixes as native Reminders hashtags (needs the private helper). false skips the mirror (--no-native-tags)."
         }
       },
       "required": [
@@ -3623,6 +3744,10 @@
           },
           "minItems": 1,
           "description": "Tasks to create, in order."
+        },
+        "native_tags": {
+          "type": "boolean",
+          "description": "Default true: also mirror [tag] prefixes as native Reminders hashtags (needs the private helper). false skips the mirror (--no-native-tags)."
         }
       },
       "required": [
@@ -4014,6 +4139,114 @@
       },
       "required": [
         "tasks"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "task_remirror_tags",
+    "description": "Reconcile native Reminders hashtags with [tag] title prefixes: add missing hashtags, drop duplicate hashtag objects, prune stale claim chips ([dispatched]/[failed]-style tags the title no longer carries). Safe to rerun. dry_run reports the plan without writing. Needs the private helper.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "Report nativeBefore/pruned/duplicates without writing."
+        },
+        "list": {
+          "type": "string",
+          "description": "Only tasks in this Reminders list."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags (no spaces/brackets, e.g. 'claude', 'repo2'). Stored as [tag] prefixes on the reminder title."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "completed",
+            "all"
+          ],
+          "description": "Default: open."
+        },
+        "id": {
+          "type": "string",
+          "description": "Single task id (internal or external)."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "reports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string"
+              },
+              "rawTitle": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "nativeBefore": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Native hashtags before reconcile, duplicates included."
+              },
+              "pruned": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Stale claim chips removed (or that would be)."
+              },
+              "duplicatesRemoved": {
+                "type": "integer"
+              },
+              "added": {
+                "type": "integer"
+              },
+              "nativeTags": {
+                "type": "boolean"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "rawTitle",
+              "tags",
+              "pruned"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "reports"
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
@@ -4418,6 +4651,14 @@
         "section": {
           "type": "string",
           "description": "Move into this section of the task's list, creating it if needed."
+        },
+        "native_tags": {
+          "type": "boolean",
+          "description": "Default true: also mirror [tag] prefixes as native Reminders hashtags (needs the private helper). false skips the mirror (--no-native-tags)."
+        },
+        "mirror_tags": {
+          "type": "boolean",
+          "description": "Re-apply every [tag] title prefix as a native Reminders hashtag, even when not adding tags."
         }
       },
       "required": [

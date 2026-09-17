@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import path from "node:path";
-import { cli, defineTool, fail, ok, okJson, trackTool } from "../lib";
+import { cli, defineTool, fail, ok, okJson, readRunLogTail, trackTool } from "../lib";
 
 export function registerDispatchTools(server: McpServer): void {
   const dispatchRunDescription =
@@ -9,7 +8,8 @@ export function registerDispatchTools(server: McpServer): void {
     "runs, GC worktrees. A leading agent tag pins that lane; [auto] alone walks modelPrefs.auto " +
     "(any available worker). dry_run defaults to TRUE (reports what would run, launches nothing); a real run " +
     "(dry_run: false) spawns agent processes, waits for them, and consumes their session budgets. " +
-    "reap_only reaps + GCs without dispatching.";
+    "reap_only reaps + GCs without dispatching; reap_hours / no_gc mirror the CLI flags. " +
+    "A dispatch_pause makes a real run stop after reap/GC.";
   const dispatchRunAnnotations = { title: "Run dispatcher", destructiveHint: true } as const;
   trackTool("dispatch_run", dispatchRunDescription, dispatchRunAnnotations);
   server.registerTool(
@@ -21,6 +21,12 @@ export function registerDispatchTools(server: McpServer): void {
         agent: z.string().optional().describe("Only dispatch tasks for this agent tag."),
         list: z.string().optional().describe("Only scan this Reminders list."),
         reap_only: z.boolean().optional().describe("Only reap stale ledger rows and GC worktrees."),
+        reap_hours: z
+          .number()
+          .positive()
+          .optional()
+          .describe("Treat a 'running' row older than this many hours as stale (CLI default 6)."),
+        no_gc: z.boolean().optional().describe("Skip worktree garbage collection this pass."),
       },
       // Dispatch.DispatchReport (Sources/AppleTasks/Dispatch.swift)
       outputSchema: {
@@ -37,7 +43,7 @@ export function registerDispatchTools(server: McpServer): void {
       },
       annotations: dispatchRunAnnotations,
     },
-    async ({ dry_run, agent, list, reap_only }) => {
+    async ({ dry_run, agent, list, reap_only, reap_hours, no_gc }) => {
       // Dispatched agents may not re-dispatch: an agent whose MCP session was
       // spawned by the dispatcher inherits APPLE_TASKS_CALLER=agent:<tag>.
       if ((process.env.APPLE_TASKS_CALLER ?? "").startsWith("agent:")) {
@@ -48,6 +54,8 @@ export function registerDispatchTools(server: McpServer): void {
       if (agent) args.push("--agent", agent);
       if (list) args.push("--list", list);
       if (reap_only) args.push("--reap-only");
+      if (reap_hours !== undefined) args.push("--reap-hours", String(reap_hours));
+      if (no_gc) args.push("--no-gc");
       try {
         // Real runs execute agents inline; give them 2h, not the 30s default.
         return okJson(
@@ -124,6 +132,54 @@ export function registerDispatchTools(server: McpServer): void {
   });
 
   defineTool(server, {
+    name: "dispatch_pause",
+    description:
+      "Pause the dispatcher: no new tasks are claimed until the given time. Reaping and worktree GC " +
+      "still run on each launchd pass; running agents are not interrupted (use dispatch_cancel for that). " +
+      "Exactly one of for_duration / until is required.",
+    input: {
+      for_duration: z.string().optional().describe("Relative: 30m, 2h, 1d, 90s."),
+      until: z.string().optional().describe("Absolute ISO8601 with timezone, e.g. 2026-09-08T12:00:00Z."),
+      reason: z.string().optional().describe("Shown in dispatch_status, doctor, and the paused report."),
+    },
+    // Dispatch.PauseOut (Dispatch/Pause.swift)
+    output: { paused: z.boolean(), until: z.string(), reason: z.string().optional() },
+    annotations: { title: "Pause dispatcher", idempotentHint: true },
+    argv: ({ for_duration, until, reason }) => {
+      const args = ["dispatch-pause"];
+      if (for_duration) args.push("--for", for_duration);
+      if (until) args.push("--until", until);
+      if (reason) args.push("--reason", reason);
+      return args;
+    },
+  });
+
+  defineTool(server, {
+    name: "dispatch_resume",
+    description: "Clear a dispatcher pause so the next pass can claim work again.",
+    input: {},
+    // Dispatch.ResumeOut
+    output: { paused: z.boolean(), wasPausedUntil: z.string().optional() },
+    annotations: { title: "Resume dispatcher", idempotentHint: true },
+    argv: () => ["dispatch-resume"],
+  });
+
+  defineTool(server, {
+    name: "dispatch_status",
+    description: "Whether the dispatcher is paused, until when, why, and seconds remaining.",
+    input: {},
+    // Dispatch.StatusOut
+    output: {
+      paused: z.boolean(),
+      until: z.string().optional(),
+      reason: z.string().optional(),
+      remainingSeconds: z.number().int().optional(),
+    },
+    annotations: { title: "Dispatcher status", readOnlyHint: true },
+    argv: () => ["dispatch-status"],
+  });
+
+  defineTool(server, {
     name: "dispatch_discard",
     description:
       "Discard a succeeded worktree branch by ledger id: force-remove the worktree, delete the " +
@@ -165,18 +221,7 @@ export function registerDispatchTools(server: McpServer): void {
     },
     async ({ ledger_id, tail }) => {
       try {
-        const fs = await import("node:fs/promises");
-        const os = await import("node:os");
-        const logPath = path.join(os.homedir(), ".config/apple-tasks/runs", `${ledger_id}.log`);
-        const stat = await fs.stat(logPath);
-        const cap = 256 * 1024;
-        const readLen = Math.min(cap, stat.size);
-        const fh = await fs.open(logPath, "r");
-        const { buffer, bytesRead } = await fh.read(
-          Buffer.alloc(readLen), 0, readLen, Math.max(0, stat.size - readLen));
-        await fh.close();
-        const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
-        return ok(lines.slice(-Math.max(1, tail ?? 100)).join("\n"));
+        return ok(await readRunLogTail(ledger_id, tail ?? 100));
       } catch (err) {
         return fail(err);
       }

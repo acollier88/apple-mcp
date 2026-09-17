@@ -23,6 +23,15 @@ case "$1" in
   doctor)
     printf '%s\n' '{"ok":true}'
     ;;
+  dispatch-pause)
+    printf '%s\n' '{"paused":true,"until":"2026-09-08T12:00:00Z","reason":"probe"}'
+    ;;
+  dispatch-status)
+    printf '%s\n' '{"paused":false}'
+    ;;
+  remirror-tags)
+    printf '%s\n' '[{"id":"T1","rawTitle":"[claude] Hello","tags":["claude"],"nativeBefore":["claude","claude"],"pruned":[],"duplicatesRemoved":1,"added":0}]'
+    ;;
   add-batch)
     cat >/dev/null
     printf '%s\n' '{"created":[],"failed":[]}'

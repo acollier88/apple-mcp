@@ -65,9 +65,17 @@ enum CLI {
         return (path?.isEmpty == false) ? path : nil
     }
 
-    /// Shell out to apple-tasks. `timeout` (seconds) kills a hung process; nil waits forever
-    /// (fine for short reads). Dispatch uses a generous timeout so a stuck agent can't freeze the app.
-    static func run(_ args: [String], timeout: TimeInterval? = nil) throws -> String {
+    /// Default for App Intents. Console callers pass their own (often longer) values.
+    static let defaultTimeout: TimeInterval = 30
+    static let triageIntentTimeout: TimeInterval = 60
+    static let statusIntentTimeout: TimeInterval = 120
+
+    /// Shell out to apple-tasks. `timeout` kills a hung process (SIGTERM, then
+    /// SIGKILL after one second). Default is 30 s — long enough for list/add,
+    /// short enough that Siri cannot hang. Drain stdout/stderr on background
+    /// queues before waiting so a chatty child cannot fill the pipe buffer and
+    /// deadlock against `waitUntilExit`.
+    static func run(_ args: [String], timeout: TimeInterval = defaultTimeout) throws -> String {
         let bin = try resolvedBinary
         let process = Process()
         process.executableURL = URL(fileURLWithPath: bin)
@@ -85,31 +93,69 @@ enum CLI {
                     "Failed to launch \(bin): \(error.localizedDescription)"])
         }
 
-        if let timeout {
-            let deadline = Date().addingTimeInterval(timeout)
-            while process.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.2)
-            }
-            if process.isRunning {
-                process.terminate()
-                for _ in 0..<25 where process.isRunning {
-                    Thread.sleep(forTimeInterval: 0.2)
-                }
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                throw NSError(domain: "AgentTasks", code: 2,
-                              userInfo: [NSLocalizedDescriptionKey:
-                                "apple-tasks \(args.first ?? "") timed out after \(Int(timeout))s"])
-            }
-        } else {
-            process.waitUntilExit()
+        let stdoutBox = PipeDrain()
+        let stderrBox = PipeDrain()
+        let drains = DispatchGroup()
+        drains.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stdoutBox.data = stdout.fileHandleForReading.readDataToEndOfFile()
+            drains.leave()
+        }
+        drains.enter()
+        DispatchQueue.global(qos: .utility).async {
+            stderrBox.data = stderr.fileHandleForReading.readDataToEndOfFile()
+            drains.leave()
         }
 
+        let finished = DispatchGroup()
+        finished.enter()
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            finished.leave()
+        }
+
+        if finished.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if finished.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+            // Grandchildren (agents spawned by `dispatch`) may still hold the
+            // pipe's write end; don't let their lifetime extend the timeout.
+            _ = drains.wait(timeout: .now() + 1)
+            throw CLIError.timedOut(timeout)
+        }
+        drains.wait()
+
         guard process.terminationStatus == 0 else {
-            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let detail = String(data: stderrBox.data, encoding: .utf8) ?? ""
             throw NSError(domain: "AgentTasks", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: detail.trimmingCharacters(in: .whitespacesAndNewlines)])
         }
-        return String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return String(data: stdoutBox.data, encoding: .utf8) ?? ""
+    }
+}
+
+/// Intents surface `errorDescription` as the Siri / Shortcuts dialog.
+enum CLIError: LocalizedError {
+    case timedOut(TimeInterval)
+
+    var errorDescription: String? {
+        switch self {
+        case .timedOut(let seconds):
+            return "Agent Tasks CLI timed out after \(Int(seconds)) s"
+        }
+    }
+}
+
+/// Thread-safe buffer for a pipe drain. Writes happen on a background queue;
+/// the caller reads only after `DispatchGroup.wait`, which establishes happens-before.
+private final class PipeDrain: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _data = Data()
+    var data: Data {
+        get { lock.lock(); defer { lock.unlock() }; return _data }
+        set { lock.lock(); _data = newValue; lock.unlock() }
     }
 }
 
@@ -134,7 +180,7 @@ struct QueryAgentTasksIntent: AppIntent {
         var args = ["list", "--status", "open"]
         if let tag, !tag.isEmpty { args += ["--tag", tag] }
         if let list, !list.isEmpty { args += ["--list", list] }
-        let json = try CLI.run(args)
+        let json = try CLI.run(args, timeout: CLI.defaultTimeout)
 
         struct Task: Decodable {
             let title: String
@@ -184,7 +230,7 @@ struct CreateAgentTaskIntent: AppIntent {
             if !trimmed.isEmpty { args += ["--tag", trimmed] }
         }
         args.append(taskTitle)
-        _ = try CLI.run(args)
+        _ = try CLI.run(args, timeout: CLI.defaultTimeout)
         return .result(dialog: IntentDialog(stringLiteral: "Added \"\(taskTitle)\" to \(list)."))
     }
 }
@@ -204,7 +250,7 @@ struct TriageInboxIntent: AppIntent, LongRunningIntent {
         let outcome = try await performBackgroundTask {
             progress.totalUnitCount = 1
             defer { progress.completedUnitCount = 1 }
-            let json = try CLI.run(["triage", "--inbox", inbox, "--apply"])
+            let json = try CLI.run(["triage", "--inbox", inbox, "--apply"], timeout: CLI.triageIntentTimeout)
             // Parse the small result to speak a count; fall back to raw on any change.
             var spoken = "Triage complete."
             if let data = json.data(using: .utf8),
@@ -240,7 +286,7 @@ struct AgentStatusIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
         var args = ["digest"]
         if let since, !since.isEmpty { args += ["--since", since] }
-        let json = try CLI.run(args)
+        let json = try CLI.run(args, timeout: CLI.statusIntentTimeout)
 
         struct Digest: Decodable {
             struct Line: Decodable { let agent: String; let status: String }

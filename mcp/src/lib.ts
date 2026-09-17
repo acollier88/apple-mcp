@@ -3,6 +3,8 @@ import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 
@@ -12,8 +14,37 @@ export const BIN =
   process.env.APPLE_TASKS_BIN ??
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../cli/.build/release/apple-tasks");
 
+/** `~/.config/apple-tasks` — the CLI's state dir; overridable for tests. */
+export const CONFIG_DIR =
+  process.env.APPLE_TASKS_CONFIG_DIR ?? path.join(os.homedir(), ".config/apple-tasks");
+
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const STDIN_TIMEOUT_MS = 60_000;
+
+/** Bytes read from the end of a run log at most (logs can be tens of MB). */
+export const RUN_LOG_READ_CAP = 256 * 1024;
+
+export function runLogPath(ledgerId: number | string): string {
+  return path.join(CONFIG_DIR, "runs", `${ledgerId}.log`);
+}
+
+/** Last `tail` lines of a run log, reading at most RUN_LOG_READ_CAP bytes. */
+export async function readRunLogTail(ledgerId: number | string, tail = 100): Promise<string> {
+  const logPath = runLogPath(ledgerId);
+  const stat = await fs.stat(logPath);
+  const readLen = Math.min(RUN_LOG_READ_CAP, stat.size);
+  const fh = await fs.open(logPath, "r");
+  try {
+    const { buffer, bytesRead } = await fh.read(
+      Buffer.alloc(readLen), 0, readLen, Math.max(0, stat.size - readLen));
+    const lines = buffer.toString("utf8", 0, bytesRead).split("\n");
+    // A trailing newline is a terminator, not an extra blank line.
+    if (lines.at(-1) === "") lines.pop();
+    return lines.slice(-Math.max(1, tail)).join("\n");
+  } finally {
+    await fh.close();
+  }
+}
 
 export type CliOpts = { timeoutMs?: number };
 
