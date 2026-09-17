@@ -15,16 +15,25 @@ INTERVAL ?= 300
 HOUR ?= 7
 MINUTE ?= 0
 
+# sign-identity: once-per-machine self-signed "AgentTasks Dev" cert so TCC
+# and Keychain ACLs survive rebuilds (ad-hoc identities change every link).
 .PHONY: all cli helper mcp app server install-server clean betacheck mail-rule \
-	install-agent uninstall-agent install-digest uninstall-digest
+	install-agent uninstall-agent install-digest uninstall-digest test sign-identity
 
 all: cli helper
 
 cli:
 	$(MAKE) -C $(CLI_DIR) cli
+	tools/sign.sh $(RELEASE_DIR)/apple-tasks
 
 helper: cli
 	$(MAKE) -C $(CLI_DIR) helper
+	tools/sign.sh $(RELEASE_DIR)/apple-tasks-private
+
+# Persistent self-signed codesigning identity in the login keychain (idempotent).
+# KEYCHAIN=/tmp/foo.keychain-db KEYCHAIN_PASSWORD=... for a throwaway keychain.
+sign-identity:
+	tools/sign-identity.sh
 
 mcp:
 	cd mcp && bun install
@@ -46,6 +55,11 @@ install-server: server
 
 app: cli
 	cd apps/AgentTasks && ./build.sh
+
+test:
+	$(MAKE) -C $(CLI_DIR) test
+	cd server && swift test
+	cd mcp && bun run typecheck && bun test
 
 clean:
 	$(MAKE) -C $(CLI_DIR) clean
@@ -74,7 +88,7 @@ install-agent: cli helper
 	  echo "seeded $(CONFIG_DIR)/agents.json from examples/ — edit workdirs before relying on it"; \
 	fi
 	@if [ ! -f "$(CONFIG_DIR)/launchd.env" ]; then \
-	  printf '# Optional env for LaunchAgents (sourced by run-with-env.sh)\n# export CURSOR_API_KEY=\n# export ANTHROPIC_API_KEY=\n' \
+	  printf '# Optional env for LaunchAgents (sourced by run-with-env.sh)\n# export CURSOR_API_KEY=\n# export ANTHROPIC_API_KEY=\n# export TYPESAFE_API_KEY=\n' \
 	    > "$(CONFIG_DIR)/launchd.env"; \
 	  echo "wrote $(CONFIG_DIR)/launchd.env (add API keys here if needed)"; \
 	fi

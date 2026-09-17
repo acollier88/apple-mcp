@@ -7,8 +7,15 @@
 //
 // Protocol: one JSON object on stdin. Two independent operations, either or
 // both per call (keyed by which fields are present):
-//   Tags (additive mirror):
+//   Tags (idempotent mirror — a name already present is skipped, never
+//   duplicated; names are compared after ReminderKit's own disallowed-char
+//   replacement, so "dispatched:mbp" matches the stored "dispatchedmbp"):
 //     {"externalId": "<EKReminder externalId>", "tags": ["a","b"]}
+//   Tag removal (all hashtags whose normalized name matches):
+//     {"externalId": "<ext>", "removeTags": ["dispatched:mbp"]}
+//   Dedupe (drop repeated hashtags, keeping the first of each name):
+//     {"externalId": "<ext>", "dedupe": true}
+//   -> {"ok":true,"tagged":N,"skipped":N,"removed":N}
 //   Subtask (IDEAS #26): make externalId a subtask of a parent, or detach it:
 //     {"externalId": "<child>", "parent": "<parent externalId>"}
 //     {"externalId": "<child>", "clearParent": true}
@@ -20,6 +27,9 @@
 //     {"attachmentsOf": ["<ext1>", ...]}
 //   -> {"ok":true,"attachments":{"<ext1>":[{"kind":"file|image|url",
 //      "uti":..., "fileURL":..., "fileSize":N, "url":...}, ...], ...}}
+// Read-only — native hashtag names (duplicates included), exclusive:
+//     {"hashtagsOf": ["<ext1>", ...]}
+//   -> {"ok":true,"hashtags":{"<ext1>":["auto","cursor",...], ...}}
 // Read-only (IDEAS #26) — section membership, exclusive:
 //     {"sectionsOf": ["<ext1>", ...]}
 //   -> {"ok":true,"sections":{"<ext1>":"Section Name"|null, ...}}
@@ -35,10 +45,13 @@
 // Success: {"ok":true,"tagged":N,"parent":"set|cleared"} on stdout (fields
 // present only for operations performed). Failure: {"error":"..."} on stderr, exit 1.
 //
-// Tag removal is intentionally absent: ReminderKit's hashtag change context
-// only exposes addHashtagWithType:name:. The [tag] title prefix remains the
-// source of truth; this mirror is additive only. Sections are not yet
-// mirrored (the reminder->section reference is unproven); subtasks are.
+// Tag removal uses REMReminderHashtagContextChangeItem -hashtags /
+// -removeHashtag: (present on macOS 26/27; probed, not assumed). Before
+// 2026-09-07 the mirror was additive-only and blind to existing hashtags, so
+// every dispatch/update pass on a recurring task appended another copy of
+// #auto/#cursor/#dispatched… — the [tag] title prefix remains the source of
+// truth. Sections are not yet mirrored (the reminder->section reference is
+// unproven); subtasks are.
 
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
@@ -100,7 +113,50 @@
 
 @interface REMReminderHashtagContextChangeItem : NSObject
 - (id)addHashtagWithType:(NSInteger)type name:(NSString *)name;
+- (NSArray *)hashtags;               // REMHashtag[] currently on the reminder
+- (void)removeHashtag:(id)hashtag;
+- (NSString *)nameWithDisallowedCharactersReplaced:(NSString *)name;
 @end
+
+/// Reminders' stored hashtag form of `name` (e.g. "dispatched:mbp" ->
+/// "dispatchedmbp"), lowercased for comparison. Uses ReminderKit's own
+/// replacement when available so we match exactly what it stores.
+static NSString *normalizedTagName(id hashtagContext, NSString *name) {
+    NSString *stored = name;
+    if ([hashtagContext respondsToSelector:@selector(nameWithDisallowedCharactersReplaced:)]) {
+        @try { stored = [hashtagContext nameWithDisallowedCharactersReplaced:name] ?: name; }
+        @catch (NSException *e) { stored = name; }
+    } else {
+        NSMutableString *kept = [NSMutableString string];
+        NSCharacterSet *ok = [NSCharacterSet characterSetWithCharactersInString:
+            @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"];
+        for (NSUInteger i = 0; i < name.length; i++) {
+            unichar c = [name characterAtIndex:i];
+            if ([ok characterIsMember:c]) [kept appendFormat:@"%C", c];
+        }
+        stored = kept;
+    }
+    return stored.lowercaseString;
+}
+
+/// Current hashtags as (normalizedName -> [REMHashtag...]) — several objects
+/// per name when duplicates have accumulated.
+static NSDictionary<NSString *, NSArray *> *existingHashtagsByName(id hashtagContext) {
+    NSMutableDictionary *byName = [NSMutableDictionary dictionary];
+    if (![hashtagContext respondsToSelector:@selector(hashtags)]) return byName;
+    NSArray *current = nil;
+    @try { current = [hashtagContext hashtags]; } @catch (NSException *e) { current = nil; }
+    for (id tag in current ?: @[]) {
+        NSString *name = nil;
+        @try { name = [tag valueForKey:@"name"]; } @catch (NSException *e) {}
+        if (![name isKindOfClass:[NSString class]] || name.length == 0) continue;
+        NSString *key = normalizedTagName(hashtagContext, name);
+        NSMutableArray *bucket = byName[key] ?: [NSMutableArray array];
+        [bucket addObject:tag];
+        byName[key] = bucket;
+    }
+    return byName;
+}
 
 @interface REMReminderSubtaskContextChangeItem : NSObject
 - (void)addReminderChangeItem:(id)changeItem;
@@ -281,6 +337,40 @@ int main(int argc, const char *argv[]) {
         }
 
         // Read-only section membership (IDEAS #26): exclusive op, exits here.
+        // Read-only: raw native hashtag names per externalId, duplicates
+        // included, so callers can see (and report) accumulated bloat.
+        NSArray *hashtagsOf = cmd[@"hashtagsOf"];
+        if ([hashtagsOf isKindOfClass:[NSArray class]]) {
+            Class objectIDClass = requireClass(@"REMObjectID");
+            REMStore *store = (REMStore *)[requireClass(@"REMStore") new];
+            if (![store respondsToSelector:@selector(fetchReminderWithObjectID:error:)]) failJSON(@"REMStore.fetchReminderWithObjectID:error: missing");
+            NSMutableDictionary *byId = [NSMutableDictionary dictionary];
+            for (id ext in hashtagsOf) {
+                if (![ext isKindOfClass:[NSString class]] || [ext length] == 0) continue;
+                NSString *urlString = [NSString stringWithFormat:@"x-apple-reminderkit://REMCDReminder/%@", ext];
+                id oid = [(Class)objectIDClass objectIDWithURL:[NSURL URLWithString:urlString]];
+                if (!oid) continue;
+                NSError *fetchError = nil;
+                id reminder = [store fetchReminderWithObjectID:oid error:&fetchError];
+                if (!reminder) continue;
+                NSArray *current = nil;
+                @try { current = [[reminder valueForKey:@"hashtagContext"] valueForKey:@"hashtags"]; }
+                @catch (NSException *e) { current = nil; }
+                NSMutableArray *names = [NSMutableArray array];
+                for (id tag in current ?: @[]) {
+                    NSString *name = nil;
+                    @try { name = [tag valueForKey:@"name"]; } @catch (NSException *e) {}
+                    if ([name isKindOfClass:[NSString class]]) [names addObject:name];
+                }
+                byId[ext] = names;
+            }
+            NSDictionary *result = @{ @"ok": @YES, @"hashtags": byId };
+            NSData *out = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+            fwrite(out.bytes, 1, out.length, stdout);
+            fputc('\n', stdout);
+            return 0;
+        }
+
         NSArray *sectionsOf = cmd[@"sectionsOf"];
         if ([sectionsOf isKindOfClass:[NSArray class]]) {
             Class objectIDClass = requireClass(@"REMObjectID");
@@ -308,6 +398,8 @@ int main(int argc, const char *argv[]) {
 
         NSString *externalId = cmd[@"externalId"];
         NSArray *tags = cmd[@"tags"];
+        NSArray *removeTags = cmd[@"removeTags"];
+        BOOL dedupe = [cmd[@"dedupe"] boolValue];
         NSString *parentId = cmd[@"parent"];
         BOOL clearParent = [cmd[@"clearParent"] boolValue];
         NSString *attachFile = cmd[@"attachFile"];
@@ -315,12 +407,14 @@ int main(int argc, const char *argv[]) {
         NSString *sectionName = cmd[@"section"];
         if (![externalId isKindOfClass:[NSString class]] || externalId.length == 0) failJSON(@"missing externalId");
         BOOL wantTags = [tags isKindOfClass:[NSArray class]] && tags.count > 0;
+        BOOL wantRemoveTags = [removeTags isKindOfClass:[NSArray class]] && removeTags.count > 0;
         BOOL wantParent = [parentId isKindOfClass:[NSString class]] && parentId.length > 0;
         BOOL wantAttachFile = [attachFile isKindOfClass:[NSString class]] && attachFile.length > 0;
         BOOL wantAttachURL = [attachURL isKindOfClass:[NSString class]] && attachURL.length > 0;
         BOOL wantSection = [sectionName isKindOfClass:[NSString class]] && sectionName.length > 0;
-        if (!wantTags && !wantParent && !clearParent && !wantAttachFile && !wantAttachURL && !wantSection)
-            failJSON(@"nothing to do (need tags, parent, clearParent, attachFile, attachURL, or section)");
+        if (!wantTags && !wantRemoveTags && !dedupe && !wantParent && !clearParent
+            && !wantAttachFile && !wantAttachURL && !wantSection)
+            failJSON(@"nothing to do (need tags, removeTags, dedupe, parent, clearParent, attachFile, attachURL, or section)");
 
         Class objectIDClass = requireClass(@"REMObjectID");
         Class storeClass = requireClass(@"REMStore");
@@ -348,18 +442,57 @@ int main(int argc, const char *argv[]) {
 
         NSMutableDictionary *result = [@{ @"ok": @YES } mutableCopy];
 
-        if (wantTags) {
+        if (wantTags || wantRemoveTags || dedupe) {
             if (![change respondsToSelector:@selector(hashtagContext)]) failJSON(@"REMReminderChangeItem.hashtagContext missing");
             REMReminderHashtagContextChangeItem *hashtagContext = [change hashtagContext];
-            if (![hashtagContext respondsToSelector:@selector(addHashtagWithType:name:)]) failJSON(@"hashtag addHashtagWithType:name: missing");
-            NSInteger tagged = 0;
-            for (id tag in tags) {
-                if (![tag isKindOfClass:[NSString class]] || [tag length] == 0) continue;
-                [hashtagContext addHashtagWithType:1 name:tag];
-                tagged++;
+            BOOL canRemove = [hashtagContext respondsToSelector:@selector(removeHashtag:)];
+            // Snapshot once; mutate the snapshot as we remove so a later step
+            // in the same call sees the post-removal state.
+            NSMutableDictionary<NSString *, NSMutableArray *> *byName =
+                [existingHashtagsByName(hashtagContext) mutableCopy];
+            NSInteger removed = 0;
+
+            if (dedupe) {
+                if (!canRemove) failJSON(@"hashtag removeHashtag: missing — cannot dedupe on this macOS");
+                for (NSString *key in byName.allKeys) {
+                    NSMutableArray *bucket = byName[key];
+                    while (bucket.count > 1) {
+                        [hashtagContext removeHashtag:bucket.lastObject];
+                        [bucket removeLastObject];
+                        removed++;
+                    }
+                }
             }
-            if (tagged == 0) failJSON(@"no valid tags provided");
-            result[@"tagged"] = @(tagged);
+
+            if (wantRemoveTags) {
+                if (!canRemove) failJSON(@"hashtag removeHashtag: missing — cannot remove tags on this macOS");
+                for (id name in removeTags) {
+                    if (![name isKindOfClass:[NSString class]] || [name length] == 0) continue;
+                    NSString *key = normalizedTagName(hashtagContext, name);
+                    for (id tag in byName[key] ?: @[]) {
+                        [hashtagContext removeHashtag:tag];
+                        removed++;
+                    }
+                    [byName removeObjectForKey:key];
+                }
+            }
+
+            if (wantTags) {
+                if (![hashtagContext respondsToSelector:@selector(addHashtagWithType:name:)]) failJSON(@"hashtag addHashtagWithType:name: missing");
+                NSInteger tagged = 0, skipped = 0;
+                for (id tag in tags) {
+                    if (![tag isKindOfClass:[NSString class]] || [tag length] == 0) continue;
+                    NSString *key = normalizedTagName(hashtagContext, tag);
+                    if (byName[key].count > 0) { skipped++; continue; }
+                    [hashtagContext addHashtagWithType:1 name:tag];
+                    byName[key] = [NSMutableArray arrayWithObject:tag]; // placeholder: same name later in this call is a dupe
+                    tagged++;
+                }
+                if (tagged == 0 && skipped == 0) failJSON(@"no valid tags provided");
+                result[@"tagged"] = @(tagged);
+                result[@"skipped"] = @(skipped);
+            }
+            if (wantRemoveTags || dedupe) result[@"removed"] = @(removed);
         }
 
         if (clearParent) {

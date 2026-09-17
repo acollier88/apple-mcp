@@ -67,9 +67,12 @@ enum NativeTags {
         return FileManager.default.isExecutableFile(atPath: sibling.path) ? sibling : nil
     }
 
-    /// Best-effort, additive-only mirror of tags onto the reminder's native
-    /// Reminders tags. Returns true on success, false (with a stderr warning)
-    /// on any failure — the [tag] title prefix is the source of truth, so a
+    /// Best-effort mirror of tags onto the reminder's native Reminders tags.
+    /// Idempotent: the helper skips names already present (compared in
+    /// Reminders' stored form, so "dispatched:mbp" == "dispatchedmbp"), so
+    /// re-mirroring on every dispatch/update pass no longer duplicates
+    /// hashtags. Returns true on success, false (with a stderr warning) on
+    /// any failure — the [tag] title prefix is the source of truth, so a
     /// failed mirror never fails the command.
     ///
     /// Retries briefly: right after an EventKit `save`, ReminderKit often
@@ -93,6 +96,51 @@ enum NativeTags {
             if last == true { return true }
         }
         return last ?? false
+    }
+
+    /// Remove native hashtags by name (all copies). Used when a `[tag]` is
+    /// shed from the title — claim tags on finish/complete, `update
+    /// --remove-tag` — so the native side stops accumulating stale
+    /// `#dispatched…` chips. Best-effort like mirror.
+    static func remove(tags: [String], externalId: String?) -> Bool? {
+        guard !tags.isEmpty else { return nil }
+        guard helperURL != nil else { return nil }
+        return run(["externalId": externalId ?? "", "removeTags": tags],
+                   externalId: externalId, what: "native tag removal")
+    }
+
+    /// Drop duplicate native hashtags (keep one per name) and, optionally,
+    /// remove stale names in the same save. Returns the helper's counts or
+    /// nil when the helper is missing/failed.
+    struct ReconcileResult: Codable {
+        let removed: Int
+        let tagged: Int?
+        let skipped: Int?
+    }
+
+    static func reconcile(externalId: String?, ensure tags: [String], remove stale: [String]) -> ReconcileResult? {
+        guard let externalId, !externalId.isEmpty else { return nil }
+        var payload: [String: Any] = ["externalId": externalId, "dedupe": true]
+        if !tags.isEmpty { payload["tags"] = tags }
+        if !stale.isEmpty { payload["removeTags"] = stale }
+        guard let outData = runWrite(payload, what: "native tag reconcile"),
+              let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any]
+        else { return nil }
+        return ReconcileResult(removed: obj["removed"] as? Int ?? 0,
+                               tagged: obj["tagged"] as? Int,
+                               skipped: obj["skipped"] as? Int)
+    }
+
+    /// Native hashtag names per externalId, duplicates included (read-only).
+    /// nil = helper missing/failed.
+    static func hashtags(externalIds: [String]) -> [String: [String]]? {
+        guard !externalIds.isEmpty,
+              let outData = runRead(["hashtagsOf": externalIds]),
+              let obj = (try? JSONSerialization.jsonObject(with: outData)) as? [String: Any],
+              let map = obj["hashtags"] as? [String: Any] else { return nil }
+        var result: [String: [String]] = [:]
+        for (key, value) in map { result[key] = value as? [String] ?? [] }
+        return result
     }
 
     /// IDEAS #26: make `externalId` a subtask of `parentExternalId` via the
@@ -185,6 +233,35 @@ enum NativeTags {
             process.waitUntilExit()
             guard process.terminationStatus == 0 else { return nil }
             return outData
+        } catch {
+            return nil
+        }
+    }
+
+    /// Write op that returns the helper's stdout JSON (exit 0) or nil, with
+    /// the stderr detail surfaced as a warning like `run`.
+    private static func runWrite(_ payload: [String: Any], what: String) -> Data? {
+        guard let helper = helperURL else { return nil }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let process = Process()
+            process.executableURL = helper
+            let stdin = Pipe()
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.standardInput = stdin
+            process.standardOutput = stdout
+            process.standardError = stderr
+            try process.run()
+            stdin.fileHandleForWriting.write(data)
+            stdin.fileHandleForWriting.closeFile()
+            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            if process.terminationStatus == 0 { return outData }
+            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            FileHandle.standardError.write(Data("warning: \(what) failed: \(detail)\n".utf8))
+            return nil
         } catch {
             return nil
         }

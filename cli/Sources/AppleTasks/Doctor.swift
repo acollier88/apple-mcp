@@ -11,6 +11,7 @@ struct DoctorOut: Codable {
     let location: String
     let contacts: String
     let foundationModels: String
+    let jev: String
     let findmySidecar: String
     let mailRule: String
     let dropFolder: String
@@ -19,6 +20,7 @@ struct DoctorOut: Codable {
     let speech: String
     let fullDiskAccess: String
     let agentsConfig: String
+    let secrets: [SecretStatus]
     let cursorAgent: String
     let launchAgent: String
     let hermes: String
@@ -27,15 +29,45 @@ struct DoctorOut: Codable {
     let hermesHaLink: String
     let homeAssistant: String
     let budget: String
+    let deployment: DeploymentStatus
+    let dispatch: DispatchPauseInfo
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
+
+    struct DispatchPauseInfo: Codable {
+        let paused: Bool
+        let until: String?
+        let reason: String?
+    }
 
     struct PrivateHelperStatus: Codable {
         let present: Bool
         let path: String?
         let check: String?
     }
+
+    /// Which binary launchd actually runs, and whether its source tree has
+    /// drifted from it (uncommitted edits, or a HEAD newer than the build).
+    struct DeploymentStatus: Codable {
+        let launchdBinary: String?
+        let binaryModified: String?
+        let sourceTree: String?
+        let sourceHead: String?
+        let sourceDirty: Bool?
+        let binaryOlderThanCliCommit: Bool?
+        let note: String
+    }
+}
+
+struct SecretStatus: Codable {
+    let name: String
+    /// `SecretSource` raw value: env | keychain | plaintext | missing
+    let source: String
+    let file: String?
+    /// Octal like "644"
+    let mode: String?
+    let note: String?
 }
 
 struct DoctorIssue: Codable {
@@ -65,6 +97,9 @@ struct Doctor: AsyncParsableCommand {
 
     @Flag(name: .customLong("enqueue-heals"), help: "Create one [heal][auto] task per unhealthy system (deduped). Launchd dispatch picks them up — this command does not spawn agents.")
     var enqueueHeals = false
+
+    @Flag(name: .customLong("fix-modes"), help: "chmod 600 known secret files that are group/world readable.")
+    var fixModes = false
 
     @Option(name: .customLong("list"), help: "Reminders list for heal tasks (default: Code Tasks).")
     var listName: String = "Code Tasks"
@@ -168,6 +203,202 @@ struct Doctor: AsyncParsableCommand {
         } catch {
             return "unreadable: \(error.localizedDescription)"
         }
+    }
+
+    /// Per-secret audit: env → keychain → plaintext → missing. Never includes values.
+    static func secretsStatus(configDir: URL, store: SecretStore, env: [String: String],
+                              fixModes: Bool) -> [SecretStatus] {
+        let notifyURL = configDir.appendingPathComponent("notify.json")
+        let serveURL = configDir.appendingPathComponent("serve.json")
+        let llmURL = configDir.appendingPathComponent("llm.json")
+        let credentialsURL = configDir.appendingPathComponent("gmail/credentials.json")
+        let tokenURL = configDir.appendingPathComponent("gmail/token.json")
+        let launchdURL = configDir.appendingPathComponent("launchd.env")
+        let agentsURL = configDir.appendingPathComponent("agents.json")
+
+        let notifyFile = auditFile(notifyURL, fixModes: fixModes)
+        let serveFile = auditFile(serveURL, fixModes: fixModes)
+        let llmFile = auditFile(llmURL, fixModes: fixModes)
+        let credentialsFile = auditFile(credentialsURL, fixModes: fixModes)
+        let tokenFile = auditFile(tokenURL, fixModes: fixModes)
+        let launchdFile = auditFile(launchdURL, fixModes: fixModes)
+        let agentsFile = auditFile(agentsURL, fixModes: fixModes)
+
+        var rows: [SecretStatus] = []
+
+        let notify = (try? Data(contentsOf: notifyURL)).flatMap {
+            try? JSONDecoder().decode(NotifyConfig.self, from: $0)
+        }
+        let topicSource = resolveSource(
+            envName: Secrets.ntfyTopicEnv, itemName: Secrets.ntfyTopic,
+            plaintext: notify?.ntfy?.topic, store: store, env: env)
+        rows.append(status(name: Secrets.ntfyTopic, source: topicSource, file: notifyFile))
+        let replyExplicit = resolveSource(
+            envName: Secrets.ntfyApprovalsReplyTopicEnv,
+            itemName: Secrets.ntfyApprovalsReplyTopic,
+            plaintext: notify?.approvalsReplyTopic, store: store, env: env)
+        let replySource = replyExplicit != .missing ? replyExplicit
+            : (topicSource != .missing ? topicSource : .missing)
+        rows.append(status(name: Secrets.ntfyApprovalsReplyTopic, source: replySource, file: notifyFile))
+
+        let servePlain: String? = {
+            guard let data = try? Data(contentsOf: serveURL),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let token = obj["token"] as? String, !token.isEmpty else { return nil }
+            return token
+        }()
+        rows.append(status(
+            name: Secrets.serveToken,
+            source: resolveSource(envName: Secrets.serveTokenEnv, itemName: Secrets.serveToken,
+                                  plaintext: servePlain, store: store, env: env),
+            file: serveFile))
+
+        rows.append(status(
+            name: Secrets.gmailClientSecret,
+            source: resolveSource(envName: Secrets.gmailClientSecretEnv,
+                                  itemName: Secrets.gmailClientSecret,
+                                  plaintext: gmailFileSecret(at: credentialsURL),
+                                  store: store, env: env),
+            file: credentialsFile))
+
+        let gmailTokenSource: SecretSource = {
+            if let value = try? store.get(Secrets.gmailToken), !value.isEmpty {
+                return .keychain
+            }
+            if FileManager.default.fileExists(atPath: tokenURL.path) { return .plaintext }
+            return .missing
+        }()
+        rows.append(status(name: Secrets.gmailToken, source: gmailTokenSource, file: tokenFile))
+
+        if let data = try? Data(contentsOf: llmURL),
+           let file = try? JSONDecoder().decode(LlmCommand.ConfigFile.self, from: data) {
+            for name in file.profiles.keys.sorted() {
+                let profile = file.profiles[name]!
+                let item = profile.apiKeyKeychain ?? Secrets.llmApiKey(profile: name)
+                rows.append(status(
+                    name: Secrets.llmApiKey(profile: name),
+                    source: resolveSource(envName: profile.apiKeyEnv, itemName: item,
+                                          plaintext: profile.apiKey, store: store, env: env),
+                    file: llmFile))
+            }
+        }
+
+        for (name, _) in launchdEnvExports(at: launchdURL) {
+            rows.append(status(
+                name: "launchd.env:\(name)",
+                source: .plaintext,
+                file: launchdFile))
+        }
+
+        if let data = try? Data(contentsOf: agentsURL),
+           let cfg = try? JSONDecoder().decode(AgentsConfig.self, from: data) {
+            let hasEnv = cfg.agents.values.contains { ($0.env?.isEmpty == false) }
+            if hasEnv {
+                rows.append(status(name: "agents.json:env", source: .plaintext, file: agentsFile))
+            }
+        }
+
+        return rows
+    }
+
+    private struct FileAudit {
+        let exists: Bool
+        let path: String
+        let mode: String?
+        let modeNote: String?
+    }
+
+    private static func auditFile(_ url: URL, fixModes: Bool) -> FileAudit {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return FileAudit(exists: false, path: url.path, mode: nil, modeNote: nil)
+        }
+        let before = posixMode(url)
+        var modeNote: String?
+        if let before, isGroupWorldReadable(before) {
+            if fixModes {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: url.path)
+                modeNote = "fixed to 600"
+            } else {
+                modeNote = "mode \(before), expected 600"
+            }
+        }
+        return FileAudit(exists: true, path: url.path, mode: posixMode(url), modeNote: modeNote)
+    }
+
+    private static func posixMode(_ url: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let num = attrs[.posixPermissions] as? NSNumber else { return nil }
+        return String(num.intValue & 0o777, radix: 8)
+    }
+
+    private static func isGroupWorldReadable(_ mode: String) -> Bool {
+        guard let value = Int(mode, radix: 8) else { return false }
+        return (value & 0o044) != 0
+    }
+
+    private static func resolveSource(envName: String?, itemName: String?, plaintext: String?,
+                                      store: SecretStore, env: [String: String]) -> SecretSource {
+        if let envName, !envName.isEmpty, let value = env[envName], !value.isEmpty {
+            return .env
+        }
+        if let itemName, let value = try? store.get(itemName), !value.isEmpty {
+            return .keychain
+        }
+        if let plaintext, !plaintext.isEmpty {
+            return .plaintext
+        }
+        return .missing
+    }
+
+    private static func status(name: String, source: SecretSource, file: FileAudit) -> SecretStatus {
+        var notes: [String] = []
+        if let modeNote = file.modeNote { notes.append(modeNote) }
+        if source == .plaintext {
+            notes.append("plaintext — move with: apple-tasks secret migrate --apply")
+        }
+        return SecretStatus(
+            name: name,
+            source: source.rawValue,
+            file: file.exists ? file.path : nil,
+            mode: file.mode,
+            note: notes.isEmpty ? nil : notes.joined(separator: "; "))
+    }
+
+    private static func gmailFileSecret(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let installed = obj["installed"] as? [String: Any],
+           let secret = installed["client_secret"] as? String, !secret.isEmpty {
+            return secret
+        }
+        if let secret = obj["client_secret"] as? String, !secret.isEmpty {
+            return secret
+        }
+        return nil
+    }
+
+    private static func launchdEnvExports(at url: URL) -> [(name: String, value: String)] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var out: [(String, String)] = []
+        for line in text.split(whereSeparator: \.isNewline) {
+            var t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { continue }
+            guard t.hasPrefix("export ") else { continue }
+            t = String(t.dropFirst("export ".count)).trimmingCharacters(in: .whitespaces)
+            guard let eq = t.firstIndex(of: "=") else { continue }
+            let name = String(t[..<eq]).trimmingCharacters(in: .whitespaces)
+            var value = String(t[t.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            if (value.hasPrefix("\"") && value.hasSuffix("\""))
+                || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                value = String(value.dropFirst().dropLast())
+            }
+            guard !name.isEmpty, !value.isEmpty else { continue }
+            out.append((name, value))
+        }
+        return out
     }
 
     /// Resolve a binary on PATH the same way dispatch does (/usr/bin/env).
@@ -433,19 +664,116 @@ struct Doctor: AsyncParsableCommand {
         return "plist present but not loaded (re-run: make install-agent)"
     }
 
+    /// stdout of a short-lived process, or nil if it failed to launch / exited non-zero.
+    private static func capture(_ exe: String, _ args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exe)
+        process.arguments = args
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Detects the two-trees hazard: the launchd job runs a binary built from
+    /// a checkout that may carry uncommitted edits or lag its own HEAD.
+    private static func deploymentStatus() -> DoctorOut.DeploymentStatus {
+        var launchdBinary: String?
+        if let out = capture("/bin/launchctl", ["print", "gui/\(getuid())/com.apple-tasks.dispatch"]),
+           let start = out.range(of: "arguments = {") {
+            let block = out[start.upperBound...].prefix { $0 != "}" }
+            launchdBinary = block.split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first { $0.hasSuffix("/apple-tasks") }
+        }
+        guard let bin = launchdBinary else {
+            return .init(launchdBinary: nil, binaryModified: nil, sourceTree: nil, sourceHead: nil,
+                         sourceDirty: nil, binaryOlderThanCliCommit: nil,
+                         note: "launchd dispatch not loaded; nothing to compare")
+        }
+        let iso = ISO8601DateFormatter()
+        let binaryDate = (try? FileManager.default.attributesOfItem(atPath: bin))?[.modificationDate] as? Date
+        // Walk up from cli/.build/release/apple-tasks to the checkout root.
+        var dir = URL(fileURLWithPath: bin).deletingLastPathComponent()
+        var tree: String?
+        for _ in 0..<6 {
+            if FileManager.default.fileExists(atPath: dir.appendingPathComponent(".git").path) {
+                tree = dir.path
+                break
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        guard let tree else {
+            return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string),
+                         sourceTree: nil, sourceHead: nil, sourceDirty: nil, binaryOlderThanCliCommit: nil,
+                         note: "binary is not inside a git checkout")
+        }
+        let git = ["/usr/bin/git", "-c", "core.fsmonitor=false", "-C", tree]
+        let head = capture(git[0], Array(git[1...]) + ["rev-parse", "--short", "HEAD"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let porcelain = capture(git[0], Array(git[1...]) + ["status", "--porcelain"])
+        let dirty = porcelain.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        // Only commits that touch the CLI sources matter; a docs-only commit
+        // must not flag a perfectly current binary.
+        let headEpoch = capture(git[0], Array(git[1...]) + ["log", "-1", "--format=%ct", "--", "cli"])
+            .flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        var older: Bool?
+        if let binaryDate, let headEpoch {
+            older = binaryDate.timeIntervalSince1970 < headEpoch
+        }
+        var notes: [String] = []
+        if dirty == true { notes.append("source tree has uncommitted changes — commit or they exist only on this Mac") }
+        if older == true { notes.append("binary predates the last cli/ commit — rebuild (make cli helper) so launchd runs the committed code") }
+        return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string), sourceTree: tree,
+                     sourceHead: head, sourceDirty: dirty, binaryOlderThanCliCommit: older,
+                     note: notes.isEmpty ? "ok: launchd runs a build of the committed HEAD" : notes.joined(separator: "; "))
+    }
+
     func run() async throws {
         let hermes = Self.hermesStatus()
         let hermesGateway = Self.hermesGatewayStatus()
         let hermesCron = Self.hermesCronStatus()
         let hermesHaLink = Self.hermesHaLinkStatus()
         let homeAssistant = Self.homeAssistantStatus()
-        let issues = Self.collectIssues(
+        let pause = Dispatch.resolvedPause(db: .shared)
+        let dispatchInfo = DoctorOut.DispatchPauseInfo(
+            paused: pause != nil, until: pause?.untilISO, reason: pause?.reason)
+        let configDir: URL = {
+            if let override = ProcessInfo.processInfo.environment["APPLE_TASKS_CONFIG_DIR"],
+               !override.isEmpty {
+                return URL(fileURLWithPath: (override as NSString).expandingTildeInPath,
+                           isDirectory: true)
+            }
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".config/apple-tasks", isDirectory: true)
+        }()
+        let secrets = Self.secretsStatus(
+            configDir: configDir,
+            store: Secrets.store,
+            env: ProcessInfo.processInfo.environment,
+            fixModes: fixModes)
+        var issues = Self.collectIssues(
             hermes: hermes,
             hermesGateway: hermesGateway,
             hermesCron: hermesCron,
             hermesHaLink: hermesHaLink,
             homeAssistant: homeAssistant
         )
+        if let pause, let issue = Self.pauseIssue(pause) {
+            issues.append(issue)
+        }
+        let plaintextCount = secrets.filter { $0.source == SecretSource.plaintext.rawValue }.count
+        if plaintextCount > 0 {
+            issues.append(DoctorIssue(
+                system: "secrets",
+                severity: "info",
+                summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
+                signature: "secrets-plaintext"))
+        }
         var heals: HealReport?
         if enqueueHeals {
             heals = await Self.enqueueHeals(issues: issues, listName: listName)
@@ -458,6 +786,7 @@ struct Doctor: AsyncParsableCommand {
             location: LocationFetcher.describeAuthorization(),
             contacts: ContactsAccess.describeAuthorization(),
             foundationModels: LocalClassifier.status(),
+            jev: JevClassifier.status(config: (try? AgentsConfig.load())?.jev),
             findmySidecar: Self.findmyStatus(),
             mailRule: FileManager.default.fileExists(
                 atPath: FileManager.default.homeDirectoryForCurrentUser
@@ -472,6 +801,7 @@ struct Doctor: AsyncParsableCommand {
             speech: Self.speechStatus(),
             fullDiskAccess: Self.fdaStatus(),
             agentsConfig: Self.agentsConfigStatus(),
+            secrets: secrets,
             cursorAgent: Self.cursorAgentStatus(),
             launchAgent: Self.launchAgentStatus(),
             hermes: hermes,
@@ -480,6 +810,8 @@ struct Doctor: AsyncParsableCommand {
             hermesHaLink: hermesHaLink,
             homeAssistant: homeAssistant,
             budget: Self.budgetStatus(),
+            deployment: Self.deploymentStatus(),
+            dispatch: dispatchInfo,
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
             heals: heals
@@ -560,6 +892,13 @@ struct Doctor: AsyncParsableCommand {
         return issues
     }
 
+    static func pauseIssue(_ pause: Dispatch.PauseState) -> DoctorIssue? {
+        var summary = "dispatcher paused until \(pause.untilISO)"
+        if let reason = pause.reason { summary += " (\(reason))" }
+        return DoctorIssue(system: "dispatch", severity: "info",
+                           summary: summary, signature: "dispatch-pause")
+    }
+
     /// Copilot 403 on a job already pinned to ollama-launch is stale, not a heal.
     private static func cronHealSummary(_ cron: String) -> String? {
         guard cron.localizedCaseInsensitiveContains(": error")
@@ -592,6 +931,9 @@ struct Doctor: AsyncParsableCommand {
         let open = (await store.reminders(in: nil)).filter { !$0.isCompleted }
         var actions: [HealAction] = []
         for issue in issues {
+            // info/notice never become heal tasks (secrets-plaintext is info).
+            if issue.severity == "info" || issue.severity == "notice" { continue }
+            if issue.system == "secrets" { continue }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")

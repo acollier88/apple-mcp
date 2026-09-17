@@ -38,13 +38,22 @@ swift build -c release   # CLI only; everything works without the helper
 When tags are written (`add -t`, `update --add-tag`), the CLI also mirrors them
 to **real Reminders tags** via `apple-tasks-private`, a small helper that uses
 Apple's private ReminderKit framework (see `docs/remctl-spike.md`). The `[tag]`
-title prefix remains the source of truth — the mirror is additive-only and
+title prefix remains the source of truth — the mirror is idempotent and
 best-effort:
 
 - Output gains `"nativeTags": true|false` on add/update (omitted if no tags).
 - A failed mirror warns on stderr but never fails the command.
-- Removal only updates the prefix; ReminderKit exposes no tag-removal API, so
-  stale native tags must be removed in the Reminders app.
+- A name already present natively is skipped, never duplicated (compared in
+  Reminders' stored form: `dispatched:mbp` is stored as `dispatchedmbp`).
+- Removal follows the title: `update --remove-tag`, shedding a claim tag on
+  finish, and the recurrence roll in `complete` all remove the matching
+  native hashtag too (`REMReminderHashtagContextChangeItem.removeHashtag:`).
+- `remirror-tags [--dry-run] [--id …] [--list …]` reconciles: adds missing
+  hashtags, drops duplicates, and prunes stale `#dispatched…`/`#failed…`
+  chips the title no longer carries. It never removes other native tags.
+  Before 2026-09-07 the mirror was additive and blind, so every dispatch
+  pass on a recurring task appended another copy — run `remirror-tags`
+  once to clean up.
 - `--no-native-tags` skips the mirror; deleting the helper binary disables it
   globally. `APPLE_TASKS_PRIVATE_BIN` overrides the helper path.
 - Private API caveat: may break on any macOS update (the helper probes every
@@ -238,7 +247,7 @@ details and self-complete instructions. A leading tag that matches an
 `[auto]` with no lane tag walks `modelPrefs.auto` and takes the first
 **available** worker (command/llm present, under `maxConcurrent`, gates
 pass; `worktree: true` lanes need a workdir tag). Classifier/ops lanes
-(`triage`, `local`, `doctor`, `heal`) are never in the auto pool. If nothing is
+(`triage`, `local`, `jev`, `doctor`, `heal`) are never in the auto pool. If nothing is
 available the task stays queued — it is not `[failed]`. Config at
 `~/.config/apple-tasks/agents.json`:
 
@@ -246,6 +255,7 @@ available the task stays queued — it is not `[failed]`. Config at
 {
   "agents": {
     "claude": {
+      "description": "Coding agent, alternative to cursor for repo work",
       "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
       "worktree": true,
       "timeoutMinutes": 60,
@@ -255,7 +265,9 @@ available the task stays queued — it is not `[failed]`. Config at
   },
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
   "triage": { "agent": "triage", "inbox": "Reminders" },
+  "jev": { "apiKeyEnv": "TYPESAFE_API_KEY", "applyConfidence": 0.7, "reviewConfidence": 0.45 },
   "workdirs": { "repo2": "~/Code/repo2" },
+  "repoDescriptions": { "repo2": "Second checkout; personal/side-project work" },
   "requireAutoTag": true,
   "maxRetries": 2,
   "retryBackoffMinutes": 30,
@@ -268,8 +280,10 @@ available the task stays queued — it is not `[failed]`. Config at
 ```
 
 The first task tag matching a `workdirs` key sets the agent's working
-directory. A task with no matching tag is not an error: it runs in a
-throwaway per-dispatch scratch directory
+directory. Optional `repoDescriptions` (same keys) is the text Jev sees
+as the repo Choice criteria; without it Jev falls back to the workdir
+path and rarely clears `applyConfidence` on repo. A task with no matching
+tag is not an error: it runs in a throwaway per-dispatch scratch directory
 (`~/.config/apple-tasks/scratch/<id>`) — the right shape for research,
 calendar debriefs, and notify-me tasks whose deliverable is a note or a
 notification, not code. Dedupe is enforced by both the dispatch ledger
@@ -292,6 +306,7 @@ Any argv template works; these are the lanes the example config ships:
 | `claude` | `claude` | `-p --permission-mode acceptEdits` |
 | `antigravity` | `agy` | sandbox + skip-permissions |
 | `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
+| `jev` | TypeSafe Jev (cloud) | reserved seat like `local`; `triage --agent jev` or `"triage": {"agent": "jev"}`; typed questions with calibrated confidence; `applyConfidence`/`reviewConfidence` gating; needs `TYPESAFE_API_KEY`; never in the auto pool |
 | *(BYOM)* | — | `"llm": { … }` OpenAI-compatible profile (no tools) |
 
 Prefer apple-tasks `"worktree": true` over Cursor's own `-w` so ledger/GC stay authoritative.
@@ -308,11 +323,18 @@ make install-digest HOUR=7 MINUTE=30
 make uninstall-digest
 ```
 
-`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch` with a
-PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` / `hermes` usually
-live). Optional secrets go in `~/.config/apple-tasks/launchd.env` (sourced
-before each run — e.g. `export CURSOR_API_KEY=…`). Logs:
-`~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
+`install-agent` writes a LaunchAgent that runs `apple-tasks dispatch --quiet`
+with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
+`hermes` usually live). `--quiet` emits `[]` when a pass produced only the
+same GC/skip/gate/schedule noise as the previous one, so launchd's stdout
+log does not grow on idle cycles. `dispatch-pause` stops new claims but
+reaping continues; `--quiet` prints the paused line once per until/reason
+change, then collapses it the same way. Optional secrets go in
+`~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
+`export CURSOR_API_KEY=…`); prefer the [Secrets](#secrets) Keychain path
+so `doctor` does not flag plaintext. The wrapper rotates
+`~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
+Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
 (`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
 (from argv) and, for Cursor `agent`, a `# resolved model=` line from Auto.
 `doctor` reports
@@ -357,7 +379,10 @@ the design):
 - **Atomic claim** — the ledger row is the dispatch lock, taken with a
   single-statement insert-if-absent, so overlapping dispatchers (cron +
   manual, two shells) can't both run the same task. The `[dispatched]` tag is
-  written after the claim and is only the human-visible mirror.
+  written after the claim and is only the human-visible mirror. If the
+  ledger DB is unavailable the pass **fails closed** (stderr warning, no
+  unledgered run). A claim-tag save failure aborts that task only and the
+  rest of the pass continues.
 - **Concurrency** (`maxConcurrent`, global and per-agent) — agent runs
   execute in a capped task group; the global default of 1 preserves
   sequential behavior until you opt in. Outcomes are recorded as each run
@@ -368,11 +393,21 @@ the design):
   line in the ledger's `summary` column. Agents are prompted to record their
   own 1–3 sentence outcome first via `apple-tasks update <id> --append-notes`
   (non-destructive; appends a paragraph).
+- **Completion guard** (`claimGuard: "modified"`) — if an agent exits 0
+  without `apple-tasks complete`, the dispatcher sheds our `[dispatched]`
+  claim, appends a notes line, and stores a content fingerprint. The next
+  pass then skips while that fingerprint is unchanged (`skipped: unchanged
+  since succeeded #N — edit the task or complete it to re-run`); a human
+  edit or recurrence roll makes it eligible again. `"modified"` is the
+  default (since 2026-09-16, after a week live); set `claimGuard:
+  "running"` to go back to "any `[dispatched…]` tag blocks".
 - **Worktree GC** — every pass reclaims finished runs' worktrees: merged
   branches are removed immediately, unmerged succeeded branches are kept and
-  surfaced as pending deliverables, failed/timeout worktrees are kept
+  surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
-  only if empty). `--no-gc` skips the pass.
+  only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
+  for finished (or orphan) ledger rows older than the same cutoff are
+  removed too. `--no-gc` skips the pass.
 - **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
   macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to
@@ -384,16 +419,52 @@ the design):
   edits to the main checkout — this is what makes `acceptEdits` reasonable
   unattended. If worktree creation fails the dispatch is aborted, not run
   unisolated.
+- **Lane description** (`"description"` per agent, optional) — one line Jev
+  sees as the Choice criteria for that lane. Without it the lane option is
+  just the tag, and Jev rarely clears `applyConfidence`.
+- **Prompt delivery** (`"promptVia"` per agent: `argv` default | `stdin` |
+  `file`) — `argv` substitutes `{prompt}` inline (visible in `ps`, subject to
+  ARG_MAX, copied into the ledger's command column). `stdin` pipes the
+  prompt and drops `{prompt}` from argv (`claude -p`, `codex exec -`).
+  `file` writes it to `~/.config/apple-tasks/runs/<ledger-id>.prompt` and
+  substitutes `{promptFile}`. Both non-argv modes keep that `.prompt` copy
+  next to the run log.
 - **Timeouts** (`"timeoutMinutes"` per agent) — overrunning agents get
-  SIGTERM (SIGKILL after 5s) and the run is marked `timeout`.
+  SIGTERM (SIGKILL after 5s) and the run is marked `timeout`. Signals go to
+  the whole descendant tree (found via `pgrep -P`), so the node/shell
+  children that `agent`/`claude` spawn go down too.
 - **Reaper** — every dispatch pass first marks ledger rows stuck in
   `running` longer than `--reap-hours` (default 4) as `timeout` and swaps the
-  task's `[dispatched]` tag for `[failed]`, recovering from a dispatcher
-  killed mid-run. `apple-tasks dispatch --reap-only` runs just this step.
+  task's `[dispatched]` tag for `[failed]`. If the recorded agent pid is
+  still alive and still looks like this run, its process tree is SIGTERM'd
+  (SIGKILL after 5s). Running rows whose pid is already dead, older than 10
+  minutes, and whose run log has been quiet for 2 minutes are treated as a
+  crashed dispatcher (`timeout`, `[failed]`). A dispatcher whose agent was
+  finished externally (reap or cancel from another process) keeps that
+  status rather than overwriting it with `failed`.
+  `apple-tasks dispatch --reap-only` runs just this step.
+- **Cancel** — `apple-tasks dispatch-cancel <ledgerId>` signals a still-
+  running agent, marks the row `cancelled`, and sheds this Mac's
+  `[dispatched]` claim without writing `[failed]` (a cancel is a human
+  decision and does not count toward retry/backoff). The worktree is left
+  for GC. `apple-tasks dispatches --status cancelled` lists those rows.
+- **Pause** — `apple-tasks dispatch-pause --for 2h` (or `--until <ISO8601>`)
+  with optional `--reason` writes `dispatch.pausedUntil` in the state KV.
+  The next launchd pass still reaps and GCs, then stops before claiming
+  (`--dry-run` still plans and prefixes a paused report). `--quiet` prints
+  the paused line only when until/reason changed; otherwise idle cycles
+  stay `[]`. `dispatch-resume` clears the pause; `dispatch-status` reports
+  it. `digest` is unaffected. Doctor shows `dispatch.paused` and an info
+  issue while paused.
 - **Retries** (`maxRetries` / `retryBackoffMinutes`, default off) — `[failed]`
   tasks are re-dispatched up to `maxRetries` times once the backoff has
   elapsed (it scales linearly with the attempt count). After the budget is
   spent the task stays `[failed]` for a human or triage agent.
+- **Pending review** — `apple-tasks dispatches --status pending-review`
+  (or `--pending-review`) lists succeeded worktree runs whose agent branch
+  is still unmerged. Merged or deleted branches are marked reviewed and
+  drop off the list. `apple-tasks dispatch-discard <ledgerId>` force-removes
+  the worktree, deletes the branch, and marks the row reviewed.
 
 > **Subscription note (Claude Pro/Max):** the dispatcher invokes the official
 > `claude` CLI, which Anthropic permits for scripted/headless use under a
@@ -406,6 +477,46 @@ the design):
 > different: it requires API-key auth — subscription OAuth only covers the
 > first-party CLI. Terms change; this isn't legal advice — check Anthropic's
 > current Consumer Terms before relying on it.
+
+## Secrets
+
+Every consumer resolves **env → Keychain → plaintext**. Keychain items live
+in the login keychain (service `apple-tasks`); `apple-tasks secret` is the
+only writer. Nothing secret-related is exposed over MCP or HTTP.
+
+```bash
+# values via --stdin or a no-echo prompt — never argv
+echo -n "$TOPIC" | apple-tasks secret set ntfy.topic --stdin
+apple-tasks secret get ntfy.topic
+apple-tasks secret list
+apple-tasks secret rm ntfy.topic
+apple-tasks secret migrate            # dry-run: show what would move
+apple-tasks secret migrate --apply    # move + strip plaintext + chmod 600
+                                      # (also deletes gmail/token.json)
+```
+
+| Canonical item | Env var (wins) | Plaintext fallback |
+|---|---|---|
+| `ntfy.topic` | `APPLE_TASKS_NTFY_TOPIC` | `notify.json` `ntfy.topic` |
+| `ntfy.approvalsReplyTopic` | `APPLE_TASKS_NTFY_APPROVALS_TOPIC` | `notify.json` `approvalsReplyTopic` (else `<topic>-approvals`) |
+| `serve.token` | `APPLE_TASKS_SERVE_TOKEN` | `serve.json` `token` |
+| `gmail.clientSecret` | `APPLE_TASKS_GMAIL_CLIENT_SECRET` | `gmail/credentials.json` `client_secret` |
+| `gmail.token` | — | `gmail/token.json` (JSON of the OAuth blob) |
+| `llm.<profile>.apiKey` | profile `apiKeyEnv` | `llm.json` `apiKey` |
+
+`apple-tasks doctor` emits `secrets[]` (`name`, `source`, `file`, `mode`,
+`note`) and an info issue when anything is still plaintext. `--fix-modes`
+chmods known secret files that are group/world readable to `600` (does not
+move values — use `secret migrate --apply` for that). Do not run
+`--fix-modes` unless you intend to change modes on the real config dir.
+
+**launchd caveat.** The first Keychain read from a rebuilt ad-hoc
+`apple-tasks` binary prompts for access. `make sign-identity` (repo root)
+gives the binary a stable identity so the grant persists across rebuilds.
+
+`launchd.env` `export NAME=value` lines stay as-is; doctor reports each as
+`launchd.env:NAME` (source `plaintext`, value omitted). Lane `env` maps in
+`agents.json` are reported as a single `agents.json:env` entry.
 
 ## Siri inbox triage
 
@@ -445,6 +556,26 @@ offline, and `@Generable` structured output instead of parsing agent stdout.
 works in the dispatcher's triage block (`"agent": "local"`) and the MCP tool's
 `agent` param. This is the first rung of the escalation ladder: on-device →
 cheap cloud classifier (`agy` on Flash) → Claude.
+
+`--agent jev` classifies with TypeSafe Jev (cloud, calibrated confidence):
+one request per inbox item, using Choice questions over kind / lane / repo /
+list constrained to your `agents.json` lanes, workdirs, and plan lists.
+Each lane's optional `"description"` and the top-level `"repoDescriptions"`
+map (`{tag: text}`) are the text Jev sees as Choice criteria; without them
+lane/repo rarely clear `applyConfidence` (repo falls back to the workdir
+path). Dry-run actions include a `signals` field with the per-question
+choice + confidence (e.g. `kind agent 0.78 · lane cursor 0.41 · repo
+apple-mcp 0.62 · list none 0.55`). Three confidence bands:
+`>= applyConfidence` (default 0.7) is a full classification; between
+`reviewConfidence` and `applyConfidence` (default 0.45–0.7) gets a kind
+tag only; below the review floor the item is reported `skipped` and
+nothing is mutated. Confidence lands in the audit detail
+(e.g. `(jev 0.83)`) so you can tune thresholds from `apple-tasks log`.
+`--notes` is not supported with jev (no text generation) — use `--agent
+local` or an `agents.json` lane. `doctor` reports the seat on its `jev`
+line. Needs `TYPESAFE_API_KEY`. The same reserved value works in the
+dispatcher's triage block (`"agent": "jev"`) and the MCP tool's `agent`
+param.
 
 Also exposed as MCP `triage_inbox` (dry-run by default), a **"Triage Inbox"
 button** in the AgentTasks app's activity view, and a Siri/Shortcuts intent —

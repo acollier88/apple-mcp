@@ -199,7 +199,7 @@ struct QueueTab: View {
     private var askBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField("Ask about the queue…", text: $askQuestion)
+                TextField("Ask about the queue or last agent run…", text: $askQuestion)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await runAsk() } }
                 Button("Ask") { Task { await runAsk() } }
