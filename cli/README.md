@@ -393,9 +393,9 @@ the design):
   claim, appends a notes line, and stores a content fingerprint. The next
   pass then skips while that fingerprint is unchanged (`skipped: unchanged
   since succeeded #N — edit the task or complete it to re-run`); a human
-  edit or recurrence roll makes it eligible again. Default is still
-  `"running"` (any `[dispatched…]` tag blocks, today's behavior); the plan
-  is to flip the default after a week live.
+  edit or recurrence roll makes it eligible again. `"modified"` is the
+  default (since 2026-09-16, after a week live); set `claimGuard:
+  "running"` to go back to "any `[dispatched…]` tag blocks".
 - **Worktree GC** — every pass reclaims finished runs' worktrees: merged
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept

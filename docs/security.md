@@ -146,7 +146,7 @@ watches). Watch URLs come from `watches.json` (user-written);
 | Control | What it does | Limit |
 |---|---|---|
 | Approvals | `approval_request` / `approval_check` / `approval_list`. **No MCP tool answers** (`mcp/src/tools/approvals.ts`). First answer wins; `approve answer` is CLI/human | Agents can still shell `apple-tasks approve answer`. Knowing the reply topic is enough to answer remotely. Prompt templates *ask* for approval; nothing in the CLI enforces it |
-| `claimGuard` | `"running"` (default): any `[dispatched…]` blocks. `"modified"`: also skip if fingerprint matches last `open-claimed` success (`Dispatch.unchangedSinceSuccess`) | Does not constrain a live agent |
+| `claimGuard` | `"modified"` (default since 2026-09-16): any `[dispatched…]` blocks, plus skip if fingerprint matches last `open-claimed` success (`Dispatch.unchangedSinceSuccess`). `"running"`: tag check only | Does not constrain a live agent |
 | `dispatch-cancel` | SIGTERM/KILL tree (`AgentProcess`), row `cancelled`, shed own claim, no `[failed]` (`DispatchCancel`) | Human / MCP / HTTP; not automatic |
 | Run logs | stdout/stderr (Cursor NDJSON filtered) + argv header | New files `600` in a `700` `runs/` (`RunLogs`); older files stay `644` until re-chmod'd; served over MCP and HTTP; may contain secrets |
 | Audit DB | Every mutation + `APPLE_TASKS_CALLER` (`AuditDB.caller`) | `644`; `argv` prompt can land in `command` |

@@ -197,10 +197,10 @@ human edit did not unstrand it.
   alone would block every recurrence forever.
   The `hasActiveDispatch` running check is unchanged and stays under both
   modes.
-- **`claimGuard`** in `agents.json`: `"running"` (today's behavior — any
-  `[dispatched…]` tag blocks; this is the effective default while the
-  key is omitted) | `"modified"` (fingerprint compare). Plan is to flip
-  the default to `"modified"` after a week live.
+- **`claimGuard`** in `agents.json`: `"running"` (any `[dispatched…]`
+  tag blocks) | `"modified"` (fingerprint compare). `"modified"` became
+  the default on 2026-09-16 after a week live (`AgentsConfig.resolvedClaimGuard`;
+  unknown values fall back to it). Set `"running"` to opt out.
 - **Fingerprint is content-only** (title incl. tags, notes, due, URL,
   priority — see `TaskFingerprint`). iCloud sync churn that bumps
   `lastModifiedDate` without changing content cannot make a task look
@@ -209,7 +209,7 @@ human edit did not unstrand it.
 - **Worktree GC.** When a merged succeeded branch/worktree is removed,
   the ledger row is `markReviewed` so it leaves the pending-review set.
   Unmerged-kept behavior and report strings are unchanged.
-- **Dry-run.** With the default `claimGuard` (`"running"` / omitted) a
-  dry-run is identical to pre-v3: the new skip line only appears when
-  `claimGuard` is `"modified"` and a succeeded fingerprint still matches.
-  Phase C (shed / fingerprint store) does not run on dry-run.
+- **Dry-run.** With `claimGuard: "running"` a dry-run is identical to
+  pre-v3; under the default `"modified"` the new skip line appears when a
+  succeeded fingerprint still matches. Phase C (shed / fingerprint store)
+  does not run on dry-run.
