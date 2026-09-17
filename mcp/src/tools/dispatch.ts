@@ -262,6 +262,7 @@ export function registerDispatchTools(server: McpServer): void {
         movedTo: z.string().optional(),
         note: z.string().optional(),
         confidence: z.number().optional(),
+        signals: z.string().optional().describe("jev only: per-question choice + confidence, e.g. 'kind agent 0.78 · lane cursor 0.41'"),
       })),
       noteActions: z.array(z.object({
         source: z.string().describe("Source note name."),

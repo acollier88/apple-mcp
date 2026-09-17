@@ -4901,6 +4901,10 @@
               },
               "confidence": {
                 "type": "number"
+              },
+              "signals": {
+                "type": "string",
+                "description": "jev only: per-question choice + confidence, e.g. 'kind agent 0.78 · lane cursor 0.41'"
               }
             },
             "required": [

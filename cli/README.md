@@ -255,6 +255,7 @@ available the task stays queued — it is not `[failed]`. Config at
 {
   "agents": {
     "claude": {
+      "description": "Coding agent, alternative to cursor for repo work",
       "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
       "worktree": true,
       "timeoutMinutes": 60,
@@ -266,6 +267,7 @@ available the task stays queued — it is not `[failed]`. Config at
   "triage": { "agent": "triage", "inbox": "Reminders" },
   "jev": { "apiKeyEnv": "TYPESAFE_API_KEY", "applyConfidence": 0.7, "reviewConfidence": 0.45 },
   "workdirs": { "repo2": "~/Code/repo2" },
+  "repoDescriptions": { "repo2": "Second checkout; personal/side-project work" },
   "requireAutoTag": true,
   "maxRetries": 2,
   "retryBackoffMinutes": 30,
@@ -278,8 +280,10 @@ available the task stays queued — it is not `[failed]`. Config at
 ```
 
 The first task tag matching a `workdirs` key sets the agent's working
-directory. A task with no matching tag is not an error: it runs in a
-throwaway per-dispatch scratch directory
+directory. Optional `repoDescriptions` (same keys) is the text Jev sees
+as the repo Choice criteria; without it Jev falls back to the workdir
+path and rarely clears `applyConfidence` on repo. A task with no matching
+tag is not an error: it runs in a throwaway per-dispatch scratch directory
 (`~/.config/apple-tasks/scratch/<id>`) — the right shape for research,
 calendar debriefs, and notify-me tasks whose deliverable is a note or a
 notification, not code. Dedupe is enforced by both the dispatch ledger
@@ -415,6 +419,9 @@ the design):
   edits to the main checkout — this is what makes `acceptEdits` reasonable
   unattended. If worktree creation fails the dispatch is aborted, not run
   unisolated.
+- **Lane description** (`"description"` per agent, optional) — one line Jev
+  sees as the Choice criteria for that lane. Without it the lane option is
+  just the tag, and Jev rarely clears `applyConfidence`.
 - **Prompt delivery** (`"promptVia"` per agent: `argv` default | `stdin` |
   `file`) — `argv` substitutes `{prompt}` inline (visible in `ps`, subject to
   ARG_MAX, copied into the ledger's command column). `stdin` pipes the
@@ -553,10 +560,16 @@ cheap cloud classifier (`agy` on Flash) → Claude.
 `--agent jev` classifies with TypeSafe Jev (cloud, calibrated confidence):
 one request per inbox item, using Choice questions over kind / lane / repo /
 list constrained to your `agents.json` lanes, workdirs, and plan lists.
-Three confidence bands: `>= applyConfidence` (default 0.7) is a full
-classification; between `reviewConfidence` and `applyConfidence` (default
-0.45–0.7) gets a kind tag only; below the review floor the item is reported
-`skipped` and nothing is mutated. Confidence lands in the audit detail
+Each lane's optional `"description"` and the top-level `"repoDescriptions"`
+map (`{tag: text}`) are the text Jev sees as Choice criteria; without them
+lane/repo rarely clear `applyConfidence` (repo falls back to the workdir
+path). Dry-run actions include a `signals` field with the per-question
+choice + confidence (e.g. `kind agent 0.78 · lane cursor 0.41 · repo
+apple-mcp 0.62 · list none 0.55`). Three confidence bands:
+`>= applyConfidence` (default 0.7) is a full classification; between
+`reviewConfidence` and `applyConfidence` (default 0.45–0.7) gets a kind
+tag only; below the review floor the item is reported `skipped` and
+nothing is mutated. Confidence lands in the audit detail
 (e.g. `(jev 0.83)`) so you can tune thresholds from `apple-tasks log`.
 `--notes` is not supported with jev (no text generation) — use `--agent
 local` or an `agents.json` lane. `doctor` reports the seat on its `jev`
