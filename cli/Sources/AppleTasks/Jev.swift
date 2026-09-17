@@ -276,10 +276,16 @@ enum JevClassifier {
 
     static func classify(items: [[String: String]], agents: [String], workdirs: [String],
                          planLists: [String], config: JevConfig?,
-                         client: JevClient? = nil) async throws -> [Triage.Classification] {
+                         client: JevClient? = nil,
+                         laneDescriptions: [String: String] = [:],
+                         repoDescriptions: [String: String] = [:],
+                         workdirPaths: [String: String] = [:]) async throws -> [Triage.Classification] {
         let cfg = config ?? JevConfig()
         let client = client ?? JevClient(config: cfg)
-        let questions = Self.questions(agents: agents, workdirs: workdirs, planLists: planLists)
+        let questions = Self.questions(
+            agents: agents, workdirs: workdirs, planLists: planLists,
+            laneDescriptions: laneDescriptions, repoDescriptions: repoDescriptions,
+            workdirPaths: workdirPaths)
         let apply = cfg.resolvedApplyConfidence
         let review = cfg.resolvedReviewConfidence
 
@@ -328,6 +334,7 @@ enum JevClassifier {
         let response = try await client.systemOne(
             state: .object(["title": title, "notes": notes]),
             questions: questions)
+        let signals = signalsLine(answers: response.answers, questions: questions)
 
         guard let kindAnswer = response.answers["kind"],
               let kind = kindAnswer.choicePayload else {
@@ -341,18 +348,19 @@ enum JevClassifier {
                 id: id, kind: kindValue, tags: [], list: nil,
                 confidence: confidence,
                 skipReason: String(format: "low confidence %.2f < %.2f — left for a human",
-                                   confidence, review))
+                                   confidence, review),
+                signals: signals)
         }
         if confidence < apply {
             return Triage.Classification(
                 id: id, kind: kindValue, tags: [], list: nil,
-                confidence: confidence, skipReason: nil)
+                confidence: confidence, skipReason: nil, signals: signals)
         }
 
         guard kindValue == "agent" else {
             return Triage.Classification(
                 id: id, kind: kindValue, tags: [], list: nil,
-                confidence: confidence, skipReason: nil)
+                confidence: confidence, skipReason: nil, signals: signals)
         }
 
         var tags: [String] = []
@@ -365,11 +373,14 @@ enum JevClassifier {
         let list = acceptedChoice(response.answers["list"], allowed: planLists, floor: apply)
         return Triage.Classification(
             id: id, kind: kindValue, tags: tags, list: list,
-            confidence: confidence, skipReason: nil)
+            confidence: confidence, skipReason: nil, signals: signals)
     }
 
     private static func questions(agents: [String], workdirs: [String],
-                                  planLists: [String]) -> [String: JevQuestion] {
+                                  planLists: [String],
+                                  laneDescriptions: [String: String] = [:],
+                                  repoDescriptions: [String: String] = [:],
+                                  workdirPaths: [String: String] = [:]) -> [String: JevQuestion] {
         var questions: [String: JevQuestion] = [
             "kind": .choice(
                 instructions: "Is this reminder actionable software/repo work that an AI coding agent could do, or a personal item?",
@@ -382,7 +393,13 @@ enum JevClassifier {
             var criteria: [String: String?] = [
                 "none": "not agent work, or no lane clearly fits"
             ]
-            for tag in agents { criteria[tag] = "the '\(tag)' agent lane" }
+            for tag in agents {
+                if let text = laneDescriptions[tag], !text.isEmpty {
+                    criteria[tag] = text
+                } else {
+                    criteria[tag] = "the '\(tag)' agent lane"
+                }
+            }
             questions["lane"] = .choice(
                 instructions: "If this is agent work, which agent lane should run it?",
                 criteria: criteria)
@@ -391,7 +408,16 @@ enum JevClassifier {
             var criteria: [String: String?] = [
                 "none": "no specific repo"
             ]
-            for tag in workdirs { criteria[tag] = "the '\(tag)' repo" }
+            for tag in workdirs {
+                if let text = repoDescriptions[tag], !text.isEmpty {
+                    criteria[tag] = text
+                } else if let path = workdirPaths[tag], !path.isEmpty {
+                    let last = (path as NSString).lastPathComponent
+                    criteria[tag] = "the '\(tag)' repo (working directory \(last): \(path))"
+                } else {
+                    criteria[tag] = "the '\(tag)' repo"
+                }
+            }
             questions["repo"] = .choice(
                 instructions: "Which repo or project does this concern?",
                 criteria: criteria)
@@ -400,12 +426,25 @@ enum JevClassifier {
             var criteria: [String: String?] = [
                 "none": "none of these lists fits"
             ]
-            for name in planLists { criteria[name] = nil }
+            // `dict[k] = nil` removes the key for `[String: String?]`; store an explicit null.
+            for name in planLists { criteria.updateValue(nil, forKey: name) }
             questions["list"] = .choice(
                 instructions: "Which plan list should this task move to?",
                 criteria: criteria)
         }
         return questions
+    }
+
+    /// Compact `kind agent 0.78 · lane cursor 0.41` line for dry-run reports.
+    private static func signalsLine(answers: [String: JevAnswer],
+                                    questions: [String: JevQuestion]) -> String? {
+        var parts: [String] = []
+        for key in ["kind", "lane", "repo", "list"] {
+            guard questions[key] != nil else { continue }
+            guard let payload = answers[key]?.choicePayload else { continue }
+            parts.append("\(key) \(payload.choice) " + String(format: "%.2f", payload.confidence))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// Match Jev's option string back to a canonical value from `allowed`.

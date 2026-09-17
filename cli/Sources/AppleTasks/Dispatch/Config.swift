@@ -12,6 +12,8 @@ struct AgentsConfig: Codable {
         /// plain completions, no tool use, so it suits classifier seats
         /// (triage) and generate-only tasks.
         let llm: LlmCommand.Profile?
+        /// One line describing what this lane is for; used as the Jev Choice criteria text and nowhere else yet.
+        let description: String?
         let promptTemplate: String?
         /// Run in a fresh git worktree of the workdir (output = a branch, not
         /// edits to the main checkout). Requires the workdir to be a git repo.
@@ -106,6 +108,8 @@ struct AgentsConfig: Codable {
     var maxConcurrent: Int?
     /// Repo/project tag -> working directory.
     var workdirs: [String: String]?
+    /// Optional map of repo tag → one-line description; used as the Jev Choice criteria text.
+    var repoDescriptions: [String: String]?
     /// When true (default), only tasks also tagged [auto] are dispatched.
     var requireAutoTag: Bool?
     /// Re-dispatch [failed] tasks up to this many times (default 0 = never).

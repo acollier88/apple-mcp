@@ -183,6 +183,90 @@ final class JevTests: XCTestCase {
         XCTAssertEqual(c.list, "Work")
     }
 
+    // MARK: - criteria + signals
+
+    func testCriteriaUsesDescriptionsAndRepoPathFallback() async throws {
+        let envName = "JEV_TEST_KEY_CRITERIA"
+        setenv(envName, "k", 1)
+        defer { unsetenv(envName) }
+
+        let captured = Box<URLRequest?>(nil)
+        let transport: JevClient.Transport = { request in
+            captured.value = request
+            return (Self.okJSON(answers: ["kind": Self.choice("agent", confidence: 0.9)]), 200)
+        }
+        var config = JevConfig()
+        config.apiKeyEnv = envName
+        let client = JevClient(config: config, transport: transport, retryDelays: [])
+
+        let cursorDesc = "General coding agent for repo work in a git worktree"
+        let homeLabDesc = "Docker compose home lab: Home Assistant and services"
+        let applePath = "/Users/me/Code/apple-mcp"
+
+        _ = try await JevClassifier.classify(
+            items: [["id": "1", "title": "fix the build", "notes": ""]],
+            agents: ["cursor", "claude"],
+            workdirs: ["apple-mcp", "home-lab"],
+            planLists: ["Work"],
+            config: config,
+            client: client,
+            laneDescriptions: ["cursor": cursorDesc],
+            repoDescriptions: ["home-lab": homeLabDesc],
+            workdirPaths: ["apple-mcp": applePath, "home-lab": "~/Documents/home-lab"])
+
+        guard let body = captured.value?.httpBody,
+              let json = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let questions = json["questions"] as? [String: Any] else {
+            return XCTFail("request body was not a JSON object")
+        }
+
+        let laneCriteria = (questions["lane"] as? [String: Any])?["criteria"] as? [String: Any]
+        XCTAssertEqual(laneCriteria?["cursor"] as? String, cursorDesc)
+        XCTAssertEqual(laneCriteria?["claude"] as? String, "the 'claude' agent lane")
+
+        let repoCriteria = (questions["repo"] as? [String: Any])?["criteria"] as? [String: Any]
+        XCTAssertEqual(repoCriteria?["home-lab"] as? String, homeLabDesc)
+        let appleText = repoCriteria?["apple-mcp"] as? String
+        XCTAssertEqual(appleText, "the 'apple-mcp' repo (working directory apple-mcp: \(applePath))")
+        XCTAssertTrue(appleText?.contains(applePath) == true, appleText ?? "nil")
+
+        let listObj = questions["list"] as? [String: Any]
+        let listCriteria = listObj?["criteria"] as? NSDictionary
+        XCTAssertTrue(listCriteria?["Work"] is NSNull, "plan list names stay null-description, got \(listCriteria?["Work"] as Any)")
+    }
+
+    func testSignalsSummarizesFullResponse() async throws {
+        let classifications = try await classifyStub(answers: [
+            "kind": Self.choice("agent", confidence: 0.78),
+            "lane": Self.choice("cursor", confidence: 0.41),
+            "repo": Self.choice("apple-mcp", confidence: 0.62),
+            "list": Self.choice("none", confidence: 0.55)
+        ])
+        XCTAssertEqual(
+            classifications[0].signals,
+            "kind agent 0.78 · lane cursor 0.41 · repo apple-mcp 0.62 · list none 0.55")
+    }
+
+    func testSignalsKindOnlyResponse() async throws {
+        let envName = "JEV_TEST_KEY_SIGNALS_KIND"
+        setenv(envName, "k", 1)
+        defer { unsetenv(envName) }
+        let transport: JevClient.Transport = { _ in
+            (Self.okJSON(answers: ["kind": Self.choice("agent", confidence: 0.91)]), 200)
+        }
+        var config = JevConfig()
+        config.apiKeyEnv = envName
+        let client = JevClient(config: config, transport: transport, retryDelays: [])
+        let classifications = try await JevClassifier.classify(
+            items: [["id": "t1", "title": "ship it", "notes": ""]],
+            agents: [],
+            workdirs: [],
+            planLists: [],
+            config: config,
+            client: client)
+        XCTAssertEqual(classifications[0].signals, "kind agent 0.91")
+    }
+
     // MARK: - retry / errors / status
 
     func testRetries429ThenSucceeds() async throws {

@@ -43,6 +43,8 @@ struct Triage: AsyncParsableCommand {
         /// Set when the seat declines to decide (e.g. confidence below the
         /// review floor). Triage reports the item as skipped and mutates nothing.
         var skipReason: String? = nil
+        /// Compact one-line summary of every Jev answer (choice + confidence).
+        var signals: String? = nil
     }
 
     struct NoteClassification: Codable {
@@ -68,6 +70,8 @@ struct Triage: AsyncParsableCommand {
             let movedTo: String?
             let note: String?
             var confidence: Double? = nil
+            /// Compact Jev answer line (why a lane/repo/list was or wasn't applied).
+            var signals: String? = nil
         }
         struct NoteAction: Codable {
             let source: String
@@ -148,9 +152,18 @@ struct Triage: AsyncParsableCommand {
             classifications = try await LocalClassifier.classify(
                 items: items, agents: routingAgents, workdirs: workdirs, planLists: planLists)
         } else if useJev {
+            var laneDescriptions: [String: String] = [:]
+            for tag in routingAgents {
+                if let text = config.agents[tag]?.description, !text.isEmpty {
+                    laneDescriptions[tag] = text
+                }
+            }
             classifications = try await JevClassifier.classify(
                 items: items, agents: routingAgents, workdirs: workdirs,
-                planLists: planLists, config: config.jev)
+                planLists: planLists, config: config.jev,
+                laneDescriptions: laneDescriptions,
+                repoDescriptions: config.repoDescriptions ?? [:],
+                workdirPaths: config.workdirs ?? [:])
         } else {
             let (agent, template) = try externalAgent()
             let prompt = Self.prompt(items: items, agents: routingAgents,
@@ -172,7 +185,7 @@ struct Triage: AsyncParsableCommand {
             if c.skipReason != nil {
                 actions.append(.init(id: id, title: parsed.title, kind: "skipped",
                                      addedTags: [], movedTo: nil, note: c.skipReason,
-                                     confidence: c.confidence))
+                                     confidence: c.confidence, signals: c.signals))
                 continue
             }
 
@@ -208,7 +221,7 @@ struct Triage: AsyncParsableCommand {
             }
             actions.append(.init(id: id, title: parsed.title, kind: c.kind,
                                  addedTags: addTags, movedTo: moveTo, note: nil,
-                                 confidence: c.confidence))
+                                 confidence: c.confidence, signals: c.signals))
         }
 
         } // untagged classification
