@@ -11,6 +11,7 @@ struct DoctorOut: Codable {
     let location: String
     let contacts: String
     let foundationModels: String
+    let jev: String
     let findmySidecar: String
     let mailRule: String
     let dropFolder: String
@@ -19,6 +20,7 @@ struct DoctorOut: Codable {
     let speech: String
     let fullDiskAccess: String
     let agentsConfig: String
+    let secrets: [SecretStatus]
     let cursorAgent: String
     let launchAgent: String
     let hermes: String
@@ -58,6 +60,16 @@ struct DoctorOut: Codable {
     }
 }
 
+struct SecretStatus: Codable {
+    let name: String
+    /// `SecretSource` raw value: env | keychain | plaintext | missing
+    let source: String
+    let file: String?
+    /// Octal like "644"
+    let mode: String?
+    let note: String?
+}
+
 struct DoctorIssue: Codable {
     let system: String
     let severity: String
@@ -85,6 +97,9 @@ struct Doctor: AsyncParsableCommand {
 
     @Flag(name: .customLong("enqueue-heals"), help: "Create one [heal][auto] task per unhealthy system (deduped). Launchd dispatch picks them up — this command does not spawn agents.")
     var enqueueHeals = false
+
+    @Flag(name: .customLong("fix-modes"), help: "chmod 600 known secret files that are group/world readable.")
+    var fixModes = false
 
     @Option(name: .customLong("list"), help: "Reminders list for heal tasks (default: Code Tasks).")
     var listName: String = "Code Tasks"
@@ -188,6 +203,202 @@ struct Doctor: AsyncParsableCommand {
         } catch {
             return "unreadable: \(error.localizedDescription)"
         }
+    }
+
+    /// Per-secret audit: env → keychain → plaintext → missing. Never includes values.
+    static func secretsStatus(configDir: URL, store: SecretStore, env: [String: String],
+                              fixModes: Bool) -> [SecretStatus] {
+        let notifyURL = configDir.appendingPathComponent("notify.json")
+        let serveURL = configDir.appendingPathComponent("serve.json")
+        let llmURL = configDir.appendingPathComponent("llm.json")
+        let credentialsURL = configDir.appendingPathComponent("gmail/credentials.json")
+        let tokenURL = configDir.appendingPathComponent("gmail/token.json")
+        let launchdURL = configDir.appendingPathComponent("launchd.env")
+        let agentsURL = configDir.appendingPathComponent("agents.json")
+
+        let notifyFile = auditFile(notifyURL, fixModes: fixModes)
+        let serveFile = auditFile(serveURL, fixModes: fixModes)
+        let llmFile = auditFile(llmURL, fixModes: fixModes)
+        let credentialsFile = auditFile(credentialsURL, fixModes: fixModes)
+        let tokenFile = auditFile(tokenURL, fixModes: fixModes)
+        let launchdFile = auditFile(launchdURL, fixModes: fixModes)
+        let agentsFile = auditFile(agentsURL, fixModes: fixModes)
+
+        var rows: [SecretStatus] = []
+
+        let notify = (try? Data(contentsOf: notifyURL)).flatMap {
+            try? JSONDecoder().decode(NotifyConfig.self, from: $0)
+        }
+        let topicSource = resolveSource(
+            envName: Secrets.ntfyTopicEnv, itemName: Secrets.ntfyTopic,
+            plaintext: notify?.ntfy?.topic, store: store, env: env)
+        rows.append(status(name: Secrets.ntfyTopic, source: topicSource, file: notifyFile))
+        let replyExplicit = resolveSource(
+            envName: Secrets.ntfyApprovalsReplyTopicEnv,
+            itemName: Secrets.ntfyApprovalsReplyTopic,
+            plaintext: notify?.approvalsReplyTopic, store: store, env: env)
+        let replySource = replyExplicit != .missing ? replyExplicit
+            : (topicSource != .missing ? topicSource : .missing)
+        rows.append(status(name: Secrets.ntfyApprovalsReplyTopic, source: replySource, file: notifyFile))
+
+        let servePlain: String? = {
+            guard let data = try? Data(contentsOf: serveURL),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let token = obj["token"] as? String, !token.isEmpty else { return nil }
+            return token
+        }()
+        rows.append(status(
+            name: Secrets.serveToken,
+            source: resolveSource(envName: Secrets.serveTokenEnv, itemName: Secrets.serveToken,
+                                  plaintext: servePlain, store: store, env: env),
+            file: serveFile))
+
+        rows.append(status(
+            name: Secrets.gmailClientSecret,
+            source: resolveSource(envName: Secrets.gmailClientSecretEnv,
+                                  itemName: Secrets.gmailClientSecret,
+                                  plaintext: gmailFileSecret(at: credentialsURL),
+                                  store: store, env: env),
+            file: credentialsFile))
+
+        let gmailTokenSource: SecretSource = {
+            if let value = try? store.get(Secrets.gmailToken), !value.isEmpty {
+                return .keychain
+            }
+            if FileManager.default.fileExists(atPath: tokenURL.path) { return .plaintext }
+            return .missing
+        }()
+        rows.append(status(name: Secrets.gmailToken, source: gmailTokenSource, file: tokenFile))
+
+        if let data = try? Data(contentsOf: llmURL),
+           let file = try? JSONDecoder().decode(LlmCommand.ConfigFile.self, from: data) {
+            for name in file.profiles.keys.sorted() {
+                let profile = file.profiles[name]!
+                let item = profile.apiKeyKeychain ?? Secrets.llmApiKey(profile: name)
+                rows.append(status(
+                    name: Secrets.llmApiKey(profile: name),
+                    source: resolveSource(envName: profile.apiKeyEnv, itemName: item,
+                                          plaintext: profile.apiKey, store: store, env: env),
+                    file: llmFile))
+            }
+        }
+
+        for (name, _) in launchdEnvExports(at: launchdURL) {
+            rows.append(status(
+                name: "launchd.env:\(name)",
+                source: .plaintext,
+                file: launchdFile))
+        }
+
+        if let data = try? Data(contentsOf: agentsURL),
+           let cfg = try? JSONDecoder().decode(AgentsConfig.self, from: data) {
+            let hasEnv = cfg.agents.values.contains { ($0.env?.isEmpty == false) }
+            if hasEnv {
+                rows.append(status(name: "agents.json:env", source: .plaintext, file: agentsFile))
+            }
+        }
+
+        return rows
+    }
+
+    private struct FileAudit {
+        let exists: Bool
+        let path: String
+        let mode: String?
+        let modeNote: String?
+    }
+
+    private static func auditFile(_ url: URL, fixModes: Bool) -> FileAudit {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return FileAudit(exists: false, path: url.path, mode: nil, modeNote: nil)
+        }
+        let before = posixMode(url)
+        var modeNote: String?
+        if let before, isGroupWorldReadable(before) {
+            if fixModes {
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600], ofItemAtPath: url.path)
+                modeNote = "fixed to 600"
+            } else {
+                modeNote = "mode \(before), expected 600"
+            }
+        }
+        return FileAudit(exists: true, path: url.path, mode: posixMode(url), modeNote: modeNote)
+    }
+
+    private static func posixMode(_ url: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let num = attrs[.posixPermissions] as? NSNumber else { return nil }
+        return String(num.intValue & 0o777, radix: 8)
+    }
+
+    private static func isGroupWorldReadable(_ mode: String) -> Bool {
+        guard let value = Int(mode, radix: 8) else { return false }
+        return (value & 0o044) != 0
+    }
+
+    private static func resolveSource(envName: String?, itemName: String?, plaintext: String?,
+                                      store: SecretStore, env: [String: String]) -> SecretSource {
+        if let envName, !envName.isEmpty, let value = env[envName], !value.isEmpty {
+            return .env
+        }
+        if let itemName, let value = try? store.get(itemName), !value.isEmpty {
+            return .keychain
+        }
+        if let plaintext, !plaintext.isEmpty {
+            return .plaintext
+        }
+        return .missing
+    }
+
+    private static func status(name: String, source: SecretSource, file: FileAudit) -> SecretStatus {
+        var notes: [String] = []
+        if let modeNote = file.modeNote { notes.append(modeNote) }
+        if source == .plaintext {
+            notes.append("plaintext — move with: apple-tasks secret migrate --apply")
+        }
+        return SecretStatus(
+            name: name,
+            source: source.rawValue,
+            file: file.exists ? file.path : nil,
+            mode: file.mode,
+            note: notes.isEmpty ? nil : notes.joined(separator: "; "))
+    }
+
+    private static func gmailFileSecret(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let installed = obj["installed"] as? [String: Any],
+           let secret = installed["client_secret"] as? String, !secret.isEmpty {
+            return secret
+        }
+        if let secret = obj["client_secret"] as? String, !secret.isEmpty {
+            return secret
+        }
+        return nil
+    }
+
+    private static func launchdEnvExports(at url: URL) -> [(name: String, value: String)] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        var out: [(String, String)] = []
+        for line in text.split(whereSeparator: \.isNewline) {
+            var t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { continue }
+            guard t.hasPrefix("export ") else { continue }
+            t = String(t.dropFirst("export ".count)).trimmingCharacters(in: .whitespaces)
+            guard let eq = t.firstIndex(of: "=") else { continue }
+            let name = String(t[..<eq]).trimmingCharacters(in: .whitespaces)
+            var value = String(t[t.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            if (value.hasPrefix("\"") && value.hasSuffix("\""))
+                || (value.hasPrefix("'") && value.hasSuffix("'")) {
+                value = String(value.dropFirst().dropLast())
+            }
+            guard !name.isEmpty, !value.isEmpty else { continue }
+            out.append((name, value))
+        }
+        return out
     }
 
     /// Resolve a binary on PATH the same way dispatch does (/usr/bin/env).
@@ -531,6 +742,20 @@ struct Doctor: AsyncParsableCommand {
         let pause = Dispatch.resolvedPause(db: .shared)
         let dispatchInfo = DoctorOut.DispatchPauseInfo(
             paused: pause != nil, until: pause?.untilISO, reason: pause?.reason)
+        let configDir: URL = {
+            if let override = ProcessInfo.processInfo.environment["APPLE_TASKS_CONFIG_DIR"],
+               !override.isEmpty {
+                return URL(fileURLWithPath: (override as NSString).expandingTildeInPath,
+                           isDirectory: true)
+            }
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".config/apple-tasks", isDirectory: true)
+        }()
+        let secrets = Self.secretsStatus(
+            configDir: configDir,
+            store: Secrets.store,
+            env: ProcessInfo.processInfo.environment,
+            fixModes: fixModes)
         var issues = Self.collectIssues(
             hermes: hermes,
             hermesGateway: hermesGateway,
@@ -540,6 +765,14 @@ struct Doctor: AsyncParsableCommand {
         )
         if let pause, let issue = Self.pauseIssue(pause) {
             issues.append(issue)
+        }
+        let plaintextCount = secrets.filter { $0.source == SecretSource.plaintext.rawValue }.count
+        if plaintextCount > 0 {
+            issues.append(DoctorIssue(
+                system: "secrets",
+                severity: "info",
+                summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
+                signature: "secrets-plaintext"))
         }
         var heals: HealReport?
         if enqueueHeals {
@@ -553,6 +786,7 @@ struct Doctor: AsyncParsableCommand {
             location: LocationFetcher.describeAuthorization(),
             contacts: ContactsAccess.describeAuthorization(),
             foundationModels: LocalClassifier.status(),
+            jev: JevClassifier.status(config: (try? AgentsConfig.load())?.jev),
             findmySidecar: Self.findmyStatus(),
             mailRule: FileManager.default.fileExists(
                 atPath: FileManager.default.homeDirectoryForCurrentUser
@@ -567,6 +801,7 @@ struct Doctor: AsyncParsableCommand {
             speech: Self.speechStatus(),
             fullDiskAccess: Self.fdaStatus(),
             agentsConfig: Self.agentsConfigStatus(),
+            secrets: secrets,
             cursorAgent: Self.cursorAgentStatus(),
             launchAgent: Self.launchAgentStatus(),
             hermes: hermes,
@@ -696,7 +931,9 @@ struct Doctor: AsyncParsableCommand {
         let open = (await store.reminders(in: nil)).filter { !$0.isCompleted }
         var actions: [HealAction] = []
         for issue in issues {
+            // info/notice never become heal tasks (secrets-plaintext is info).
             if issue.severity == "info" || issue.severity == "notice" { continue }
+            if issue.system == "secrets" { continue }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")

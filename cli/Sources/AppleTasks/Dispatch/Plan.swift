@@ -103,8 +103,8 @@ extension Dispatch {
             // (agent exited 0 without completing, nothing has changed since).
             // Pre-v2 rows with no stored fingerprint never block. The
             // `[dispatched]` check above still wins first (another Mac, or a
-            // run in flight). Default "running" leaves this gate off.
-            if (config.claimGuard ?? "running") == "modified",
+            // run in flight). `claimGuard: "running"` turns this gate off.
+            if config.resolvedClaimGuard == "modified",
                let lastId = Self.unchangedSinceSuccess(
                    current: TaskFingerprint.of(reminder),
                    last: AuditDB.shared.latestSucceeded(taskId: taskId)) {

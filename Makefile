@@ -88,7 +88,7 @@ install-agent: cli helper
 	  echo "seeded $(CONFIG_DIR)/agents.json from examples/ — edit workdirs before relying on it"; \
 	fi
 	@if [ ! -f "$(CONFIG_DIR)/launchd.env" ]; then \
-	  printf '# Optional env for LaunchAgents (sourced by run-with-env.sh)\n# export CURSOR_API_KEY=\n# export ANTHROPIC_API_KEY=\n' \
+	  printf '# Optional env for LaunchAgents (sourced by run-with-env.sh)\n# export CURSOR_API_KEY=\n# export ANTHROPIC_API_KEY=\n# export TYPESAFE_API_KEY=\n' \
 	    > "$(CONFIG_DIR)/launchd.env"; \
 	  echo "wrote $(CONFIG_DIR)/launchd.env (add API keys here if needed)"; \
 	fi

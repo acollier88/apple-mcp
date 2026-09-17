@@ -43,6 +43,22 @@ final class ClaimGuardTests: XCTestCase {
         XCTAssertNil(omitted.claimGuard)
     }
 
+    /// Default flipped to "modified" on 2026-09-16 after a week live; an
+    /// explicit "running" still opts out and junk values fall back to the default.
+    func testResolvedClaimGuardDefaultsToModified() throws {
+        let omitted = try JSONDecoder().decode(
+            AgentsConfig.self, from: Data(#"{"agents":{}}"#.utf8))
+        XCTAssertEqual(omitted.resolvedClaimGuard, "modified")
+
+        let running = try JSONDecoder().decode(
+            AgentsConfig.self, from: Data(#"{"agents":{},"claimGuard":"Running"}"#.utf8))
+        XCTAssertEqual(running.resolvedClaimGuard, "running")
+
+        let junk = try JSONDecoder().decode(
+            AgentsConfig.self, from: Data(#"{"agents":{},"claimGuard":"sometimes"}"#.utf8))
+        XCTAssertEqual(junk.resolvedClaimGuard, "modified")
+    }
+
     private func row(id: Int, fingerprint: String?, verification: String? = "open-claimed") -> AuditDB.DispatchRow {
         AuditDB.DispatchRow(
             id: id, taskId: "t", agent: "echo", command: "echo", cwd: nil,

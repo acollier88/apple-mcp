@@ -1,6 +1,7 @@
 {
   "agents": {
     "cursor": {
+      "description": "General coding agent for repo work in a git worktree (features, fixes, refactors, PRs)",
       "command": [
         "agent",
         "-p",
@@ -16,6 +17,7 @@
       "maxConcurrent": 1
     },
     "claude": {
+      "description": "Coding agent, alternative to cursor for repo work",
       "command": [
         "claude",
         "-p",
@@ -28,6 +30,7 @@
       "maxConcurrent": 1
     },
     "antigravity": {
+      "description": "Sandboxed coding agent for small, well-scoped repo tasks",
       "command": [
         "agy",
         "-p",
@@ -52,6 +55,7 @@
       "maxConcurrent": 1
     },
     "hermes": {
+      "description": "House lane: Home Assistant automations, lights/devices, home-lab ops via Hermes",
       "command": [
         "hermes",
         "-z",
@@ -107,10 +111,20 @@
     "agent": "local",
     "inbox": "Reminders"
   },
+  "jev": {
+    "apiKeyEnv": "TYPESAFE_API_KEY",
+    "applyConfidence": 0.7,
+    "reviewConfidence": 0.45
+  },
   "workdirs": {
     "apple-mcp": "~/Code/apple-mcp",
     "home-lab": "~/Documents/home-lab",
     "hermes-agent": "~/.hermes/hermes-agent"
+  },
+  "repoDescriptions": {
+    "apple-mcp": "This repo: apple-tasks CLI/MCP, AgentTasks app, dispatcher, triage, Reminders/Calendar/Mail/Safari integrations",
+    "home-lab": "Docker compose home lab: Home Assistant and services",
+    "hermes-agent": "Hermes agent checkout (skills, config)"
   },
   "requireAutoTag": true,
   "maxRetries": 2,

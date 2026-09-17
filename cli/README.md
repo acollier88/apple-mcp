@@ -247,7 +247,7 @@ details and self-complete instructions. A leading tag that matches an
 `[auto]` with no lane tag walks `modelPrefs.auto` and takes the first
 **available** worker (command/llm present, under `maxConcurrent`, gates
 pass; `worktree: true` lanes need a workdir tag). Classifier/ops lanes
-(`triage`, `local`, `doctor`, `heal`) are never in the auto pool. If nothing is
+(`triage`, `local`, `jev`, `doctor`, `heal`) are never in the auto pool. If nothing is
 available the task stays queued — it is not `[failed]`. Config at
 `~/.config/apple-tasks/agents.json`:
 
@@ -255,6 +255,7 @@ available the task stays queued — it is not `[failed]`. Config at
 {
   "agents": {
     "claude": {
+      "description": "Coding agent, alternative to cursor for repo work",
       "command": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
       "worktree": true,
       "timeoutMinutes": 60,
@@ -264,7 +265,9 @@ available the task stays queued — it is not `[failed]`. Config at
   },
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
   "triage": { "agent": "triage", "inbox": "Reminders" },
+  "jev": { "apiKeyEnv": "TYPESAFE_API_KEY", "applyConfidence": 0.7, "reviewConfidence": 0.45 },
   "workdirs": { "repo2": "~/Code/repo2" },
+  "repoDescriptions": { "repo2": "Second checkout; personal/side-project work" },
   "requireAutoTag": true,
   "maxRetries": 2,
   "retryBackoffMinutes": 30,
@@ -277,8 +280,10 @@ available the task stays queued — it is not `[failed]`. Config at
 ```
 
 The first task tag matching a `workdirs` key sets the agent's working
-directory. A task with no matching tag is not an error: it runs in a
-throwaway per-dispatch scratch directory
+directory. Optional `repoDescriptions` (same keys) is the text Jev sees
+as the repo Choice criteria; without it Jev falls back to the workdir
+path and rarely clears `applyConfidence` on repo. A task with no matching
+tag is not an error: it runs in a throwaway per-dispatch scratch directory
 (`~/.config/apple-tasks/scratch/<id>`) — the right shape for research,
 calendar debriefs, and notify-me tasks whose deliverable is a note or a
 notification, not code. Dedupe is enforced by both the dispatch ledger
@@ -301,6 +306,7 @@ Any argv template works; these are the lanes the example config ships:
 | `claude` | `claude` | `-p --permission-mode acceptEdits` |
 | `antigravity` | `agy` | sandbox + skip-permissions |
 | `triage` | `agy` / `"local"` | cheap classifier, or on-device via `triage.agent: "local"` |
+| `jev` | TypeSafe Jev (cloud) | reserved seat like `local`; `triage --agent jev` or `"triage": {"agent": "jev"}`; typed questions with calibrated confidence; `applyConfidence`/`reviewConfidence` gating; needs `TYPESAFE_API_KEY`; never in the auto pool |
 | *(BYOM)* | — | `"llm": { … }` OpenAI-compatible profile (no tools) |
 
 Prefer apple-tasks `"worktree": true` over Cursor's own `-w` so ledger/GC stay authoritative.
@@ -325,7 +331,8 @@ log does not grow on idle cycles. `dispatch-pause` stops new claims but
 reaping continues; `--quiet` prints the paused line once per until/reason
 change, then collapses it the same way. Optional secrets go in
 `~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
-`export CURSOR_API_KEY=…`). The wrapper rotates
+`export CURSOR_API_KEY=…`); prefer the [Secrets](#secrets) Keychain path
+so `doctor` does not flag plaintext. The wrapper rotates
 `~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
 Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
 (`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
@@ -391,9 +398,9 @@ the design):
   claim, appends a notes line, and stores a content fingerprint. The next
   pass then skips while that fingerprint is unchanged (`skipped: unchanged
   since succeeded #N — edit the task or complete it to re-run`); a human
-  edit or recurrence roll makes it eligible again. Default is still
-  `"running"` (any `[dispatched…]` tag blocks, today's behavior); the plan
-  is to flip the default after a week live.
+  edit or recurrence roll makes it eligible again. `"modified"` is the
+  default (since 2026-09-16, after a week live); set `claimGuard:
+  "running"` to go back to "any `[dispatched…]` tag blocks".
 - **Worktree GC** — every pass reclaims finished runs' worktrees: merged
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
@@ -412,6 +419,9 @@ the design):
   edits to the main checkout — this is what makes `acceptEdits` reasonable
   unattended. If worktree creation fails the dispatch is aborted, not run
   unisolated.
+- **Lane description** (`"description"` per agent, optional) — one line Jev
+  sees as the Choice criteria for that lane. Without it the lane option is
+  just the tag, and Jev rarely clears `applyConfidence`.
 - **Prompt delivery** (`"promptVia"` per agent: `argv` default | `stdin` |
   `file`) — `argv` substitutes `{prompt}` inline (visible in `ps`, subject to
   ARG_MAX, copied into the ledger's command column). `stdin` pipes the
@@ -468,6 +478,46 @@ the design):
 > first-party CLI. Terms change; this isn't legal advice — check Anthropic's
 > current Consumer Terms before relying on it.
 
+## Secrets
+
+Every consumer resolves **env → Keychain → plaintext**. Keychain items live
+in the login keychain (service `apple-tasks`); `apple-tasks secret` is the
+only writer. Nothing secret-related is exposed over MCP or HTTP.
+
+```bash
+# values via --stdin or a no-echo prompt — never argv
+echo -n "$TOPIC" | apple-tasks secret set ntfy.topic --stdin
+apple-tasks secret get ntfy.topic
+apple-tasks secret list
+apple-tasks secret rm ntfy.topic
+apple-tasks secret migrate            # dry-run: show what would move
+apple-tasks secret migrate --apply    # move + strip plaintext + chmod 600
+                                      # (also deletes gmail/token.json)
+```
+
+| Canonical item | Env var (wins) | Plaintext fallback |
+|---|---|---|
+| `ntfy.topic` | `APPLE_TASKS_NTFY_TOPIC` | `notify.json` `ntfy.topic` |
+| `ntfy.approvalsReplyTopic` | `APPLE_TASKS_NTFY_APPROVALS_TOPIC` | `notify.json` `approvalsReplyTopic` (else `<topic>-approvals`) |
+| `serve.token` | `APPLE_TASKS_SERVE_TOKEN` | `serve.json` `token` |
+| `gmail.clientSecret` | `APPLE_TASKS_GMAIL_CLIENT_SECRET` | `gmail/credentials.json` `client_secret` |
+| `gmail.token` | — | `gmail/token.json` (JSON of the OAuth blob) |
+| `llm.<profile>.apiKey` | profile `apiKeyEnv` | `llm.json` `apiKey` |
+
+`apple-tasks doctor` emits `secrets[]` (`name`, `source`, `file`, `mode`,
+`note`) and an info issue when anything is still plaintext. `--fix-modes`
+chmods known secret files that are group/world readable to `600` (does not
+move values — use `secret migrate --apply` for that). Do not run
+`--fix-modes` unless you intend to change modes on the real config dir.
+
+**launchd caveat.** The first Keychain read from a rebuilt ad-hoc
+`apple-tasks` binary prompts for access. `make sign-identity` (repo root)
+gives the binary a stable identity so the grant persists across rebuilds.
+
+`launchd.env` `export NAME=value` lines stay as-is; doctor reports each as
+`launchd.env:NAME` (source `plaintext`, value omitted). Lane `env` maps in
+`agents.json` are reported as a single `agents.json:env` entry.
+
 ## Siri inbox triage
 
 Reminders sync from Siri, watch, iPhone, and CarPlay — so voice capture anywhere
@@ -506,6 +556,26 @@ offline, and `@Generable` structured output instead of parsing agent stdout.
 works in the dispatcher's triage block (`"agent": "local"`) and the MCP tool's
 `agent` param. This is the first rung of the escalation ladder: on-device →
 cheap cloud classifier (`agy` on Flash) → Claude.
+
+`--agent jev` classifies with TypeSafe Jev (cloud, calibrated confidence):
+one request per inbox item, using Choice questions over kind / lane / repo /
+list constrained to your `agents.json` lanes, workdirs, and plan lists.
+Each lane's optional `"description"` and the top-level `"repoDescriptions"`
+map (`{tag: text}`) are the text Jev sees as Choice criteria; without them
+lane/repo rarely clear `applyConfidence` (repo falls back to the workdir
+path). Dry-run actions include a `signals` field with the per-question
+choice + confidence (e.g. `kind agent 0.78 · lane cursor 0.41 · repo
+apple-mcp 0.62 · list none 0.55`). Three confidence bands:
+`>= applyConfidence` (default 0.7) is a full classification; between
+`reviewConfidence` and `applyConfidence` (default 0.45–0.7) gets a kind
+tag only; below the review floor the item is reported `skipped` and
+nothing is mutated. Confidence lands in the audit detail
+(e.g. `(jev 0.83)`) so you can tune thresholds from `apple-tasks log`.
+`--notes` is not supported with jev (no text generation) — use `--agent
+local` or an `agents.json` lane. `doctor` reports the seat on its `jev`
+line. Needs `TYPESAFE_API_KEY`. The same reserved value works in the
+dispatcher's triage block (`"agent": "jev"`) and the MCP tool's `agent`
+param.
 
 Also exposed as MCP `triage_inbox` (dry-run by default), a **"Triage Inbox"
 button** in the AgentTasks app's activity view, and a Siri/Shortcuts intent —

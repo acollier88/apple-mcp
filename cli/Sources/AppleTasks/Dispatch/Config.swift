@@ -12,6 +12,8 @@ struct AgentsConfig: Codable {
         /// plain completions, no tool use, so it suits classifier seats
         /// (triage) and generate-only tasks.
         let llm: LlmCommand.Profile?
+        /// One line describing what this lane is for; used as the Jev Choice criteria text and nowhere else yet.
+        let description: String?
         let promptTemplate: String?
         /// Run in a fresh git worktree of the workdir (output = a branch, not
         /// edits to the main checkout). Requires the workdir to be a git repo.
@@ -97,12 +99,17 @@ struct AgentsConfig: Codable {
     /// When present, run a one-shot inbox triage (see Triage.swift) at the
     /// start of every dispatch cycle, before scanning for dispatchable tasks.
     var triage: TriageConfig?
+    /// TypeSafe Jev classifier (top-level `jev` block): API-key env and
+    /// apply/review confidence thresholds. Used by `triage --agent jev`.
+    var jev: JevConfig?
     /// Default backend for the `suggest` seat (also digest --suggest).
     var suggest: SeatConfig?
     /// Max simultaneous agent runs overall (default 1 = v1 sequential behavior).
     var maxConcurrent: Int?
     /// Repo/project tag -> working directory.
     var workdirs: [String: String]?
+    /// Optional map of repo tag → one-line description; used as the Jev Choice criteria text.
+    var repoDescriptions: [String: String]?
     /// When true (default), only tasks also tagged [auto] are dispatched.
     var requireAutoTag: Bool?
     /// Re-dispatch [failed] tasks up to this many times (default 0 = never).
@@ -120,14 +127,24 @@ struct AgentsConfig: Codable {
     /// How `[auto]`-only routing treats Budget Tracker bandwidth:
     /// `"skipRed"` (default) | `"skipYellow"` | `"off"`. Named lane tags ignore this.
     var autoBudget: String?
-    /// Phase A claim-guard mode. `"running"` (today's behavior, the effective
-    /// default while this is nil) blocks re-dispatch whenever any
-    /// `[dispatched…]` tag is present. `"modified"` additionally compares the
-    /// content fingerprint against the last succeeded row and only blocks
-    /// when nothing changed — so a human edit or recurrence roll unstrands
-    /// a task that an agent left open. Plan is to flip the default to
-    /// `"modified"` after a week live.
+    /// Phase A claim-guard mode. `"running"` blocks re-dispatch whenever any
+    /// `[dispatched…]` tag is present. `"modified"` (default since
+    /// 2026-09-16, after a week live) additionally compares the content
+    /// fingerprint against the last succeeded row and only blocks when
+    /// nothing changed — so a human edit or recurrence roll unstrands a
+    /// task that an agent left open. Set `"running"` to opt out.
     var claimGuard: String?
+
+    static let defaultClaimGuard = "modified"
+
+    /// `claimGuard` with the default applied; unknown values fall back to the default.
+    var resolvedClaimGuard: String {
+        switch claimGuard?.lowercased() {
+        case "running": return "running"
+        case "modified": return "modified"
+        default: return Self.defaultClaimGuard
+        }
+    }
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -166,7 +183,7 @@ struct AgentsConfig: Codable {
     """
 
     /// Lanes never chosen for `[auto]`-only routing (classifiers / ops).
-    static let autoPoolExcluded: Set<String> = ["triage", "local", "doctor", "heal"]
+    static let autoPoolExcluded: Set<String> = ["triage", "local", "jev", "doctor", "heal"]
 
     /// Default walk when `modelPrefs.auto` is absent: local House first, then premium.
     static let autoPoolDefaultOrder = ["hermes", "cursor", "claude", "antigravity"]

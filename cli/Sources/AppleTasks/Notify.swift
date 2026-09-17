@@ -5,7 +5,8 @@ import Foundation
 
 struct NotifyConfig: Codable {
     struct Ntfy: Codable {
-        let topic: String
+        /// Optional: a Keychain-only setup has no topic in the file.
+        let topic: String?
         /// Defaults to https://ntfy.sh
         let server: String?
     }
@@ -29,6 +30,35 @@ struct NotifyConfig: Codable {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(NotifyConfig.self, from: data)
     }
+
+    /// env APPLE_TASKS_NTFY_TOPIC → keychain ntfy.topic → notify.json ntfy.topic
+    static func resolveTopic(_ config: NotifyConfig?) -> Secrets.Resolved? {
+        Secrets.resolve(
+            env: Secrets.ntfyTopicEnv,
+            keychain: Secrets.ntfyTopic,
+            plaintext: config?.ntfy?.topic)
+    }
+
+    /// env APPLE_TASKS_NTFY_APPROVALS_TOPIC → keychain ntfy.approvalsReplyTopic
+    /// → notify.json approvalsReplyTopic → "<topic>-approvals" (source of the
+    /// derived one = the topic's source)
+    static func resolveApprovalsReplyTopic(_ config: NotifyConfig?) -> Secrets.Resolved? {
+        if let explicit = Secrets.resolve(
+            env: Secrets.ntfyApprovalsReplyTopicEnv,
+            keychain: Secrets.ntfyApprovalsReplyTopic,
+            plaintext: config?.approvalsReplyTopic) {
+            return explicit
+        }
+        guard let topic = resolveTopic(config) else { return nil }
+        return Secrets.Resolved(value: "\(topic.value)-approvals", source: topic.source)
+    }
+
+    /// ntfy.server ?? "https://ntfy.sh"
+    static func server(_ config: NotifyConfig?) -> String {
+        config?.ntfy?.server ?? "https://ntfy.sh"
+    }
+
+    var server: String { Self.server(self) }
 }
 
 enum Notifier {
@@ -48,11 +78,14 @@ enum Notifier {
     }
 
     /// ntfy push, best-effort. False when unconfigured or the POST failed.
+    /// Configured when env / Keychain / notify.json yields a topic — notify.json
+    /// itself may be absent.
     @discardableResult
     static func push(title: String, body: String) async -> Bool {
-        guard let ntfy = NotifyConfig.load()?.ntfy else { return false }
-        let server = ntfy.server ?? "https://ntfy.sh"
-        guard let url = URL(string: "\(server)/\(ntfy.topic)") else { return false }
+        let config = NotifyConfig.load()
+        guard let topic = NotifyConfig.resolveTopic(config) else { return false }
+        let server = NotifyConfig.server(config)
+        guard let url = URL(string: "\(server)/\(topic.value)") else { return false }
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.httpMethod = "POST"
         // ntfy reads the title from this header; body is the message text.
@@ -112,7 +145,7 @@ struct NotifyCommand: AsyncParsableCommand {
             pushed = await Notifier.push(title: title, body: message)
             guard pushed else {
                 throw AppleTasksError.saveFailed(
-                    "push failed or unconfigured; expected {\"ntfy\": {\"topic\": \"...\"}} at \(NotifyConfig.url.path)")
+                    "push failed or unconfigured; apple-tasks secret set ntfy.topic, or {\"ntfy\": {\"topic\": \"...\"}} at \(NotifyConfig.url.path)")
             }
         }
         emit(Out(banner: true, pushed: pushed, suppressedQuietHours: nil))

@@ -1419,6 +1419,10 @@
         "foundationModels": {
           "type": "string"
         },
+        "jev": {
+          "type": "string",
+          "description": "TypeSafe Jev seat: configured (key env + model) or missing-key hint."
+        },
         "findmySidecar": {
           "type": "string"
         },
@@ -1457,6 +1461,34 @@
         },
         "agentsConfig": {
           "type": "string"
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "source"
+            ],
+            "additionalProperties": false
+          }
         },
         "cursorAgent": {
           "type": "string"
@@ -1578,6 +1610,7 @@
         "location",
         "contacts",
         "foundationModels",
+        "jev",
         "findmySidecar",
         "mailRule",
         "dropFolder",
@@ -1585,6 +1618,7 @@
         "speech",
         "fullDiskAccess",
         "agentsConfig",
+        "secrets",
         "cursorAgent",
         "launchAgent",
         "hermes",
@@ -4812,7 +4846,7 @@
         },
         "agent": {
           "type": "string",
-          "description": "Classifier: an agents.json tag, or \"local\" for the on-device Apple model (macOS 26+)."
+          "description": "Classifier: an agents.json tag, \"local\" for the on-device Apple model (macOS 26+), or \"jev\" (TypeSafe Jev, calibrated confidence; needs TYPESAFE_API_KEY)."
         },
         "include_notes": {
           "type": "boolean",
@@ -4851,7 +4885,7 @@
               },
               "kind": {
                 "type": "string",
-                "description": "\"agent\" or \"personal\"."
+                "description": "\"agent\", \"personal\", or \"skipped\" (seat declined / no classification)"
               },
               "addedTags": {
                 "type": "array",
@@ -4864,6 +4898,13 @@
               },
               "note": {
                 "type": "string"
+              },
+              "confidence": {
+                "type": "number"
+              },
+              "signals": {
+                "type": "string",
+                "description": "jev only: per-question choice + confidence, e.g. 'kind agent 0.78 · lane cursor 0.41'"
               }
             },
             "required": [
