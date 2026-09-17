@@ -5,7 +5,8 @@ They inherit the user's ambient authority (env, home directory, login
 Keychain, the host process's TCC). A prompt-injected agent is
 indistinguishable from a malicious one. This doc is grounded in the code
 as of P7 step 4; Keychain storage (`Secrets.swift`, `doctor.secrets`) is
-**planned, not built**.
+**built**. Consumers resolve env → keychain → plaintext; `doctor.secrets`
+reports the source. Roadmap #16 (post-P7 `/security-review`) is still open.
 
 ## 1. Scope and trust model
 
@@ -72,20 +73,22 @@ TCC of the dispatcher / MCP host. `maxConcurrent` and per-lane
 
 ## 3. Secrets inventory
 
-Resolution **today** is per-consumer (no Keychain). P7 planned order:
-**env → keychain → plaintext → error**. Modes below are this Mac's
-`~/.config/apple-tasks/` (`ls`/`stat`); `doctor` does not enforce them.
+Resolution **today** is per-consumer: **env → keychain → plaintext →
+missing**. `Secrets.resolve` (`Secrets.swift`) is the shared helper;
+`doctor.secrets` (`Doctor.secretsStatus`) reports `source` and file modes.
+`--fix-modes` chmods group/world-readable known files to `600`. Modes
+below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`).
 
-| Secret | File | Mode today | Consumer | Planned P7 source | Notes |
+| Secret | File | Mode today | Consumer | Source now | Notes |
 |---|---|---|---|---|---|
-| `llm.apiKey` | `llm.json` | file absent here | `LlmCommand.run`: `apiKeyEnv` else `apiKey` | env → keychain → plaintext | Prefer `apiKeyEnv`; comment says chmod 600 if inlined |
-| `notify.topic` | `notify.json` | file absent here | `Notifier.push`, `ApprovalTopics.resolve` | same | Topic **is** the auth secret (public relay) |
-| `notify.approvalsReplyTopic` | `notify.json` | — | `ApprovalTopics.resolve` | same | Defaults to `<topic>-approvals` |
-| `serve.token` | `serve.json` | `600` | `AppleTasksServerMain`: `APPLE_TASKS_SERVE_TOKEN` else file | env already first; then keychain then file | Required; empty token exits 2 |
-| Gmail `client_secret` | `gmail/credentials.json` | **not chmod'd in code** | `GmailAuth.loadClient` | env → keychain → plaintext | Dir absent on this Mac; matches review §2.7 |
-| Gmail refresh blob | `gmail/token.json` | `600` on `GmailAuth.save` | `GmailAuth.accessToken` (rotation at the save site) | Keychain item `gmail.token`, then delete file | |
-| Lane `env` values | `agents.json` | `644` | `Dispatch.execute` overlay | stay in file; MCP redacts display | Wholesale API keys |
-| Launchd extras | `launchd.env` | `644` | `run-with-env.sh` `set -a` / `source` | stays; `doctor.secrets` will flag `KEY=` | Wrapper comments cite `CURSOR_API_KEY`, `ANTHROPIC_API_KEY`. This Mac's file is comments only |
+| `llm.<profile>.apiKey` | `llm.json` | file absent here | `LlmCommand.run`: `apiKeyEnv` → `apiKeyKeychain` / `llm.<profile>.apiKey` → `apiKey` | env → keychain → plaintext | Prefer `apiKeyEnv`; comment says chmod 600 if inlined |
+| `ntfy.topic` | `notify.json` | file absent here | `NotifyConfig.resolveTopic` (`Notifier.push`, `ApprovalTopics.resolve`) | env `APPLE_TASKS_NTFY_TOPIC` → keychain `ntfy.topic` → file | Topic **is** the auth secret (public relay) |
+| `ntfy.approvalsReplyTopic` | `notify.json` | — | `NotifyConfig.resolveApprovalsReplyTopic` | env `APPLE_TASKS_NTFY_APPROVALS_TOPIC` → keychain → file → `<topic>-approvals` (inherits topic source) | Keep as unguessable as the main topic |
+| `serve.token` | `serve.json` | `600` | `AppleTasksServerMain`: `APPLE_TASKS_SERVE_TOKEN` → keychain `serve.token` → file | env → keychain → file | Required; empty token exits 2 |
+| Gmail `client_secret` | `gmail/credentials.json` | **not chmod'd in code** | `GmailAuth.loadClient` / `Client.resolvedClientSecret` | env `APPLE_TASKS_GMAIL_CLIENT_SECRET` → keychain `gmail.clientSecret` → file | Dir absent on this Mac; matches review §2.7 |
+| Gmail refresh blob | `gmail/token.json` | `600` on `GmailAuth.save` | `GmailAuth.loadToken` / `save` (rotation writes Keychain when `gmail.token` already exists) | keychain `gmail.token` → file; `GmailAuth.tokenSource` | `secret migrate --apply` deletes the file |
+| Lane `env` values | `agents.json` | `644` | `Dispatch.execute` overlay | stay in file; `doctor` flags `agents.json:env`; MCP redacts display | Wholesale API keys |
+| Launchd extras | `launchd.env` | `644` | `run-with-env.sh` `set -a` / `source` | stays; `doctor.secrets` flags each `export NAME=value` as `launchd.env:NAME` | Wrapper comments cite `CURSOR_API_KEY`, `ANTHROPIC_API_KEY`. This Mac's file is comments only |
 | Find My session | `findmy/account.json` | `600` (`chmod` in `findmy-sidecar.py`) | sidecar `load_account` | not in P7 list | §2.7 asset; `ani_libs.bin` is `644` |
 | Ledger / audit | `apple-tasks.db` (+ WAL) | `644` | `AuditDB` | — | Caller, command (may include argv prompt), approvals |
 | Run / prompt logs | `runs/<id>.log`, `.prompt` | `600` (`RunLogs.create` / `writePrivate` + `setAttributes`) | `Dispatch.execute`, `plan` | — | Agent stdout may echo secrets |
@@ -150,7 +153,8 @@ watches). Watch URLs come from `watches.json` (user-written);
 | `dispatch-cancel` | SIGTERM/KILL tree (`AgentProcess`), row `cancelled`, shed own claim, no `[failed]` (`DispatchCancel`) | Human / MCP / HTTP; not automatic |
 | Run logs | stdout/stderr (Cursor NDJSON filtered) + argv header | New files `600` in a `700` `runs/` (`RunLogs`); older files stay `644` until re-chmod'd; served over MCP and HTTP; may contain secrets |
 | Audit DB | Every mutation + `APPLE_TASKS_CALLER` (`AuditDB.caller`) | `644`; `argv` prompt can land in `command` |
-| `doctor.deployment` | launchd binary vs last `cli/` commit, dirty tree (`Doctor.deploymentStatus`) | No secret-source or mode audit yet |
+| `doctor.deployment` | launchd binary vs last `cli/` commit, dirty tree (`Doctor.deploymentStatus`) | Drift only; not a secret audit |
+| `doctor.secrets` | per-secret `source` / file mode (`Doctor.secretsStatus`); info issue `secrets-plaintext` (does not enqueue heals); `--fix-modes` | Does not move values — `secret migrate --apply` does |
 | Lane caps / gates | `maxConcurrent`, `conditions` (location, power, load, quiet hours, idle, blocking apps) | Availability, not sandboxing |
 | Pause | `dispatch-pause` stops new claims; reap/GC still run | Does not kill in-flight agents |
 
@@ -176,21 +180,24 @@ Before making the repo public or sharing the MCP config:
 5. Re-read docs screenshots and `docs/review-*.md` for pasted topics/keys.
 6. Confirm ntfy topics meet the 24-char rule; rotate if they were
    short or derived from a username.
-7. After P7 steps 1–3: rerun `apple-tasks doctor` and expect
-   `plaintext` warnings for anything still in files.
+7. Rerun `apple-tasks doctor` and expect `plaintext` notes (and a
+   `secrets-plaintext` info issue) for anything still in files; then
+   `apple-tasks secret migrate --apply`.
 
 ## 7. Open items
 
-- **P7 step 1** — `Secrets.swift` over Security.framework (service
-  `apple-tasks`, `kSecAttrAccessibleAfterFirstUnlock`, login keychain so
-  launchd can read after login). `secret set` from `--stdin` / prompt,
-  never argv. **Not started** (no `Secrets.swift`).
-- **P7 step 2** — consumers resolve env → keychain → plaintext for
-  `llm.apiKey`, `notify.topic`, `notify.approvalsReplyTopic`,
-  `serve.token`, Gmail `client_secret` + `gmail.token`. Today: env-or-file
-  only (`Llm.swift`, `Notify.swift`, `main.swift`, `Gmail.swift`).
-- **P7 step 3** — `doctor.secrets`: per-secret `source`, modes not `600`,
-  `credentials.json` chmod fix-it. `Doctor` today audits TCC, helper,
-  FDA, `agents.json` parse, launchd, Hermes/HA presence, `deployment`.
+- **P7 step 1 — done.** `Secrets.swift`: service `apple-tasks`, login
+  keychain (`KeychainSecretStore`); `Secrets.resolve` / `keychainValue`;
+  `secret set|get|rm|list|migrate` (`SecretCommand`) reads values from
+  `--stdin` or a no-echo prompt, never argv.
+- **P7 step 2 — done.** Consumers resolve env → keychain → plaintext:
+  `LlmCommand.run` (`apiKeyEnv` → `apiKeyKeychain` / `Secrets.llmApiKey`
+  → `apiKey`); `NotifyConfig.resolveTopic` /
+  `resolveApprovalsReplyTopic`; `ApprovalTopics.resolve`;
+  `GmailAuth.loadClient` / `resolvedClientSecret`, `loadToken` / `save`
+  / `tokenSource`; serve token is the other engineer's `main.swift`.
+- **P7 step 3 — done.** `Doctor.secretsStatus` + `DoctorOut.secrets`;
+  `--fix-modes`; info issue `secrets-plaintext` (skipped by
+  `enqueueHeals` — severity `info`).
 - **Roadmap #16** — run `/security-review` *after* P7; land findings
-  here. This file is the checklist, not that review.
+  here. This file is the checklist, not that review. Still open.

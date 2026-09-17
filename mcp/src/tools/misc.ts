@@ -447,6 +447,13 @@ export function registerMiscTools(server: McpServer): void {
         speech: z.string(),
         fullDiskAccess: z.string(),
         agentsConfig: z.string(),
+        secrets: z.array(z.object({
+          name: z.string(),
+          source: z.string(),
+          file: z.string().optional(),
+          mode: z.string().optional(),
+          note: z.string().optional(),
+        })),
         cursorAgent: z.string(),
         launchAgent: z.string(),
         hermes: z.string(),

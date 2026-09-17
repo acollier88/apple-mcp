@@ -20,7 +20,7 @@ struct AppleTasks: AsyncParsableCommand {
             Whereami.self, NotifyCommand.self, Triage.self, Digest.self, Suggest.self,
             Screenshots.self, Files.self, Audio.self, ReadingList.self,
             Watch.self, Web.self, Approve.self, ClipboardCommand.self, SyncGitHub.self,
-            Gmail.self, LlmCommand.self,
+            Gmail.self, LlmCommand.self, SecretCommand.self,
         ]
     )
 }

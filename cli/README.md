@@ -327,7 +327,8 @@ log does not grow on idle cycles. `dispatch-pause` stops new claims but
 reaping continues; `--quiet` prints the paused line once per until/reason
 change, then collapses it the same way. Optional secrets go in
 `~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
-`export CURSOR_API_KEY=…`). The wrapper rotates
+`export CURSOR_API_KEY=…`); prefer the [Secrets](#secrets) Keychain path
+so `doctor` does not flag plaintext. The wrapper rotates
 `~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
 Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
 (`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
@@ -469,6 +470,46 @@ the design):
 > different: it requires API-key auth — subscription OAuth only covers the
 > first-party CLI. Terms change; this isn't legal advice — check Anthropic's
 > current Consumer Terms before relying on it.
+
+## Secrets
+
+Every consumer resolves **env → Keychain → plaintext**. Keychain items live
+in the login keychain (service `apple-tasks`); `apple-tasks secret` is the
+only writer. Nothing secret-related is exposed over MCP or HTTP.
+
+```bash
+# values via --stdin or a no-echo prompt — never argv
+echo -n "$TOPIC" | apple-tasks secret set ntfy.topic --stdin
+apple-tasks secret get ntfy.topic
+apple-tasks secret list
+apple-tasks secret rm ntfy.topic
+apple-tasks secret migrate            # dry-run: show what would move
+apple-tasks secret migrate --apply    # move + strip plaintext + chmod 600
+                                      # (also deletes gmail/token.json)
+```
+
+| Canonical item | Env var (wins) | Plaintext fallback |
+|---|---|---|
+| `ntfy.topic` | `APPLE_TASKS_NTFY_TOPIC` | `notify.json` `ntfy.topic` |
+| `ntfy.approvalsReplyTopic` | `APPLE_TASKS_NTFY_APPROVALS_TOPIC` | `notify.json` `approvalsReplyTopic` (else `<topic>-approvals`) |
+| `serve.token` | `APPLE_TASKS_SERVE_TOKEN` | `serve.json` `token` |
+| `gmail.clientSecret` | `APPLE_TASKS_GMAIL_CLIENT_SECRET` | `gmail/credentials.json` `client_secret` |
+| `gmail.token` | — | `gmail/token.json` (JSON of the OAuth blob) |
+| `llm.<profile>.apiKey` | profile `apiKeyEnv` | `llm.json` `apiKey` |
+
+`apple-tasks doctor` emits `secrets[]` (`name`, `source`, `file`, `mode`,
+`note`) and an info issue when anything is still plaintext. `--fix-modes`
+chmods known secret files that are group/world readable to `600` (does not
+move values — use `secret migrate --apply` for that). Do not run
+`--fix-modes` unless you intend to change modes on the real config dir.
+
+**launchd caveat.** The first Keychain read from a rebuilt ad-hoc
+`apple-tasks` binary prompts for access. `make sign-identity` (repo root)
+gives the binary a stable identity so the grant persists across rebuilds.
+
+`launchd.env` `export NAME=value` lines stay as-is; doctor reports each as
+`launchd.env:NAME` (source `plaintext`, value omitted). Lane `env` maps in
+`agents.json` are reported as a single `agents.json:env` entry.
 
 ## Siri inbox triage
 

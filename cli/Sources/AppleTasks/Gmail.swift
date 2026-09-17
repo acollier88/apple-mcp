@@ -50,13 +50,28 @@ enum GmailAuth {
 
     struct Client: Codable {
         let clientId: String
-        let clientSecret: String
+        /// File value; nil when the secret lives in env / Keychain only.
+        let clientSecret: String?
         let authUri: String
         let tokenUri: String
 
         enum CodingKeys: String, CodingKey {
             case clientId = "client_id", clientSecret = "client_secret"
             case authUri = "auth_uri", tokenUri = "token_uri"
+        }
+
+        /// env APPLE_TASKS_GMAIL_CLIENT_SECRET → keychain gmail.clientSecret → file.
+        var resolvedClientSecret: String {
+            get throws {
+                guard let resolved = Secrets.resolve(
+                    env: Secrets.gmailClientSecretEnv,
+                    keychain: Secrets.gmailClientSecret,
+                    plaintext: clientSecret) else {
+                    throw AppleTasksError.invalidInput(
+                        "Gmail client secret missing — apple-tasks secret set gmail.clientSecret, or restore client_secret in credentials.json")
+                }
+                return resolved.value
+            }
         }
     }
 
@@ -78,17 +93,29 @@ enum GmailAuth {
         }
         // Google's download wraps the client under "installed" (Desktop app).
         struct Wrapper: Codable { let installed: Client? }
+        let decoded: Client?
         if let wrapped = try? JSONDecoder().decode(Wrapper.self, from: data), let client = wrapped.installed {
-            return client
+            decoded = client
+        } else if let client = try? JSONDecoder().decode(Client.self, from: data) {
+            decoded = client
+        } else {
+            decoded = nil
         }
-        if let client = try? JSONDecoder().decode(Client.self, from: data) {
-            return client
+        guard let client = decoded else {
+            throw AppleTasksError.invalidInput(
+                "could not parse \(credentialsURL.path) — expected the JSON downloaded for a \"Desktop app\" OAuth client")
         }
-        throw AppleTasksError.invalidInput(
-            "could not parse \(credentialsURL.path) — expected the JSON downloaded for a \"Desktop app\" OAuth client")
+        let secret = try client.resolvedClientSecret
+        return Client(clientId: client.clientId, clientSecret: secret,
+                      authUri: client.authUri, tokenUri: client.tokenUri)
     }
 
     static func loadToken() throws -> Token {
+        if let json = Secrets.keychainValue(Secrets.gmailToken),
+           let data = json.data(using: .utf8),
+           let token = try? JSONDecoder().decode(Token.self, from: data) {
+            return token
+        }
         guard let data = try? Data(contentsOf: tokenURL),
               let token = try? JSONDecoder().decode(Token.self, from: data) else {
             throw AppleTasksError.invalidInput(
@@ -98,10 +125,26 @@ enum GmailAuth {
     }
 
     static func save(_ token: Token) throws {
-        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(token)
+        let existing: String?
+        do { existing = try Secrets.store.get(Secrets.gmailToken) } catch { existing = nil }
+        if existing != nil {
+            guard let json = String(data: data, encoding: .utf8) else {
+                throw AppleTasksError.saveFailed("could not encode Gmail token")
+            }
+            try Secrets.store.set(Secrets.gmailToken, json)
+            return
+        }
+        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
         try data.write(to: tokenURL)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenURL.path)
+    }
+
+    /// Where the refresh blob would come from right now (for `doctor.secrets`).
+    static func tokenSource() -> SecretSource {
+        if Secrets.keychainValue(Secrets.gmailToken) != nil { return .keychain }
+        if FileManager.default.fileExists(atPath: tokenURL.path) { return .plaintext }
+        return .missing
     }
 
     /// A valid access token, refreshing (and re-saving — Google rotates) when expired.
@@ -115,7 +158,7 @@ enum GmailAuth {
             "grant_type": "refresh_token",
             "refresh_token": token.refreshToken,
             "client_id": client.clientId,
-            "client_secret": client.clientSecret,
+            "client_secret": try client.resolvedClientSecret,
         ]
         let (data, status) = try await postForm(url: client.tokenUri, form: form)
         struct Refresh: Codable {
@@ -270,7 +313,7 @@ struct GmailLogin: AsyncParsableCommand {
             "grant_type": "authorization_code",
             "code": code,
             "client_id": client.clientId,
-            "client_secret": client.clientSecret,
+            "client_secret": try client.resolvedClientSecret,
             "redirect_uri": redirect,
             "code_verifier": verifier,
         ]

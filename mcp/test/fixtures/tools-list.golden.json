@@ -1462,6 +1462,34 @@
         "agentsConfig": {
           "type": "string"
         },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        },
         "cursorAgent": {
           "type": "string"
         },
@@ -1590,6 +1618,7 @@
         "speech",
         "fullDiskAccess",
         "agentsConfig",
+        "secrets",
         "cursorAgent",
         "launchAgent",
         "hermes",
