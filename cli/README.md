@@ -448,6 +448,12 @@ the design):
   `[dispatched]` claim without writing `[failed]` (a cancel is a human
   decision and does not count toward retry/backoff). The worktree is left
   for GC. `apple-tasks dispatches --status cancelled` lists those rows.
+- **Retry** — `apple-tasks dispatch-retry <taskId|ledgerId>` re-queues a
+  failed task by hand: it removes every `[failed]` tag (including another
+  Mac's) and restores `[auto]`, so the next pass runs it as a fresh dispatch.
+  This skips `maxRetries`/backoff, which only apply to tasks still tagged
+  `[failed]`. It is refused while the task is completed, has a `running`
+  ledger row, or still carries a `[dispatched]` claim.
 - **Pause** — `apple-tasks dispatch-pause --for 2h` (or `--until <ISO8601>`)
   with optional `--reason` writes `dispatch.pausedUntil` in the state KV.
   The next launchd pass still reaps and GCs, then stops before claiming

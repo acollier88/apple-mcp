@@ -14,7 +14,7 @@ struct AppleTasks: AsyncParsableCommand {
             RemirrorTags.self,
             Events.self, Calendars.self,
             Notes.self, Mail.self, ContactsCommand.self, Doctor.self,
-            Dispatch.self, DispatchCancel.self, DispatchDiscard.self,
+            Dispatch.self, DispatchCancel.self, DispatchDiscard.self, DispatchRetry.self,
             DispatchPause.self, DispatchResume.self, DispatchStatus.self,
             Dispatches.self, Log.self,
             Whereami.self, NotifyCommand.self, Triage.self, Digest.self, Suggest.self,

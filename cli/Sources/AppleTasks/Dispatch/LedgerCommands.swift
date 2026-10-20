@@ -204,3 +204,74 @@ struct DispatchDiscard: AsyncParsableCommand {
                              worktreeRemoved: worktreeRemoved, branchDeleted: branchDeleted)
     }
 }
+
+/// Manually re-queue a failed task: shed every [failed] tag and restore
+/// [auto] so the next dispatch pass picks it up as a fresh run. A human
+/// retry bypasses maxRetries/backoff (those gate only [failed] tasks).
+struct DispatchRetry: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "dispatch-retry",
+        abstract: """
+        Re-queue a failed task by task id or ledger id: remove its [failed] \
+        tags and restore [auto] so the next dispatch pass runs it. Bypasses \
+        maxRetries/backoff. Refused while the task is claimed or running.
+        """
+    )
+
+    @Argument(help: "Task id, or a ledger row id (apple-tasks dispatches --status failed).")
+    var target: String
+
+    struct Result: Codable {
+        let taskId: String
+        let title: String
+        let removedTags: [String]
+        let addedAuto: Bool
+        let fromLedgerId: Int?
+    }
+
+    /// Tag rewrite for a retry; nil when the task still carries a claim.
+    static func requeueTags(_ tags: [String]) -> (tags: [String], removed: [String], addedAuto: Bool)? {
+        if tags.contains(where: ClaimTags.isDispatched) { return nil }
+        let removed = tags.filter(ClaimTags.isFailed)
+        var kept = tags.filter { !ClaimTags.isFailed($0) }
+        let addedAuto = !kept.contains { $0.lowercased() == "auto" }
+        if addedAuto { kept.insert("auto", at: 0) }
+        return (kept, removed, addedAuto)
+    }
+
+    func run() async throws {
+        var taskId = target
+        var ledgerId: Int?
+        if target.allSatisfy(\.isNumber), let id = Int64(target),
+           let row = AuditDB.shared.dispatchRow(id: id) {
+            taskId = row.taskId
+            ledgerId = row.id
+        }
+        if AuditDB.shared.hasActiveDispatch(taskId: taskId) {
+            throw AppleTasksError.invalidInput("task \(taskId) has a running dispatch — cancel it first")
+        }
+
+        let store = Store()
+        try await store.requestAccess()
+        let reminder = try await store.reminder(id: taskId)
+        if reminder.isCompleted {
+            throw AppleTasksError.invalidInput("task \(taskId) is completed — nothing to retry")
+        }
+        let parsed = Tags.parse(reminder.title ?? "")
+        guard let next = Self.requeueTags(parsed.tags) else {
+            throw AppleTasksError.invalidInput(
+                "task \(taskId) is still claimed [dispatched] — wait for it or cancel it first")
+        }
+        reminder.title = Tags.compose(tags: next.tags, title: parsed.title)
+        try store.save(reminder)
+        let ext = reminder.calendarItemExternalIdentifier
+        if !next.removed.isEmpty { _ = NativeTags.remove(tags: next.removed, externalId: ext) }
+        if next.addedAuto { _ = NativeTags.mirror(tags: ["auto"], externalId: ext) }
+
+        AuditDB.shared.record(command: "dispatch-retry-requeue", taskId: taskId,
+                              list: reminder.calendar?.title,
+                              detail: parsed.title + (ledgerId.map { " (from #\($0))" } ?? ""))
+        emit(Result(taskId: taskId, title: parsed.title, removedTags: next.removed,
+                    addedAuto: next.addedAuto, fromLedgerId: ledgerId))
+    }
+}
