@@ -835,6 +835,23 @@ Re-checked 2026-07-23 (beta 4, released 2026-07-20): beta 4 coverage
 (MacRumors/9to5Mac) is all Siri voices/UI; no mention of the Extensions
 backend flipping on. Status quo — keep watching.
 
+Re-checked 2026-10-20 (macOS 27.2 beta 4, 26B5112a), against the runtime
+AppIntents exports (`dyld_info -exports … | swift demangle`): the model-
+delegation surface is still underscored SPI only — `_ModelDelegationIntent`,
+`_ModelDelegationConfiguration`, `_ModelDelegationFeatures`,
+`_ModelDelegationOutput`, `_ModelDelegationResult`,
+`_ModelDelegationIntentEnabledStatus`; no public spelling. Press reports
+it also needs the private `com.apple.developer.model-delegation`
+entitlement. `_ModelDelegationConfiguration` now lists five hosts:
+`systemAssistant`, `writingTools`, `shortcuts`, `visualIntelligence`, `imagePlayground`.
+Earlier notes recorded only `.systemAssistant`, so this is broader than
+Siri if it ever goes public. Nothing else in 27.2 b1–b4 adds an integrable
+developer API (Live Assistance API = FaceTime accessibility providers only).
+One 27.2-cycle item to prepare for: Apple's 2026-10-02 notice that Full Disk
+Access will require "very explicit user action" (no date). Reading List
+(#25), attachment reads (#46) and doctor's FDA line depend on it — doctor
+should report a lost grant as one actionable line, not a scan error.
+
 ## 31. Spotlight "Search or Ask" — make our Siri index donations continuous — ✅ DONE (2026-07-08)
 
 Siri AI on macOS 27 lives in Spotlight and uses a new indexing system to
@@ -1574,3 +1591,131 @@ to a system binary, we don't redistribute model access.
 Note the terms text lives ONLY in the binary — `fm license --show`. The
 referenced https://www.apple.com/legal/sla/ is the general macOS SLA and
 says nothing about Foundation Models, so the sentence above is the capture.
+
+## Round 6 ideas (2026-10-20) — proactive task creation from patterns
+
+Question: what tasks could we propose *before* the user thinks of them,
+using data we can already read? #41 `suggest` answers this for one
+snapshot: next 7 days of events, birthdays, stale tasks, and a 24h audit
+pulse go to the model, which proposes. It has three gaps that limit it:
+
+1. **No memory.** Nothing records what was proposed, accepted or
+   dismissed, so the same proposal comes back every morning, and we can't
+   tell which signals are worth raising.
+2. **No history.** It reads a window, not a trend. Patterns ("every time X,
+   you later do Y"; "this lane has failed 3 times in a row") need the
+   ledger, audit log, and completed-item history.
+3. **Detection lives in the model.** That's hard to test, and no evidence
+   trail survives past the `reason` string.
+
+**Architecture (keeps the #27/#41 rule: judgment proposes, a human
+applies):** deterministic **detectors** (plain Swift, XCTest-able) read
+existing sources and emit `Candidate {detector, fingerprint, evidence[],
+proposedTask {title, tags, due?, notes}}`. A new `proposals` table in the
+audit DB holds `proposed | accepted | dismissed | expired`, keyed by
+fingerprint (reuse `TaskFingerprint`), so a dismissed proposal stays quiet
+until its evidence changes. Surfaces: a digest section, `apple-tasks
+proposals [accept|dismiss] <id>` + MCP, an AgentTasks "Proposed" tab, and
+optionally ntfy approvals (#39) for one-tap accept. Accepting creates the
+task with evidence lines in its notes, and with `[auto]` when the detector
+names an agent lane. The model's job shrinks to wording and ranking, and
+#41 becomes one more detector ("model-snapshot") behind the same memory.
+Per-detector accept rate comes free from the table; mute a detector that
+falls below ~20% after 10 proposals.
+
+**What the data actually supports (probed live 2026-10-20):**
+
+| Source | Volume on this Mac | Verdict |
+|---|---|---|
+| Reminders (all lists, incl. completed) | 76 items; 69 are Code Tasks; 0 non-code titles completed ≥3× | Too thin for habit mining. Useful only for queue-health detectors. |
+| Calendar (EventKit, 2025-10-20 → 2026-12-31) | 498 events (385 personal); 157 with a location; 7 normalized titles recur ≥4× | Real signal: recurring series and located events |
+| Dispatch ledger | 93 runs; cursor 28 ok / 4 failed / 3 timeout; doctor/heal lanes | Real signal: lane health, retry/failure streaks |
+| Audit log | 531 rows, 2026-06-09 → 2026-09-27 | Real signal, and its silence is itself a signal (below) |
+| Capture channels (screenshots, audio, files, clipboard, Reading List, watches) | Watermarked scans exist (#20–25, #38, #45) | Real signal: items captured but never acted on |
+| Mail.app / Gmail | Read-only scan (#6, #12 rules); Gmail API capture unverified live (#42) | High value, highest cost: JXA latency, privacy |
+| GitHub (`gh`), git clones | `sync-github` (#50) | Real signal: today's session found PR #23 open since 2026-09-17 and uncommitted work stranded in `~/Code/apple-mcp` since 2026-09-27 |
+
+**Motivating incident (found during this probe):** the launchd dispatcher
+has returned `[]` on every 5-minute pass since 2026-09-27. All three
+open `[auto]` tasks still carry `[dispatched:mac]` / `[failed:mac]` /
+`[failed:andrews-mac-mini]` claims from the hostname change, so
+nothing has been eligible for **three weeks**, and nothing reported it.
+That is exactly the class of pattern a detector should turn into a task.
+
+Detectors, ranked by value ÷ effort (S/M/L = effort):
+
+## 56. Queue-health detector — stuck `[auto]` work — TODO (S)
+
+Flag an `[auto]` task that hasn't been dispatched for > N passes because
+of a claim or `[failed]` tag from a host not seen in the ledger for M days
+(this Mac's current `ClaimTags` host ≠ the tag's host), or because it was
+gated by the same skip reason for > 24h. Propose "re-queue: <title>",
+which on accept runs `dispatch-retry` (#24) for `[failed:*]` claims, plus a
+claim-clear for stale foreign `[dispatched:*]` claims (dispatch-retry
+refuses those today by design). Also flag "dispatcher silent": no ledger row
+for > 7 days while open `[auto]` tasks exist. Data: ledger + Reminders,
+both in hand. This would have caught the 3-week stall above on day one.
+
+## 57. Dev-hygiene detector — stale PRs and stranded work — TODO (S)
+
+From `gh pr list` + `git` over the repos named in agents.json: PRs open
+> 7 days with green CI ("merge or close #N"); local branches whose merge
+into main is already a no-op (squash-merged; propose cleanup); clones with
+uncommitted changes older than 3 days ("rescue uncommitted work in
+<path> on <branch>"). Today's session found all three by hand:
+#23 waited a month, 9 squash-merged branches were left behind, and
+`~/Code/apple-mcp` held a full feature (now #24). Agent-executable: the
+proposal can be `[auto][claude]` with the repo as workdir.
+
+## 58. Lane-health detector — failure/timeout streaks — TODO (S)
+
+From the ledger: ≥ 3 consecutive failed/timeout runs on one lane, or one
+repo's runs repeatedly failing completion verification (P3 guard) →
+propose a `[heal]` task (the doctor `--enqueue-heals` path already
+creates these for system health; this extends it to lane health). Also:
+the same prompt dispatched ≥ 3× on a cadence → propose converting it
+to a recurrence (#36).
+
+## 59. Capture follow-through — TODO (M)
+
+Items from screenshots, audio, files, clipboard or Reading List that were
+surfaced but never became a task or got archived within 7 days → one
+weekly "process N captures" task (never one task per item). When ≥ K
+Reading List / bookmark items share a #53 category within 30 days,
+propose a `[scratch]` research task (#54) that synthesizes them. That
+proposal is dispatchable, so it's proactive end-to-end.
+
+## 60. Calendar prep and follow-up — TODO (M)
+
+Recurring series (normalized title ≥ 4 instances): join the audit log's
+`add` timestamps against past instances. If a task was created within
+±2 days of most instances, propose that task ahead of the next instance
+("prep for <series>"). Located events with no free time before them →
+"leave by" reminder (deterministic version of #41's travel-block example).
+EventOut has no attendees field today, so per-person patterns need an
+EventOut extension first.
+
+## 61. Mail commitments — TODO (L)
+
+Threads where the user sent the last message containing a question and
+nothing came back in N days → "follow up with <sender>". Inbound messages
+with an NSDataDetector date plus request language → task with due date.
+Dedupe by thread id so a reply updates the existing proposal instead of
+adding one (the pattern commercial assistants such as Luo use). Feed from
+Mail rules (#12) incrementally, not a JXA rescan: #41 deliberately
+skipped mail because of JXA latency.
+
+**Platform enablers (macOS 27, already on the machine):** Foundation
+Models `@Generable` for the optional wording pass (on-device, works under
+launchd); the **Evaluations** framework (new in 27) for a regression suite
+over the wording/ranking prompt — the #41 tuning note ("prefer empty over
+noise" suppressed everything) is exactly the drift it would catch;
+`IndexedEntity` donations (#31) so Siri/Spotlight can answer "what does
+Agent Tasks suggest?"; local notification actions (review P6 §3) as an
+in-app alternative to ntfy for Accept/Dismiss. Not usable: model
+delegation (#30, still SPI as of 27.2 b4).
+
+**Suggested order:** proposals table + `proposals` CLI/MCP + digest section
+with #56 first (small, deterministic, and it fixes a live failure), then
+#57 and #58 (same data, same week), then fold #41 in as a detector, then
+#59 → #60 → #61 as accept rates justify each one.
