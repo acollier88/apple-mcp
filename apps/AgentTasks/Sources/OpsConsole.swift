@@ -96,6 +96,34 @@ struct DispatchReportRow: Codable {
     let exitCode: Int?
     let runLog: String?
     let worktree: String?
+    let command: String?
+    let promptPreview: String?
+}
+
+/// One dry-run pass, split into what would start vs. what stays put.
+struct DryRunResult: Identifiable {
+    let id = UUID()
+    let rows: [DispatchReportRow]
+
+    /// `would dispatch` / `would retry (attempt N)`; not `would triage` (a note).
+    var willRun: [DispatchReportRow] {
+        rows.filter { $0.action.hasPrefix("would dispatch") || $0.action.hasPrefix("would retry") }
+    }
+
+    /// Real tasks that stay queued or are skipped, with the dispatcher's reason.
+    var notRunning: [DispatchReportRow] {
+        let running = Set(willRun.map(\.taskId))
+        return rows.filter { !isNote($0) && !running.contains($0.taskId) }
+    }
+
+    /// Pass-level lines: pause banner, triage, scan count, reap/GC.
+    var notes: [DispatchReportRow] { rows.filter(isNote) }
+
+    /// Reap/GC rows carry a real task id but are housekeeping, not a plan decision.
+    private func isNote(_ row: DispatchReportRow) -> Bool {
+        ["", "-", "triage"].contains(row.taskId) || row.title.isEmpty
+            || row.action.hasPrefix("gc:") || row.action.hasPrefix("reaped:")
+    }
 }
 
 enum CallerFamily: String, CaseIterable, Identifiable {
@@ -454,6 +482,8 @@ struct DispatchesTab: View {
     @State private var confirmDispatch = false
     @State private var confirmDiscard = false
     @State private var discardTarget: DispatchLedgerRow?
+    @State private var dryRunResult: DryRunResult?
+    @State private var retryingIds: Set<Int> = []
     /// Increments every refresh request; in-flight results with an older epoch are dropped.
     @State private var refreshEpoch = 0
 
@@ -495,6 +525,14 @@ struct DispatchesTab: View {
             }
         } message: {
             Text("Delete branch \(discardTarget?.branch ?? "the branch") and its worktree? The commits are lost unless pushed.")
+        }
+        .sheet(item: $dryRunResult) { result in
+            DryRunSheet(result: result) {
+                dryRunResult = nil
+            } onDispatch: {
+                dryRunResult = nil
+                confirmDispatch = true
+            }
         }
         .onAppear { Task { await refresh() } }
         .onChange(of: refreshToken) { _, _ in Task { await refresh() } }
@@ -538,7 +576,7 @@ struct DispatchesTab: View {
                 Task { await runDispatch(dryRun: true) }
             }
             .disabled(isDispatching)
-            .help("apple-tasks dispatch --dry-run")
+            .help("Preview what the next dispatch would run (apple-tasks dispatch --dry-run)")
 
             Button("Dispatch Now") {
                 confirmDispatch = true
@@ -592,10 +630,15 @@ struct DispatchesTab: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
-                        DispatchRowView(row: row, reviewMode: awaitingReview) {
-                            discardTarget = row
-                            confirmDiscard = true
-                        }
+                        DispatchRowView(
+                            row: row, reviewMode: awaitingReview,
+                            isRetrying: retryingIds.contains(row.id),
+                            onDiscard: {
+                                discardTarget = row
+                                confirmDiscard = true
+                            },
+                            onRetry: { Task { await retry(row) } }
+                        )
                     }
                 }
             }
@@ -674,40 +717,48 @@ struct DispatchesTab: View {
         }
     }
 
+    private func retry(_ row: DispatchLedgerRow) async {
+        guard !retryingIds.contains(row.id) else { return }
+        retryingIds.insert(row.id)
+        let summary = await DispatchRetryCLI.requeue(String(row.id), label: row.summary ?? row.taskId)
+        await MainActor.run {
+            self.retryingIds.remove(row.id)
+            self.caption = summary
+            self.refreshToken += 1
+        }
+    }
+
     private func runDispatch(dryRun: Bool) async {
         guard !isDispatching else { return }
         isDispatching = true
         caption = dryRun ? "Dry-running…" : "Dispatching…"
-        let summary: String = await Task.detached {
+        let (summary, preview): (String, DryRunResult?) = await Task.detached {
             do {
                 var args = ["dispatch"]
                 if dryRun { args.append("--dry-run") }
                 // Real dispatch can run agents for a long time; cap so the UI recovers.
                 let json = try CLI.run(args, timeout: dryRun ? 60 : 3600)
                 let reports = (try? JSONDecoder().decode([DispatchReportRow].self, from: Data(json.utf8))) ?? []
-                if reports.isEmpty {
-                    return dryRun ? "Dry run: nothing to dispatch" : "Dispatch: nothing queued"
-                }
-                let would = reports.filter {
-                    $0.action.hasPrefix("would ") || $0.action.hasPrefix("dispatched")
-                }.count
-                let gated = reports.filter { $0.action.hasPrefix("gated:") || $0.action.hasPrefix("skipped:") || $0.action.hasPrefix("scheduled:") }.count
                 if dryRun {
-                    return "Dry run: \(reports.count) row(s)"
-                        + (would > 0 ? ", \(would) would run" : "")
-                        + (gated > 0 ? ", \(gated) gated/skipped" : "")
+                    let result = DryRunResult(rows: reports)
+                    let run = result.willRun.count, held = result.notRunning.count
+                    return ("Dry run: \(run) would run" + (held > 0 ? ", \(held) held" : ""), result)
+                }
+                if reports.isEmpty {
+                    return ("Dispatch: nothing queued", nil)
                 }
                 let done = reports.filter {
                     ["succeeded", "failed", "timeout"].contains($0.action) || $0.action.hasPrefix("spawn")
                 }.count
-                return "Dispatch finished: \(reports.count) outcome(s)"
-                    + (done > 0 ? ", \(done) run(s)" : "")
+                return ("Dispatch finished: \(reports.count) outcome(s)"
+                    + (done > 0 ? ", \(done) run(s)" : ""), nil)
             } catch {
-                return (dryRun ? "Dry run failed: " : "Dispatch failed: ") + error.localizedDescription
+                return ((dryRun ? "Dry run failed: " : "Dispatch failed: ") + error.localizedDescription, nil)
             }
         }.value
         await MainActor.run {
             self.caption = summary
+            self.dryRunResult = preview
             self.isDispatching = false
             self.refreshToken += 1
         }
@@ -718,8 +769,15 @@ struct DispatchesTab: View {
 struct DispatchRowView: View {
     let row: DispatchLedgerRow
     var reviewMode: Bool = false
+    var isRetrying: Bool = false
     var onDiscard: (() -> Void)? = nil
+    var onRetry: (() -> Void)? = nil
     @State private var isHovered = false
+
+    /// Ended without success; `dispatch-retry` can re-queue the task.
+    private var retryable: Bool {
+        ["failed", "timeout", "aborted"].contains(row.status)
+    }
 
     private var logAvailable: Bool {
         guard let path = row.runLogPath else { return false }
@@ -778,6 +836,16 @@ struct DispatchRowView: View {
                 }
 
                 Spacer()
+
+                if retryable, let onRetry {
+                    if isRetrying {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("Retry", action: onRetry)
+                        .buttonStyle(.borderless)
+                        .disabled(isRetrying)
+                        .help("Clear [failed], restore [auto] — the next dispatch pass re-runs this task")
+                }
 
                 if reviewMode {
                     Button("Open in Terminal") {
@@ -881,6 +949,189 @@ private struct ReviewModeContextMenu<Menu: View>: ViewModifier {
             content.contextMenu(menuItems: menu)
         } else {
             content
+        }
+    }
+}
+
+/// `apple-tasks dispatch-retry`, shared by the Queue and Dispatches tabs.
+enum DispatchRetryCLI {
+    struct Result: Codable {
+        let taskId: String
+        let title: String
+        let removedTags: [String]
+        let addedAuto: Bool
+    }
+
+    /// Re-queue by task id or ledger id; returns a caption for the header.
+    static func requeue(_ target: String, label: String) async -> String {
+        do {
+            let json = try await Task.detached {
+                try CLI.run(["dispatch-retry", target], timeout: 30)
+            }.value
+            let title = (try? JSONDecoder().decode(Result.self, from: Data(json.utf8)))?.title ?? label
+            return "Re-queued “\(title)” — runs on the next dispatch pass"
+        } catch {
+            return "Retry failed: \(error.localizedDescription)"
+        }
+    }
+}
+
+// MARK: - Dry run sheet
+
+struct DryRunSheet: View {
+    let result: DryRunResult
+    let onClose: () -> Void
+    let onDispatch: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dry Run").font(.headline)
+                    Text(headline)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+                Button("Dispatch Now…", action: onDispatch)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(result.willRun.isEmpty)
+            }
+            .padding(16)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(Array(result.notes.enumerated()), id: \.offset) { _, note in
+                        Label(note.action, systemImage: note.action.hasPrefix("paused") ? "pause.circle" : "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(note.action.hasPrefix("paused") ? Color.orange : Color.secondary)
+                    }
+                    section("Will run", count: result.willRun.count) {
+                        if result.willRun.isEmpty {
+                            Text("Nothing is ready to dispatch.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(Array(result.willRun.enumerated()), id: \.offset) { _, row in
+                            WillRunRow(row: row)
+                        }
+                    }
+                    if !result.notRunning.isEmpty {
+                        section("Not running", count: result.notRunning.count) {
+                            ForEach(Array(result.notRunning.enumerated()), id: \.offset) { _, row in
+                                HeldRow(row: row)
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(minWidth: 620, idealWidth: 720, minHeight: 420, idealHeight: 560)
+    }
+
+    private var headline: String {
+        let n = result.willRun.count
+        if n == 0 { return "No agents would start" }
+        return "\(n) agent run\(n == 1 ? "" : "s") would start"
+    }
+
+    private func section<Content: View>(_ title: String, count: Int,
+                                        @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(title) · \(count)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            content()
+        }
+    }
+}
+
+private struct WillRunRow: View {
+    let row: DispatchReportRow
+    @State private var showPrompt = false
+
+    /// "would dispatch via claude (auto pool)" → "via claude (auto pool)".
+    private var detail: String {
+        row.action
+            .replacingOccurrences(of: "would dispatch", with: "")
+            .replacingOccurrences(of: "would retry", with: "retry")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(row.agent)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .foregroundStyle(.orange)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(Capsule())
+                Text(row.title)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+            }
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Label(row.cwd ?? "scratch directory (no workdir tag)", systemImage: "folder")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let command = row.command {
+                Text(command)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.08))
+                    .cornerRadius(4)
+            }
+            if let prompt = row.promptPreview {
+                DisclosureGroup("Prompt", isExpanded: $showPrompt) {
+                    Text(prompt)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
+                .font(.caption)
+            }
+        }
+        .padding(10)
+        .background(Color.green.opacity(0.05))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.green.opacity(0.25)))
+        .cornerRadius(6)
+    }
+}
+
+private struct HeldRow: View {
+    let row: DispatchReportRow
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(row.agent)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 70, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.callout)
+                    .lineLimit(1)
+                Text(row.action)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

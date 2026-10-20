@@ -268,6 +268,7 @@ struct QueueTab: View {
                             needsWorkdir: WorkdirsStore.matchingTag(in: task.tags, workdirs: workdirs) == nil,
                             onComplete: { Task { await complete(task) } },
                             onFail: { Task { await fail(task) } },
+                            onRetry: { Task { await retry(task) } },
                             onSetFolder: { Task { await setFolder(for: task) } }
                         )
                         .id("\(task.stableId)|\(task.contentStamp)")
@@ -367,6 +368,20 @@ struct QueueTab: View {
         }
     }
 
+    private func retry(_ task: QueueTask) async {
+        let key = task.stableId
+        guard !busyIds.contains(key) else { return }
+        busyIds.insert(key)
+        caption = "Re-queuing…"
+        let summary = await DispatchRetryCLI.requeue(key, label: task.title)
+        await MainActor.run {
+            self.busyIds.remove(key)
+            self.refreshToken += 1
+        }
+        await refresh()
+        caption = summary
+    }
+
     private func fail(_ task: QueueTask) async {
         let key = task.stableId
         guard !busyIds.contains(key) else { return }
@@ -407,6 +422,7 @@ struct QueueTaskRow: View {
     let needsWorkdir: Bool
     let onComplete: () -> Void
     let onFail: () -> Void
+    let onRetry: () -> Void
     let onSetFolder: () -> Void
     @State private var isHovered = false
     @State private var confirmFail = false
@@ -488,12 +504,19 @@ struct QueueTaskRow: View {
                         .disabled(isBusy)
                         .help("Pick a directory and register it in agents.json workdirs")
                 }
+                if task.isFailed {
+                    Button("Retry", action: onRetry)
+                        .disabled(isBusy || task.isDispatched)
+                        .help("Clear [failed] so the next dispatch pass re-runs it (ignores maxRetries/backoff)")
+                }
                 Button("Complete", action: onComplete)
                     .disabled(isBusy)
-                Button("Fail", role: .destructive) {
-                    confirmFail = true
+                if !task.isFailed {
+                    Button("Fail", role: .destructive) {
+                        confirmFail = true
+                    }
+                    .disabled(isBusy)
                 }
-                .disabled(isBusy)
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 14)
