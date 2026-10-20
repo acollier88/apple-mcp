@@ -54,14 +54,22 @@ enum HTML {
 
 // MARK: - Native tag mirror (private ReminderKit, via the apple-tasks-private helper)
 
+enum Executable {
+    /// This binary's real path. argv[0] is only "apple-tasks" when run by
+    /// name from PATH, which would resolve against the cwd instead.
+    static var url: URL {
+        (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
+            .resolvingSymlinksInPath()
+    }
+}
+
 enum NativeTags {
     /// The helper lives next to the main binary; APPLE_TASKS_PRIVATE_BIN overrides.
     static var helperURL: URL? {
         if let override = ProcessInfo.processInfo.environment["APPLE_TASKS_PRIVATE_BIN"] {
             return URL(fileURLWithPath: override)
         }
-        let sibling = URL(fileURLWithPath: CommandLine.arguments[0])
-            .resolvingSymlinksInPath()
+        let sibling = Executable.url
             .deletingLastPathComponent()
             .appendingPathComponent("apple-tasks-private")
         return FileManager.default.isExecutableFile(atPath: sibling.path) ? sibling : nil
