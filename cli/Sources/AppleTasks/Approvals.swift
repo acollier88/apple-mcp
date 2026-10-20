@@ -42,14 +42,16 @@ struct ApprovalOut: Codable {
 
 enum ApprovalTopics {
     /// Reply topic carrying button answers. Defaults to "<topic>-approvals";
-    /// override with "approvalsReplyTopic" in notify.json.
+    /// override with "approvalsReplyTopic" in notify.json or Keychain.
     static func resolve() throws -> (server: String, topic: String, replyTopic: String) {
-        guard let config = NotifyConfig.load(), let ntfy = config.ntfy else {
+        let config = NotifyConfig.load()
+        guard let topic = NotifyConfig.resolveTopic(config) else {
             throw AppleTasksError.saveFailed(
-                "approvals need ntfy configured: {\"ntfy\": {\"topic\": \"...\"}} at \(NotifyConfig.url.path)")
+                "approvals need an ntfy topic: apple-tasks secret set ntfy.topic, or {\"ntfy\": {\"topic\": \"...\"}} at \(NotifyConfig.url.path)")
         }
-        return (ntfy.server ?? "https://ntfy.sh", ntfy.topic,
-                config.approvalsReplyTopic ?? "\(ntfy.topic)-approvals")
+        let reply = NotifyConfig.resolveApprovalsReplyTopic(config)
+            ?? Secrets.Resolved(value: "\(topic.value)-approvals", source: topic.source)
+        return (NotifyConfig.server(config), topic.value, reply.value)
     }
 }
 

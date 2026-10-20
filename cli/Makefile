@@ -1,6 +1,6 @@
 RELEASE_DIR = .build/release
 
-.PHONY: all cli helper clean
+.PHONY: all cli helper clean test
 
 all: cli helper
 
@@ -12,6 +12,9 @@ cli:
 helper: cli
 	clang -fobjc-arc -O -framework Foundation \
 		-o $(RELEASE_DIR)/apple-tasks-private Sources/private-helper/apple-tasks-private.m
+
+test:
+	swift test
 
 clean:
 	swift package clean

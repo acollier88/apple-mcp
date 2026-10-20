@@ -890,7 +890,17 @@ Xcode beta to /Applications/Xcode-beta.app. One schema drift:
 AgentTasksApp otherwise rebuilt clean. #33 executor skew HEALED (see §33),
 #30 Extensions still dormant.
 
-## 33. FoundationModels executor seam — skew HEALED on beta 4 (live round-trip pending)
+**Drill run 2026-08-11** (beta 5: OS 26A5388g → 26A5406e, Xcode UNCHANGED
+at 27A5228h): all 7 steps PASS, AgentTasksApp rebuilt clean — no schema
+drift this time. Xcode survived the update (beta 4's update silently
+dropped it to CommandLineTools; worth still checking `xcode-select -p`
+first on every upgrade). Notable: this is the runtime-ahead-of-SDK
+configuration that broke #33 on beta 3 — the OS moved a build forward
+while the SDK stayed on beta 4's. The seam held (see §33). #30 Extensions
+still dormant. Drill finding: `/usr/bin/fm` has been sitting on this
+machine unnoticed through several betas — see §55.
+
+## 33. FoundationModels executor seam — ✅ DONE 2026-08-07 (live round-trip verified)
 
 Found 2026-07-07 while building the ClaudeLanguageModel spike (docs/
 claude-language-model-spike.md, research/ClaudeLanguageModel/). The macOS beta 3
@@ -924,9 +934,30 @@ Re-checked 2026-07-23 (beta 4: OS 26A5388g, Xcode beta 27A5228h, SDK
 source changes (the anticipated Event protocol→struct migration never
 surfaced as a compile diff) and dyld-launches clean — no symbol crash.
 One deprecation fixed: `LanguageModelCapabilities(capabilities:)` →
-`LanguageModelCapabilities(_:)`. Remaining: a live Claude round-trip
-(`ANTHROPIC_API_KEY=... research/ClaudeLanguageModel/build/harness`) to
-validate the transcript mapping end-to-end.
+`LanguageModelCapabilities(_:)`.
+
+**Live round-trip PASSED 2026-08-07** (same build: OS 26A5388g, Xcode beta
+27A5228h) — `ANTHROPIC_API_KEY=... research/ClaudeLanguageModel/build/harness`
+returned a real answer sourced from the `ClockTool` call, with 5 transcript
+entries (instructions → prompt → toolCalls → toolOutput → response). That
+exercises the whole seam: transcript folding, SSE → channel event
+translation, and the tool round-trip through `LanguageModelExecutor`. The
+executor seam is now fully validated on public API — #33 is closed, and
+`LanguageModelSession(model: ClaudeLanguageModel(), tools: [...])` inside
+AgentTasksApp is unblocked for real work. Note the harness needs a Console
+API key with credits; a Claude subscription (incl. its usage credits) does
+NOT cover api.anthropic.com — separate billing systems.
+
+Re-checked 2026-08-11 (beta 5: OS 26A5406e, Xcode still 27A5228h / SDK
+26A5388f): **STILL GOOD, and this was the real test.** The OS moved a
+build ahead while the SDK stayed put — the exact runtime-ahead-of-SDK
+shape that killed the seam on beta 3. Rebuilt the harness from source
+against the beta-4 SDK, dyld-launched on the beta-5 runtime, and the live
+round-trip passed again (real answer sourced from `ClockTool`, 5
+transcript entries, fresh timestamp). So the beta-4 healing wasn't a
+coincidence of matched builds: `LanguageModelExecutorGenerationChannel`
+now appears ABI-stable across a runtime bump. Keep dyld-running it each
+beta anyway — that's cheap and the failure mode is silent at compile time.
 
 ## 34. Fold notes-scan into triage — ✅ DONE 2026-07-08 (`triage --notes`)
 
@@ -1485,3 +1516,61 @@ until an agent writes something big — add cleanup to the worktree reaper
 if it ever matters. Scratch adds no *safety* (the agent process keeps
 its normal account access); containment is the virtualization discussion
 in polish.md, not this.
+
+
+## 55. `fm` — Apple's Foundation Models CLI as a local model seat — TODO (found 2026-08-11)
+
+`/usr/bin/fm` ships with macOS 27 and is a first-class terminal front-end to
+the same on-device + Private Cloud Compute models behind Apple Intelligence
+(WWDC26 session 334, "Build AI-powered scripts with the fm CLI and Python
+SDK"; there is also a Python SDK, not installed here). **It is NOT new in
+beta 5** — press coverage dates to June and it was almost certainly present
+through betas 2-4; we simply never looked. Found during the beta-5 drill
+because it was still unlicensed, i.e. never once run on this machine.
+
+Commands: `respond`, `chat`, `count-tokens`, `schema` (generate a JSON
+generation schema), `serve` (**Chat Completions API server**), `available`,
+`quota-usage`, `license`. Useful flags on `respond`: `--schema` (file or
+inline), `--image`, `--save-transcript` / `--resume`, `--use-case
+general|content-tagging`, `--guardrails`, `-g/--greedy`, `--[no-]stream`.
+
+**Why it matters here: `fm serve` is an OpenAI-compatible endpoint, and #51
+already speaks that.** `Llm.Profile.apiKey` is optional, so a keyless
+loopback profile needs NO code change — point an llm.json profile (or an
+agents.json `llm` block) at the local `fm serve` and the triage classifier,
+`suggest`, and BYOM dispatch lanes get a free, offline, no-API-key backend.
+That is a genuine new seat for #52's `"fast"` tier, distinct from the
+existing `"local"` on-device @Generable path (which is in-process
+FoundationModels, not a served endpoint).
+
+Two constraints, both verified on this machine 2026-08-11:
+
+1. **PCC does not work outside a real Terminal.** `fm respond --model pcc`
+   fails with "Private Cloud Compute is not available in this context.
+   Please use the Terminal app" from a spawned/agent shell — TCC
+   responsibility attribution. The on-device `system` model works fine from
+   a spawned shell (~1.3s for a trivial prompt). **So anything daemonized
+   under launchd must be on-device only**; don't design a dispatch lane
+   around `--model pcc`.
+2. **License is machine-wide and interactive-once.** `sudo fm license`, then
+   `fm license --status`. Until accepted, EVERY subcommand hard-fails — so
+   this is a per-machine setup prerequisite for anyone running the agent,
+   not just this box. **Action: add an `fm` probe to `apple-tasks doctor`**
+   (`fm license --status` + `fm available`) alongside the existing TCC
+   checks, since the failure is total and the error text only names the fix
+   if you read it carefully.
+
+Licensing posture (settled with user 2026-08-11): the terms add "YOU ARE
+ALSO AGREEING TO NOT PROGRAMMATICALLY ACCESS OR USE APPLE MODELS THROUGH
+APPLE SOFTWARE OR SERVICES EXCEPT AS EXPRESSLY PERMITTED." `fm serve` /
+`respond` / the Python SDK ARE the expressly-permitted programmatic surface
+(that is the entire point of the WWDC session), so scripted use as
+documented is fine; the clause targets going around them via private SPI or
+reverse-engineered endpoints. Third-party-proxying concerns don't apply to
+this project's shape: every apple-mcp deployment is one person on their own
+Mac, running their own `fm` under their own accepted license — we shell out
+to a system binary, we don't redistribute model access.
+
+Note the terms text lives ONLY in the binary — `fm license --show`. The
+referenced https://www.apple.com/legal/sla/ is the general macOS SLA and
+says nothing about Foundation Models, so the sentence above is the capture.

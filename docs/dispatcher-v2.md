@@ -125,3 +125,91 @@ notification) with title = task title, body = trailer summary. Config gate
 All five steps landed 2026-07-07. Remaining follow-ups: README + MCP tool
 descriptions still describe v1 (sequential, no summary column, no
 --append-notes); update both.
+
+## v3: reap-kill and cancel (2026-09-07)
+
+Closes review bug #6 (reap flipped the ledger but left the agent running;
+no cancel command).
+
+- **Record pid.** Phase B writes `dispatches.pid` immediately after
+  `Process.run()` succeeds. The column stays after `finishDispatch` as
+  an informational leftover.
+- **Reap kills.** After `reapStale` returns rows, each recorded pid is
+  checked with `AgentProcess.looksLikeOurs` (alive + command line contains
+  the task id, `runs/<ledgerId>.log`, or the agent binary basename). A
+  match is SIGTERM'd, then SIGKILL after 5s. Report action becomes
+  `reaped: killed pid N (terminated|killed)`. Audit `dispatch-reap` detail
+  records the signal result.
+- **Crashed dispatcher.** Running rows whose pid is already dead and
+  `started_at` is older than 10 minutes are finished as `timeout` with
+  summary `dispatcher died`, `[failed]`-tagged, and reported
+  `reaped: dispatcher died, pid N gone`. Protects against a mid-run reboot
+  where there is nothing left to signal.
+- **Process group.** Foundation `Process` has no process-group hook; we
+  do not `posix_spawn` here. `terminate` uses `kill(-pid)` only when
+  `getpgid(pid) == pid` (the agent is already its own leader). Otherwise
+  it signals the pid alone. Grandchildren spawned by `agent` / `claude`
+  may survive a reap or cancel — TODO if `Process` ever exposes a hook.
+- **`apple-tasks dispatch-cancel <ledgerId>`.** If the row is not
+  `running`, emits `cancelled: false` and exits 0. Otherwise signals the
+  process (or notes `process not found`), `finishDispatch(status:
+  "cancelled")`, sheds this Mac's `[dispatched]` / bare `dispatched` tag
+  **without** writing `[failed]`, appends a notes trailer, and leaves the
+  worktree for GC (`keepFailedWorktreeDays`, same as `failed`/`timeout`).
+- **`cancelled` is not a failed attempt.** `failedAttempts` stays
+  `IN ('failed','timeout')` so a human cancel does not trip retry/backoff.
+  Doctor's heal scan queries `failed` only (cancelled is excluded).
+  Digest prints the status string as-is. MCP `dispatch_list` status enum
+  does not yet include `cancelled` (out of scope for this change).
+
+## v3: completion verification (2026-09)
+
+Closes review finding 7: an agent that exits 0 without `apple-tasks
+complete` used to leave `[dispatched:host]` on the task forever, and a
+human edit did not unstrand it.
+
+- **Phase C (write-back).** After the trailer/notes write-back and
+  notifications, re-fetch the reminder and classify
+  `verification = completed | open-claimed | open-untagged`. Deleted or
+  `isCompleted` is `completed`. Our own `[dispatched]` / `[dispatched:host]`
+  on an open task is `open-claimed`; a foreign Mac's claim is
+  `open-untagged` (not ours). On `succeeded` + `open-claimed`, shed our
+  claim (title + native chip) and append one notes line:
+  `[dispatch #N] agent exited 0 without completing the task — re-dispatch
+  is blocked until the task changes`. Then re-fetch so the stored
+  fingerprint is the post-shed title + extra note. `lastModifiedDate` is
+  stored as informational only. The report `action` becomes
+  `succeeded (open, claim shed)` only for that case; other actions stay
+  as they were. Failed/timeout already went through `markFailed` and are
+  not shed here.
+- **Phase A guard.** After the existing `[dispatched]` claim check (another
+  Mac, or a run in flight — still first) and before the "not due yet"
+  check: if `claimGuard` is `"modified"` and the latest succeeded row for
+  this task ended `verification = open-claimed` (the agent walked away
+  without `complete`) and has a stored `taskFingerprint` that equals the
+  current `TaskFingerprint.of(reminder)`, skip. Dry-run reason:
+  `skipped: unchanged since succeeded #N — edit the task or complete it
+  to re-run`. Rows with `taskFingerprint == nil` (pre-v2) never block.
+  The `open-claimed` condition is load-bearing: when an agent *does*
+  complete a recurring task, the due date rolls during the run, so Phase C
+  stores the fingerprint of the *next* occurrence — and by the time that
+  occurrence comes due nothing has changed since. Guarding on fingerprint
+  alone would block every recurrence forever.
+  The `hasActiveDispatch` running check is unchanged and stays under both
+  modes.
+- **`claimGuard`** in `agents.json`: `"running"` (any `[dispatched…]`
+  tag blocks) | `"modified"` (fingerprint compare). `"modified"` became
+  the default on 2026-09-16 after a week live (`AgentsConfig.resolvedClaimGuard`;
+  unknown values fall back to it). Set `"running"` to opt out.
+- **Fingerprint is content-only** (title incl. tags, notes, due, URL,
+  priority — see `TaskFingerprint`). iCloud sync churn that bumps
+  `lastModifiedDate` without changing content cannot make a task look
+  new. A recurrence roll or a human edit changes the hash → eligible
+  again.
+- **Worktree GC.** When a merged succeeded branch/worktree is removed,
+  the ledger row is `markReviewed` so it leaves the pending-review set.
+  Unmerged-kept behavior and report strings are unchanged.
+- **Dry-run.** With `claimGuard: "running"` a dry-run is identical to
+  pre-v3; under the default `"modified"` the new skip line appears when a
+  succeeded fingerprint still matches. Phase C (shed / fingerprint store)
+  does not run on dry-run.

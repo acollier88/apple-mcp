@@ -29,6 +29,11 @@ let package = Package(
                     "-Xlinker", "FoundationModels",
                 ])
             ]
+        ),
+        .testTarget(
+            name: "AppleTasksTests",
+            dependencies: ["apple-tasks"],
+            path: "Tests/AppleTasksTests"
         )
     ]
 )

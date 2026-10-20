@@ -51,10 +51,12 @@ struct LlmCommand: AsyncParsableCommand {
     struct Profile: Codable {
         var endpoint: String?
         var model: String?
-        /// Literal key. Prefer apiKeyEnv; if you inline one, keep llm.json chmod 600.
+        /// Literal key. Prefer apiKeyEnv or Keychain; if you inline one, keep llm.json chmod 600.
         var apiKey: String?
-        /// Name of an environment variable holding the key (wins over apiKey).
+        /// Name of an environment variable holding the key (wins over Keychain and apiKey).
         var apiKeyEnv: String?
+        /// Keychain item name. Defaults to `llm.<profile>.apiKey` when the profile name is known.
+        var apiKeyKeychain: String?
         var system: String?
         var maxTokens: Int?
         var temperature: Double?
@@ -73,6 +75,8 @@ struct LlmCommand: AsyncParsableCommand {
 
     func run() async throws {
         var base = Profile()
+        /// `--agent` tag, `--profile`, or llm.json `default` — names the default Keychain item.
+        var profileName: String?
         if let agent {
             let config = try AgentsConfig.load()
             guard let lane = config.agents[agent.lowercased()], let llm = lane.llm else {
@@ -80,6 +84,7 @@ struct LlmCommand: AsyncParsableCommand {
                     "no agent '\(agent)' with an \"llm\" block in \(AgentsConfig.url.path)")
             }
             base = llm
+            profileName = agent.lowercased()
         } else if let data = try? Data(contentsOf: Self.configURL) {
             let file: ConfigFile
             do {
@@ -93,6 +98,7 @@ struct LlmCommand: AsyncParsableCommand {
                         "no '\(name)' profile in llm.json (have: \(file.profiles.keys.sorted().joined(separator: ", ")))")
                 }
                 base = found
+                profileName = name
             }
         } else if let profile {
             throw AppleTasksError.invalidInput(
@@ -119,14 +125,17 @@ struct LlmCommand: AsyncParsableCommand {
             throw AppleTasksError.invalidInput("no prompt — pass -p or pipe it on stdin")
         }
 
-        var key: String?
-        if let envName = apiKeyEnv ?? base.apiKeyEnv {
-            guard let fromEnv = ProcessInfo.processInfo.environment[envName], !fromEnv.isEmpty else {
-                throw AppleTasksError.invalidInput("api key env var '\(envName)' is unset")
-            }
-            key = fromEnv
+        let envName = apiKeyEnv ?? base.apiKeyEnv
+        let keychainItem = base.apiKeyKeychain ?? profileName.map { Secrets.llmApiKey(profile: $0) }
+        let key: String?
+        if let resolved = Secrets.resolve(env: envName, keychain: keychainItem, plaintext: base.apiKey) {
+            key = resolved.value
+        } else if let envName {
+            let alt = keychainItem ?? Secrets.llmApiKey(profile: profileName ?? "<profile>")
+            throw AppleTasksError.invalidInput(
+                "api key env var '\(envName)' is unset; alternatively apple-tasks secret set \(alt)")
         } else {
-            key = base.apiKey
+            key = nil
         }
 
         var urlString = endpointRaw.hasSuffix("/") ? String(endpointRaw.dropLast()) : endpointRaw

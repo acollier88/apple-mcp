@@ -4,24 +4,38 @@ import SQLite3
 // Machine-side memory: append-only audit of mutations + mutable dispatch
 // ledger. Reminders remains the source of truth for task state.
 final class AuditDB {
-    static let shared = AuditDB()
+    static let shared = AuditDB(url: url)
 
     private var db: OpaquePointer?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    var isAvailable: Bool { db != nil }
+
+    enum ClaimResult: Equatable {
+        /// We hold the claim; ledger row id.
+        case claimed(Int64)
+        /// Another dispatcher already has a running row for this task.
+        case held
+        /// Ledger DB not open — caller must NOT dispatch.
+        case unavailable
+    }
 
     static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/apple-tasks/apple-tasks.db")
     }
 
-    private init() {
+    init(url: URL) {
         try? FileManager.default.createDirectory(
-            at: Self.url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard sqlite3_open(Self.url.path, &db) == SQLITE_OK else {
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
             db = nil
             return
         }
         exec("PRAGMA journal_mode=WAL")
+        // Two writers (launchd pass + manual/MCP dispatch) briefly overlap on
+        // the claim insert; wait instead of surfacing SQLITE_BUSY as a failure.
+        sqlite3_busy_timeout(db, 2000)
         exec("""
         CREATE TABLE IF NOT EXISTS audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,10 +62,6 @@ final class AuditDB {
             exit_code INTEGER
         )
         """)
-        // Older DBs predate these columns; ALTER errors are ignored when they exist.
-        exec("ALTER TABLE dispatches ADD COLUMN run_log_path TEXT")
-        exec("ALTER TABLE dispatches ADD COLUMN worktree TEXT")
-        exec("ALTER TABLE dispatches ADD COLUMN summary TEXT")
         exec("""
         CREATE TABLE IF NOT EXISTS state (
             key TEXT PRIMARY KEY,
@@ -71,6 +81,78 @@ final class AuditDB {
             answered_via TEXT
         )
         """)
+        migrate()
+    }
+
+    /// Schema version the code expects. Bump when adding a migration case.
+    static let schemaVersion: Int32 = 2
+
+    var schemaVersion: Int32 { Int32(scalarInt("PRAGMA user_version") ?? 0) }
+
+    /// Forward-only migrations keyed on `PRAGMA user_version`. Version 0 is
+    /// every DB created before 2026-09-07 (three ad-hoc, error-ignored
+    /// ALTERs). Each case must be idempotent against a DB that already has
+    /// the shape, because v0 databases may or may not carry those columns.
+    private func migrate() {
+        var version = schemaVersion
+        while version < Self.schemaVersion {
+            switch version {
+            case 0:
+                // Columns that used to be added by unguarded ALTERs at every open.
+                addColumnIfMissing(table: "dispatches", column: "run_log_path", type: "TEXT")
+                addColumnIfMissing(table: "dispatches", column: "worktree", type: "TEXT")
+                addColumnIfMissing(table: "dispatches", column: "summary", type: "TEXT")
+                // Agent process id, so reap/cancel can signal it (review P2 §3–4).
+                addColumnIfMissing(table: "dispatches", column: "pid", type: "INTEGER")
+                // Reminder lastModifiedDate captured at finish, for the
+                // "unchanged since we last succeeded" re-dispatch guard (P3).
+                addColumnIfMissing(table: "dispatches", column: "task_modified_at", type: "TEXT")
+            case 1:
+                // Completion verification (review P3): what the task looked
+                // like right after our write-back, so Phase A can tell "nothing
+                // changed since we last succeeded" from "recurrence rolled /
+                // human edited". Fingerprint = TaskFingerprint.of(...); the
+                // verification is completed | open-untagged | open-claimed.
+                addColumnIfMissing(table: "dispatches", column: "task_fingerprint", type: "TEXT")
+                addColumnIfMissing(table: "dispatches", column: "verification", type: "TEXT")
+                // Reviewed-branch bookkeeping: set when a human discards a
+                // succeeded worktree/branch (dispatch-discard) or GC merges it.
+                addColumnIfMissing(table: "dispatches", column: "reviewed_at", type: "TEXT")
+            default:
+                return
+            }
+            version += 1
+            exec("PRAGMA user_version = \(version)")
+        }
+    }
+
+    private func addColumnIfMissing(table: String, column: String, type: String) {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return }
+        var present = false
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column {
+                present = true
+                break
+            }
+        }
+        sqlite3_finalize(stmt)
+        if !present { exec("ALTER TABLE \(table) ADD COLUMN \(column) \(type)") }
+    }
+
+    private func scalarInt(_ sql: String) -> Int64? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int64(stmt, 0)
+    }
+
+    deinit {
+        if db != nil {
+            sqlite3_close(db)
+            db = nil
+        }
     }
 
     private func exec(_ sql: String) {
@@ -166,23 +248,96 @@ final class AuditDB {
         let runLogPath: String?
         let worktree: String?
         let summary: String?
+        /// Agent process id while running (nil before spawn / for old rows).
+        let pid: Int?
+        /// Reminder content fingerprint captured right after Phase C write-back
+        /// (TaskFingerprint.of). nil for rows finished before schema v2.
+        let taskFingerprint: String?
+        /// EKReminder.lastModifiedDate at that same moment (informational).
+        let taskModifiedAt: String?
+        /// completed | open-untagged | open-claimed | nil (pre-v2 or unknown).
+        let verification: String?
+        /// Set when the branch was discarded (dispatch-discard) or auto-GC'd
+        /// as merged; a succeeded worktree row without it is "pending review".
+        let reviewedAt: String?
+
+        /// Branch the dispatcher created for a worktree run (Plan.swift).
+        var branch: String? { worktree == nil ? nil : "agent/\(agent)-\(id)" }
+    }
+
+    /// Phase C: record what the task looked like after our write-back.
+    @discardableResult
+    func setVerification(id: Int64, fingerprint: String?, modifiedAt: String?, verification: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE dispatches SET task_fingerprint = ?, task_modified_at = ?, verification = ? WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        for (index, value) in [fingerprint, modifiedAt].enumerated() {
+            if let value { sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT) }
+            else { sqlite3_bind_null(stmt, Int32(index + 1)) }
+        }
+        sqlite3_bind_text(stmt, 3, verification, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 4, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    /// Most recent `succeeded` row for a task (the "unchanged since" guard).
+    func latestSucceeded(taskId: String) -> DispatchRow? {
+        selectDispatches(where: "task_id = ? AND status = 'succeeded'", binds: [taskId], limit: 1).first
+    }
+
+    /// Succeeded worktree runs nobody has reviewed: the branch still exists
+    /// on record and no human discard / merge-GC has marked it reviewed.
+    /// Whether the branch is actually unmerged is a git question the caller
+    /// answers (GC.swift does the same check).
+    func pendingReviewRows(limit: Int = 200) -> [DispatchRow] {
+        selectDispatches(
+            where: "worktree IS NOT NULL AND status = 'succeeded' AND reviewed_at IS NULL",
+            binds: [], limit: limit)
+    }
+
+    /// Mark a worktree run reviewed (discarded or merged); GC uses it too.
+    @discardableResult
+    func markReviewed(id: Int64) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET reviewed_at = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    /// Record the spawned agent's pid so reap/cancel can signal it.
+    @discardableResult
+    func setDispatchPid(id: Int64, pid: Int32?) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET pid = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        if let pid { sqlite3_bind_int(stmt, 1, pid) } else { sqlite3_bind_null(stmt, 1) }
+        sqlite3_bind_int64(stmt, 2, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     /// Finished runs that still have a worktree on record (GC candidates).
     func worktreeRows() -> [DispatchRow] {
         selectDispatches(
-            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout')",
+            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout','cancelled')",
             binds: [], limit: 500)
     }
 
     /// Clear the worktree column once GC has reclaimed (or lost track of) it.
-    func clearWorktree(id: Int64) {
-        guard db != nil else { return }
+    @discardableResult
+    func clearWorktree(id: Int64) -> Bool {
+        guard db != nil else { return false }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET worktree = NULL WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET worktree = NULL WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, id)
         sqlite3_step(stmt)
+        return true
     }
 
     /// Number of dispatches currently 'running' for an agent (per-agent cap).
@@ -213,32 +368,34 @@ final class AuditDB {
     /// Atomically claim the dispatch for a task: inserts a 'running' row only
     /// if no running row exists, in one statement, so two dispatchers
     /// (cron + manual) cannot both claim. Prior succeeded runs do not block
-    /// the next occurrence. Returns the ledger id, nil if another dispatcher
-    /// already holds the claim, or -1 when the ledger DB is unavailable
-    /// (dispatch proceeds unledgered, as before).
-    func claimDispatch(taskId: String, agent: String, command: String, cwd: String?) -> Int64? {
-        guard db != nil else { return -1 }
+    /// the next occurrence. Fail-closed: `.unavailable` when the ledger DB
+    /// is not open — the caller must not dispatch unledgered.
+    func claimDispatch(taskId: String, agent: String, command: String, cwd: String?) -> ClaimResult {
+        guard db != nil else { return .unavailable }
         var stmt: OpaquePointer?
         let sql = """
         INSERT INTO dispatches (task_id, agent, command, cwd, started_at, status)
         SELECT ?1, ?2, ?3, ?4, ?5, 'running'
         WHERE NOT EXISTS (SELECT 1 FROM dispatches WHERE task_id = ?1 AND status = 'running')
         """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return -1 }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return .unavailable }
         defer { sqlite3_finalize(stmt) }
         for (index, value) in [taskId, agent, command, cwd ?? "", Self.now()].enumerated() {
             sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
         }
-        sqlite3_step(stmt)
-        guard sqlite3_changes(db) > 0 else { return nil }
-        return sqlite3_last_insert_rowid(db)
+        // A failed step (SQLITE_BUSY under two dispatchers, I/O error) must not
+        // be read as a claim: sqlite3_changes would report the previous statement.
+        guard sqlite3_step(stmt) == SQLITE_DONE else { return .unavailable }
+        guard sqlite3_changes(db) > 0 else { return .held }
+        return .claimed(sqlite3_last_insert_rowid(db))
     }
 
-    func setDispatchPaths(id: Int64, runLogPath: String?, worktree: String?) {
-        guard db != nil else { return }
+    @discardableResult
+    func setDispatchPaths(id: Int64, runLogPath: String?, worktree: String?) -> Bool {
+        guard db != nil else { return false }
         var stmt: OpaquePointer?
         let sql = "UPDATE dispatches SET run_log_path = ?, worktree = ? WHERE id = ?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         for (index, value) in [runLogPath, worktree].enumerated() {
             if let value {
@@ -249,6 +406,7 @@ final class AuditDB {
         }
         sqlite3_bind_int64(stmt, 3, id)
         sqlite3_step(stmt)
+        return true
     }
 
     /// Rows stuck in 'running' since before the cutoff: marks them 'timeout'
@@ -269,6 +427,7 @@ final class AuditDB {
     }
 
     /// Failed/timed-out attempt count and latest finish time, for retry backoff.
+    /// `cancelled` is a human decision and must not count (no retry/backoff).
     func failedAttempts(taskId: String) -> (count: Int, lastFinishedAt: String?) {
         guard db != nil else { return (0, nil) }
         var stmt: OpaquePointer?
@@ -281,11 +440,12 @@ final class AuditDB {
         return (Int(sqlite3_column_int(stmt, 0)), last)
     }
 
-    func finishDispatch(id: Int64, status: String, exitCode: Int32, summary: String? = nil) {
-        guard db != nil else { return }
+    @discardableResult
+    func finishDispatch(id: Int64, status: String, exitCode: Int32, summary: String? = nil) -> Bool {
+        guard db != nil else { return false }
         var stmt: OpaquePointer?
         let sql = "UPDATE dispatches SET finished_at = ?, status = ?, exit_code = ?, summary = ? WHERE id = ?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, status, -1, SQLITE_TRANSIENT)
@@ -297,6 +457,11 @@ final class AuditDB {
         }
         sqlite3_bind_int64(stmt, 5, id)
         sqlite3_step(stmt)
+        return true
+    }
+
+    func dispatchRow(id: Int64) -> DispatchRow? {
+        selectDispatches(where: "id = ?", binds: [String(id)], limit: 1).first
     }
 
     func dispatchRows(status: String?, limit: Int) -> [DispatchRow] {
@@ -310,7 +475,8 @@ final class AuditDB {
         guard db != nil else { return [] }
         let sql = """
         SELECT id, task_id, agent, command, cwd, started_at, finished_at, status, exit_code, \
-        run_log_path, worktree, summary FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
+        run_log_path, worktree, summary, pid, task_fingerprint, task_modified_at, verification, reviewed_at \
+        FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -329,7 +495,9 @@ final class AuditDB {
                 cwd: col(4), startedAt: col(5) ?? "", finishedAt: col(6),
                 status: col(7) ?? "",
                 exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8)),
-                runLogPath: col(9), worktree: col(10), summary: col(11)))
+                runLogPath: col(9), worktree: col(10), summary: col(11),
+                pid: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12)),
+                taskFingerprint: col(13), taskModifiedAt: col(14), verification: col(15), reviewedAt: col(16)))
         }
         return rows
     }

@@ -124,26 +124,40 @@ Open questions for the build:
 
 ## Status
 
-`research/ClaudeLanguageModel/ClaudeLanguageModel.swift` typechecks clean against
-the beta 3 SDK (`swiftc -typecheck -target arm64-apple-macos27.0`): full
-`LanguageModel` + `LanguageModelExecutor` conformance with transcript folding
-(alternating-role coalescing incl. thinking-signature replay), SSE → channel
-event translation, and Anthropic error mapping. Not yet exercised live.
+`research/ClaudeLanguageModel/ClaudeLanguageModel.swift` builds clean against the
+beta 4 SDK (26A5388f, `-target arm64-apple-macos27.0`): full `LanguageModel` +
+`LanguageModelExecutor` conformance with transcript folding (alternating-role
+coalescing incl. thinking-signature replay), SSE → channel event translation,
+and Anthropic error mapping. **Exercised live 2026-08-07** — see below.
 
 **Resolved**: `GenerationSchema`'s `Codable` encoding IS standard JSON Schema
 (verified via `SchemaProbe.swift` on beta 3: `type`/`properties`/`required`,
 `@Guide` descriptions and `.range` → `minimum`/`maximum`, plus harmless
 `title`/`x-order` extras). The executor's `input_schema` encoding works as-is.
 
-**Blocked (docs/roadmap.md #33)**: the live round-trip harness (`Harness.swift`,
-compiles clean) dies in dyld — the beta 3 OS runtime ships a newer
-FoundationModels than SDK 27A5194q declares. `…GenerationChannel.Event` is a
-protocol in the SDK but a concrete struct at runtime, so `channel.send` can't
-bind; `LanguageModelError.Refusal.init` also changed (worked around with a
-custom `ClaudeAPIError` for generic HTTP failures). Re-attempt when the next
-Xcode beta drops; expect a small mechanical diff on the event factories.
-Also still needs `ANTHROPIC_API_KEY` (absent from env and keychain). Then:
-guided generation + vision.
+**Resolved (docs/roadmap.md #33)**: the live round-trip harness
+(`Harness.swift`) was blocked through beta 3 by an SDK/runtime skew —
+`…GenerationChannel.Event` was a protocol in SDK 27A5194q but a concrete
+struct at runtime, so `channel.send` couldn't bind, and the binary died in
+dyld at launch. Beta 4 (OS 26A5388g, Xcode beta 27A5228h, SDK 26A5388f)
+healed it with no source changes; the anticipated event-factory diff never
+materialized. One deprecation fixed along the way:
+`LanguageModelCapabilities(capabilities:)` → `LanguageModelCapabilities(_:)`.
+The custom `ClaudeAPIError` for generic HTTP failures stays (it predates and
+outlives the `LanguageModelError.Refusal.init` change).
+
+**Verified live 2026-08-07**: `ANTHROPIC_API_KEY=... build/harness` completed
+a full round-trip — Claude called `ClockTool`, read the result, and answered
+from it; 5 transcript entries (instructions → prompt → toolCalls →
+toolOutput → response). Transcript folding, SSE → channel event translation,
+and the tool hop are all exercised. Next: guided generation + vision.
+
+Note on credentials: the harness reads `ANTHROPIC_API_KEY` and sends it as
+`x-api-key`, so it needs a **Console** API key with credits
+(platform.claude.com/settings/keys). A Claude Pro/Max/Team subscription does
+not cover API usage, and subscription "usage credits" are a separate balance
+that only extends plan usage (web/desktop/Claude Code) — they cannot pay for
+api.anthropic.com calls.
 
 ## Why this matters for apple-mcp
 

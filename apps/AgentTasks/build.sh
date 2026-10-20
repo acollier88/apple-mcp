@@ -92,8 +92,11 @@ xcrun appintentsmetadataprocessor \
     --validate-assistant-intents \
     --force
 
-echo "== signing (ad hoc) =="
-codesign --force --deep -s - "$APP"
+# tools/sign.sh resolves the persistent "AgentTasks Dev" identity (make
+# sign-identity; SIGN_IDENTITY / KEYCHAIN env override) and falls back to the
+# historical `codesign --force --deep -s -` ad-hoc signature when absent.
+echo "== signing =="
+"$REPO_ROOT/tools/sign.sh" "$APP"
 
 # Replace the installed app so Spotlight/Siri/Dock always see this build.
 INSTALL_APP=/Applications/AgentTasks.app
@@ -103,7 +106,7 @@ osascript -e 'tell application "AgentTasks" to quit' >/dev/null 2>&1 || true
 sleep 0.5
 rm -rf "$INSTALL_APP"
 ditto "$APP" "$INSTALL_APP"
-codesign --force --deep -s - "$INSTALL_APP"
+"$REPO_ROOT/tools/sign.sh" "$INSTALL_APP"
 
 echo "== registering with LaunchServices =="
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister

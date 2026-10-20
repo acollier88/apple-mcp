@@ -14,17 +14,23 @@ struct AppleTasksServerMain {
         if args.contains("-h") || args.contains("--help") {
             fputs("""
             apple-tasks-server [--port N] [--bind tailscale|loopback] [--listen HOST] [--unsafe-lan-bind]
-            Auth: APPLE_TASKS_SERVE_TOKEN or ~/.config/apple-tasks/serve.json
+            Auth: APPLE_TASKS_SERVE_TOKEN, Keychain item serve.token (apple-tasks secret set serve.token), or ~/.config/apple-tasks/serve.json
             """, stderr)
             return
         }
 
         let file = loadServeFile()
-        let token = ProcessInfo.processInfo.environment["APPLE_TASKS_SERVE_TOKEN"]
-            ?? file.token
-            ?? ""
+        let envToken = ProcessInfo.processInfo.environment["APPLE_TASKS_SERVE_TOKEN"]
+        let token: String
+        if let envToken, !envToken.isEmpty {
+            token = envToken
+        } else if let keychain = KeychainSecret.read(account: "serve.token") {
+            token = keychain
+        } else {
+            token = file.token ?? ""
+        }
         guard !token.isEmpty else {
-            fputs("APPLE_TASKS_SERVE_TOKEN or serve.json token is required\n", stderr)
+            fputs("APPLE_TASKS_SERVE_TOKEN, Keychain item serve.token, or serve.json token is required\n", stderr)
             exit(2)
         }
 

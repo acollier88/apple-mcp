@@ -55,6 +55,7 @@ struct DigestOut: Codable {
     let since: String
     let generatedAt: String
     let dispatches: [DispatchLine]
+    let pendingReview: [PendingReviewItem]
     let auditActions: Int
     let auditByCommand: [String: Int]
     let dueToday: [TaskOut]
@@ -115,6 +116,7 @@ struct Digest: AsyncParsableCommand {
             .filter { $0.startedAt >= sinceISO }
             .map { DigestOut.DispatchLine(id: $0.id, agent: $0.agent, status: $0.status,
                                           summary: $0.summary, taskId: $0.taskId) }
+        let pendingReview = PendingReview.items()
 
         // Due today (incl. overdue) + today's calendar.
         let calendar = Calendar.current
@@ -131,8 +133,9 @@ struct Digest: AsyncParsableCommand {
             .map(EventOut.init)
 
         var out = DigestOut(since: sinceISO, generatedAt: iso.string(from: Date()),
-                            dispatches: dispatches, auditActions: audit.count,
-                            auditByCommand: byCommand, dueToday: dueToday, events: events,
+                            dispatches: dispatches, pendingReview: pendingReview,
+                            auditActions: audit.count, auditByCommand: byCommand,
+                            dueToday: dueToday, events: events,
                             noteCreated: nil, pushed: nil)
 
         // Suggestions are best-effort: an unavailable model annotates the
@@ -173,9 +176,13 @@ struct Digest: AsyncParsableCommand {
     static func pushSummary(_ d: DigestOut) -> String {
         let ok = d.dispatches.filter { $0.status == "succeeded" }.count
         let bad = d.dispatches.count - ok
-        return "\(d.dispatches.count) dispatches (\(ok) ok, \(bad) not), "
+        var text = "\(d.dispatches.count) dispatches (\(ok) ok, \(bad) not), "
             + "\(d.auditActions) agent actions, \(d.dueToday.count) due today, "
             + "\(d.events.count) events"
+        if !d.pendingReview.isEmpty {
+            text += ", \(d.pendingReview.count) awaiting review"
+        }
+        return text
     }
 
     static func html(_ d: DigestOut) -> String {
@@ -189,6 +196,13 @@ struct Digest: AsyncParsableCommand {
                 "<li><b>#\(line.id)</b> \(HTML.escape(line.agent)) — \(HTML.escape(line.status))"
                     + (line.summary.map { ": \(HTML.escape(String($0.prefix(140))))" } ?? "")
                     + "</li>"
+            }.joined() + "</ul>")
+        }
+
+        if !d.pendingReview.isEmpty {
+            parts.append("<h2>Branches awaiting review (\(d.pendingReview.count))</h2>")
+            parts.append("<ul>" + d.pendingReview.map { item in
+                "<li>\(HTML.escape(Self.pendingReviewLine(item)))</li>"
             }.joined() + "</ul>")
         }
 
@@ -243,5 +257,22 @@ struct Digest: AsyncParsableCommand {
         }
 
         return parts.joined(separator: "\n")
+    }
+
+    static func pendingReviewLine(_ item: PendingReviewItem) -> String {
+        let title: String
+        if let summary = item.summary?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !summary.isEmpty {
+            title = summary
+        } else {
+            title = item.taskId
+        }
+        // Thousands of commits "ahead" means the repo's history was rewritten
+        // under the branch (weekly upstream rebase), not that the agent wrote
+        // thousands of commits; say so instead of reading out a silly number.
+        let ahead = item.commitsAhead > 500
+            ? "stale — base history rewritten"
+            : "\(item.commitsAhead) commit\(item.commitsAhead == 1 ? "" : "s")"
+        return "#\(item.id) \(item.agent) — \(title) — \(ahead): \(item.commits.first ?? "")"
     }
 }

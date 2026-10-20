@@ -44,6 +44,18 @@ claude mcp add apple-tasks -- bun /absolute/path/to/apple-mcp/mcp/src/server.ts
 Override the CLI binary with `APPLE_TASKS_BIN` if needed. First run prompts for
 Reminders access (TCC is per host process — Terminal ≠ your MCP host).
 
+Ad-hoc signatures change on every rebuild, so TCC (Reminders / Calendar /
+Automation) and Keychain ACLs reset. Create a persistent self-signed identity
+once — later `make` / `make app` pick it up automatically:
+
+```bash
+make sign-identity   # "AgentTasks Dev" in the login keychain; idempotent
+```
+
+You will be prompted for the login keychain password (so `codesign` can use the
+key without a GUI dialog). Trusting the cert for code signing is optional and
+needs admin; the identity still yields a stable designated requirement without it.
+
 ## Docs
 
 | Doc | Contents |
@@ -54,6 +66,7 @@ Reminders access (TCC is per host process — Terminal ≠ your MCP host).
 | [`docs/architecture.md`](docs/architecture.md) | Two-product design |
 | [`docs/roadmap.md`](docs/roadmap.md) | Ideas & status |
 | [`docs/dispatcher-v2.md`](docs/dispatcher-v2.md) | Dispatcher hardening design |
+| [`docs/security.md`](docs/security.md) | Threat model, secrets, publish checklist |
 
 ## Repo layout
 
