@@ -779,7 +779,7 @@ struct Doctor: AsyncParsableCommand {
             heals = await Self.enqueueHeals(issues: issues, listName: listName)
         }
         emit(DoctorOut(
-            binary: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path,
+            binary: Executable.url.path,
             hostProcess: Self.hostProcessName(),
             reminders: Self.describe(EKEventStore.authorizationStatus(for: .reminder)),
             calendars: Self.describe(EKEventStore.authorizationStatus(for: .event)),
