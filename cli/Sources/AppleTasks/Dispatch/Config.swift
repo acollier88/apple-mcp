@@ -33,6 +33,10 @@ struct AgentsConfig: Codable {
         /// Dispatcher env variable NAMES this lane needs even when `envMode`
         /// would drop them (e.g. `CURSOR_API_KEY` for the Cursor CLI).
         let envPassthrough: [String]?
+        /// Launch this lane through gatehouse. Absent means today's direct
+        /// spawn. `mode` is `"gatehouse"`; `net` and `preset` are forwarded
+        /// as `gate sandbox --net` / `--preset`.
+        let sandbox: Sandbox?
         /// How the rendered prompt reaches the agent (default `argv`):
         /// - `argv`: `{prompt}` in `command` is replaced inline (visible in
         ///   `ps`, subject to ARG_MAX). The ledger's command column stores
@@ -57,6 +61,15 @@ struct AgentsConfig: Codable {
         /// Context gates (IDEAS #22): all must pass or the task stays queued
         /// (no claim, no [failed]) and is retried next pass.
         let conditions: Conditions?
+    }
+
+    /// Per-lane gatehouse sandbox. Only `mode == "gatehouse"` changes dispatch.
+    struct Sandbox: Codable, Equatable, Sendable {
+        let mode: String
+        let net: String?
+        let preset: String?
+
+        var isGatehouse: Bool { mode.lowercased() == "gatehouse" }
     }
 
     enum PromptVia: String, Codable, Sendable {

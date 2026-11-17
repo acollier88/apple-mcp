@@ -111,6 +111,83 @@ enum ProcessRunner {
     }
 }
 
+/// Copy a pipe into the caller until EOF, without letting a grandchild that
+/// inherited the write end hold the parent past `finish`'s timeout.
+///
+/// Reads poll instead of blocking in `read(2)`. After the child has exited,
+/// `finish` waits for EOF; on timeout it asks the readers to stop and waits
+/// for them to leave before the caller closes the run log.
+enum PipeDrain {
+    static let postExitTimeout: TimeInterval = 2
+
+    static func copy(_ handle: FileHandle, stop: PipeStop, group: DispatchGroup,
+                     onChunk: @escaping (Data) -> Void) {
+        let fd = handle.fileDescriptor
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            defer { group.leave() }
+            var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+            while !stop.stopped {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                let rc = withUnsafeMutablePointer(to: &pfd) { Darwin.poll($0, 1, 200) }
+                if stop.stopped { break }
+                if rc == 0 { continue }
+                if rc < 0 {
+                    if errno == EINTR { continue }
+                    break
+                }
+                let ready = pfd.revents
+                if ready & Int16(POLLIN) != 0 {
+                    let n = buffer.withUnsafeMutableBytes { raw -> Int in
+                        guard let base = raw.baseAddress else { return 0 }
+                        return Darwin.read(fd, base, raw.count)
+                    }
+                    if n > 0 {
+                        onChunk(Data(buffer[0..<n]))
+                        continue
+                    }
+                    if n < 0 && errno == EINTR { continue }
+                    break
+                }
+                if ready & Int16(POLLHUP) != 0 || ready & Int16(POLLERR) != 0 || ready & Int16(POLLNVAL) != 0 {
+                    break
+                }
+            }
+        }
+    }
+
+    /// True when every reader saw EOF before `timeout`. Otherwise the readers
+    /// are asked to stop and this returns once they have left.
+    @discardableResult
+    static func finish(_ group: DispatchGroup, stop: PipeStop, timeout: TimeInterval) -> Bool {
+        if group.wait(timeout: .now() + timeout) == .success {
+            return true
+        }
+        stop.stop()
+        _ = group.wait(timeout: .now() + 1)
+        return false
+    }
+}
+
+/// Shared flag for `PipeDrain` readers. Set after the child has exited and
+/// the post-exit wait has elapsed.
+final class PipeStop: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    var stopped: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
+
+    func stop() {
+        lock.lock()
+        flag = true
+        lock.unlock()
+    }
+}
+
 /// Lock-protected accumulator for one pipe drain.
 private final class DrainBuffer: @unchecked Sendable {
     private let lock = NSLock()

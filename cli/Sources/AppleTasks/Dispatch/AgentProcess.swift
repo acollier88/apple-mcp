@@ -187,10 +187,12 @@ enum AgentProcess {
         standardOutput: FileHandle? = nil,
         standardError: FileHandle? = nil,
         captureStdout: Bool = false,
+        captureStderr: Bool = false,
         timeout: TimeInterval? = nil,
         drainGrace: TimeInterval = stdoutDrainGrace,
         onSpawn: ((Int32) -> Void)? = nil,
-        onStdout: ((Data) -> Void)? = nil
+        onStdout: ((Data) -> Void)? = nil,
+        onStderr: ((Data) -> Void)? = nil
     ) throws -> AgentRunResult {
         let spawned = try spawn(
             executable: executable,
@@ -199,8 +201,9 @@ enum AgentProcess {
             directory: directory,
             stdin: stdin,
             standardOutput: captureStdout ? nil : standardOutput,
-            standardError: standardError,
-            captureStdout: captureStdout)
+            standardError: captureStderr ? nil : standardError,
+            captureStdout: captureStdout,
+            captureStderr: captureStderr)
         let drain: StdoutDrain?
         if let fd = spawned.stdoutRead {
             let box = StdoutDrain(fd: fd)
@@ -208,6 +211,14 @@ enum AgentProcess {
             drain = box
         } else {
             drain = nil
+        }
+        let errDrain: StdoutDrain?
+        if let fd = spawned.stderrRead {
+            let box = StdoutDrain(fd: fd)
+            box.start { chunk in onStderr?(chunk) }
+            errDrain = box
+        } else {
+            errDrain = nil
         }
         if let writeFD = spawned.stdinWrite, let stdin {
             _ = fcntl(writeFD, F_SETNOSIGPIPE, 1)
@@ -252,7 +263,9 @@ enum AgentProcess {
         // and, once reparented, is invisible to pgrep. The group signal
         // reaches members that stayed; the drain grace covers one that left.
         signalOwnGroup(spawned.pid, SIGTERM)
+        let drainDeadline = Date().addingTimeInterval(drainGrace)
         drain?.finish(grace: drainGrace)
+        errDrain?.finish(grace: max(drainDeadline.timeIntervalSinceNow, 0))
         if groupHasMembers(spawned.pid) {
             signalOwnGroup(spawned.pid, SIGKILL)
         }
@@ -294,7 +307,8 @@ enum AgentProcess {
         stdin: Data?,
         standardOutput: FileHandle?,
         standardError: FileHandle?,
-        captureStdout: Bool
+        captureStdout: Bool,
+        captureStderr: Bool = false
     ) throws -> SpawnedAgent {
         var attr: posix_spawnattr_t?
         let attrRC = posix_spawnattr_init(&attr)
@@ -339,7 +353,14 @@ enum AgentProcess {
                 &actions, standardOutput.fileDescriptor, STDOUT_FILENO))
         }
 
-        if let standardError {
+        var stderrRead: Int32?
+        if captureStderr {
+            let ends = try makePipe()
+            stderrRead = ends.read
+            try Self.check(posix_spawn_file_actions_adddup2(&actions, ends.write, STDERR_FILENO))
+            try Self.check(posix_spawn_file_actions_addclose(&actions, ends.read))
+            try Self.check(posix_spawn_file_actions_addclose(&actions, ends.write))
+        } else if let standardError {
             try Self.check(posix_spawn_file_actions_adddup2(
                 &actions, standardError.fileDescriptor, STDERR_FILENO))
         }
@@ -373,8 +394,9 @@ enum AgentProcess {
         guard spawnRC == 0, pid > 1 else { throw AgentSpawnError(code: spawnRC == 0 ? ECHILD : spawnRC) }
 
         if let stdoutRead { closeAfter.removeAll { $0 == stdoutRead } }
+        if let stderrRead { closeAfter.removeAll { $0 == stderrRead } }
         if let stdinWrite { closeAfter.removeAll { $0 == stdinWrite } }
-        return SpawnedAgent(pid: pid, stdoutRead: stdoutRead, stdinWrite: stdinWrite)
+        return SpawnedAgent(pid: pid, stdoutRead: stdoutRead, stderrRead: stderrRead, stdinWrite: stdinWrite)
     }
 
     private static func check(_ rc: Int32) throws {
@@ -393,12 +415,14 @@ struct AgentSpawnError: LocalizedError {
 private final class SpawnedAgent {
     let pid: Int32
     let stdoutRead: Int32?
+    let stderrRead: Int32?
     let stdinWrite: Int32?
     private var collected: Int32?
 
-    init(pid: Int32, stdoutRead: Int32?, stdinWrite: Int32?) {
+    init(pid: Int32, stdoutRead: Int32?, stderrRead: Int32?, stdinWrite: Int32?) {
         self.pid = pid
         self.stdoutRead = stdoutRead
+        self.stderrRead = stderrRead
         self.stdinWrite = stdinWrite
     }
 

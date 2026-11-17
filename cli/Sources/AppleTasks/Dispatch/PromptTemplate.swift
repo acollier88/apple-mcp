@@ -44,6 +44,41 @@ enum PromptTemplate {
         while s.contains(">>>") { s = s.replacingOccurrences(of: ">>>", with: "> > >") }
         return s
     }
+
+    /// Write-back commands a sandboxed lane must send through the broker.
+    /// Longer phrases first so `approve request` is not confused with a
+    /// shorter prefix. `approve answer`, `secret`, `dispatch`, and `serve`
+    /// are intentionally absent — policy denies them.
+    static let writeBackCommands = [
+        "notes create", "approve request", "approve check", "update", "complete", "notify",
+    ]
+
+    /// Prefix `apple-tasks <write-back>` with `gate run -- `. A command that
+    /// is already prefixed is left alone. Unsandboxed lanes do not call this.
+    static func prefixGateRun(_ prompt: String) -> String {
+        let token = "apple-tasks "
+        let already = "gate run -- "
+        var out = ""
+        var i = prompt.startIndex
+        while i < prompt.endIndex {
+            if prompt[i...].hasPrefix(token) {
+                let after = prompt.index(i, offsetBy: token.count)
+                let rest = prompt[after...]
+                let matched = writeBackCommands.contains { rest.hasPrefix($0) }
+                let gated: Bool = {
+                    guard prompt.distance(from: prompt.startIndex, to: i) >= already.count else { return false }
+                    let start = prompt.index(i, offsetBy: -already.count)
+                    return prompt[start..<i] == already
+                }()
+                if matched && !gated {
+                    out += already
+                }
+            }
+            out.append(prompt[i])
+            i = prompt.index(after: i)
+        }
+        return out
+    }
 }
 
 extension Dispatch {

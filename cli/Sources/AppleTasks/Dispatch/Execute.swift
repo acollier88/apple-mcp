@@ -30,10 +30,11 @@ extension Dispatch {
     /// reap/cancel can signal it; Phase C still records the outcome.
     private static func execute(_ spec: RunSpec) async -> RunOutcome {
         var argv = spec.argv
-        var seat = AgentSeat.from(argv: argv)
-        let captureCursor = AgentSeat.isCursorAgent(argv)
+        let lane = Self.laneArgv(argv)
+        var seat = AgentSeat.from(argv: lane)
+        let captureCursor = AgentSeat.isCursorAgent(lane)
         if captureCursor {
-            argv = AgentSeat.withStreamJSON(argv)
+            argv = Self.mapLaneArgv(argv, AgentSeat.withStreamJSON)
         }
 
         let parentEnv = ProcessInfo.processInfo.environment
@@ -61,16 +62,19 @@ extension Dispatch {
             caller: "agent:\(spec.agentTag)",
             searchPath: { Self.agentSearchPath(existing: $0) })
 
-        // Cursor's stream-json has to be filtered into the run log. That is
-        // the only path that reads a pipe; a grandchild holding the write end
-        // used to block readDataToEndOfFile until reboot. AgentProcess.run
-        // drains with a grace period and puts the agent in its own group.
-        let pipeStdout = captureCursor && logHandle != nil
-        let filter: CursorNDJSONFilter?
-        if pipeStdout, let logHandle {
-            filter = CursorNDJSONFilter(log: logHandle)
-        } else {
-            filter = nil
+        // Always pipes. A log-file handle as stdout/stderr makes the Cursor
+        // CLI abort under a sandbox, and readDataToEndOfFile after exit hangs
+        // when a grandchild keeps the pipe open. AgentProcess.run puts the
+        // agent in its own process group, copies both pipes into the run log,
+        // and bounds the post-exit drain.
+        let outputLock = NSLock()
+        let filter: CursorNDJSONFilter? = (captureCursor && logHandle != nil)
+            ? CursorNDJSONFilter(log: logHandle!, writeLock: outputLock) : nil
+        func writeLog(_ data: Data) {
+            guard let logHandle, !data.isEmpty else { return }
+            outputLock.lock()
+            logHandle.write(data)
+            outputLock.unlock()
         }
 
         let result: AgentProcess.AgentRunResult
@@ -81,9 +85,8 @@ extension Dispatch {
                 environment: environment,
                 directory: spec.runCwd,
                 stdin: spec.promptVia == .stdin ? Data((spec.stdinPrompt ?? "").utf8) : nil,
-                standardOutput: pipeStdout ? nil : logHandle,
-                standardError: logHandle,
-                captureStdout: pipeStdout,
+                captureStdout: logHandle != nil,
+                captureStderr: logHandle != nil,
                 timeout: spec.timeoutMinutes.map { TimeInterval($0) * 60 },
                 onSpawn: { pid in
                     // Leave pid set after exit (informational). The dispatcher
@@ -92,7 +95,14 @@ extension Dispatch {
                         id: spec.ledgerId, pid: pid,
                         dispatcherPid: ProcessInfo.processInfo.processIdentifier)
                 },
-                onStdout: { filter?.ingest($0) })
+                onStdout: { chunk in
+                    if let filter {
+                        filter.ingest(chunk)
+                    } else {
+                        writeLog(chunk)
+                    }
+                },
+                onStderr: { writeLog($0) })
         } catch {
             return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
                               spawnError: error.localizedDescription, seat: seat)
