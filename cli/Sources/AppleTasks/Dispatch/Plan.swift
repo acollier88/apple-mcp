@@ -322,6 +322,9 @@ extension Dispatch {
                 }
                 prompt += "\n" + PromptTemplate.end("ATTACHMENTS")
             }
+            if agent.sandbox?.isGatehouse == true {
+                prompt = PromptTemplate.prefixGateRun(prompt)
+            }
             guard let template = agent.commandTemplate(tag: agentTag) else {
                 reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
                                               cwd: nil,
@@ -408,13 +411,16 @@ extension Dispatch {
             // With no workdir tag there is no repo to isolate; the task runs
             // in a throwaway per-dispatch scratch directory instead (IDEAS
             // #54) — worktree lanes included, since scratch IS the isolation.
+            // Runtime dirs live under Application Support, not the config dir.
+            let layout = AppleTasksLayout.resolve()
             var runCwd = cwd
             var worktreePath: String?
             var branchName: String?
             if cwd == nil {
-                let scratch = AgentsConfig.url.deletingLastPathComponent()
-                    .appendingPathComponent("scratch/\(ledgerId)").path
+                let scratch = layout.scratchDir(ledgerId).path
                 do {
+                    _ = ConfigPermissions.ensurePrivateDirectory(layout.support)
+                    _ = ConfigPermissions.ensurePrivateDirectory(layout.scratch)
                     try FileManager.default.createDirectory(
                         atPath: scratch, withIntermediateDirectories: true)
                 } catch {
@@ -427,8 +433,9 @@ extension Dispatch {
                 }
                 runCwd = scratch
             } else if agent.worktree == true, let repo = cwd {
-                let wt = AgentsConfig.url.deletingLastPathComponent()
-                    .appendingPathComponent("worktrees/\(ledgerId)").path
+                _ = ConfigPermissions.ensurePrivateDirectory(layout.support)
+                _ = ConfigPermissions.ensurePrivateDirectory(layout.worktrees)
+                let wt = layout.worktreeDir(ledgerId).path
                 let branch = "agent/\(agentTag)-\(ledgerId)"
                 let gitCode = Self.runGit(["worktree", "add", "-b", branch, wt], repo: repo)
                 guard gitCode == 0 else {
@@ -445,7 +452,8 @@ extension Dispatch {
             }
 
             // Run log: everything the agent prints, kept per ledger row.
-            let runsDir = AgentsConfig.url.deletingLastPathComponent().appendingPathComponent("runs")
+            _ = ConfigPermissions.ensurePrivateDirectory(layout.support)
+            let runsDir = layout.runs
             RunLogs.ensureDirectory(runsDir)
             let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
             AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: worktreePath)
@@ -477,14 +485,23 @@ extension Dispatch {
                 finalArgv = Self.renderArgv(template, prompt: prompt, via: promptVia, promptFile: promptURL.path)
             }
 
+            let workspace = runCwd ?? cwd ?? ""
+            let passthrough = agent.envPassthrough ?? []
+            finalArgv = Self.planArgv(
+                argv: finalArgv, sandbox: agent.sandbox, workspace: workspace,
+                repo: cwd, envPassthrough: passthrough)
+            let ledgerArgv = Self.renderArgv(
+                template, prompt: Self.ledgerPromptMarker, via: promptVia,
+                promptFile: promptFile ?? "{promptFile}")
+            let displayArgv = Self.planArgv(
+                argv: ledgerArgv, sandbox: agent.sandbox, workspace: workspace,
+                repo: cwd, envPassthrough: passthrough)
             specs.append(RunSpec(ledgerId: ledgerId, taskId: taskId, title: parsed.title,
                                  agentTag: agentTag, argv: finalArgv, repo: cwd, runCwd: runCwd,
                                  worktree: worktreePath, branch: branchName,
                                  timeoutMinutes: agent.timeoutMinutes,
                                  envPolicy: AgentEnv.Policy.resolve(lane: agent, config: config),
-                                 displayCommand: Self.ledgerCommand(
-                                     template, via: promptVia,
-                                     promptFile: promptFile ?? "{promptFile}"),
+                                 displayCommand: displayArgv.joined(separator: " "),
                                  logPath: logURL.path,
                                  promptVia: promptVia,
                                  stdinPrompt: promptVia == .stdin ? prompt : nil,
@@ -561,6 +578,80 @@ extension Dispatch {
                               promptFile: String) -> String {
         renderArgv(template, prompt: ledgerPromptMarker, via: via, promptFile: promptFile)
             .joined(separator: " ")
+    }
+
+    /// Argv Phase B executes. A gatehouse lane is wrapped in `gate sandbox`;
+    /// every other lane (including `sandbox == nil`) is returned unchanged.
+    /// Harness flags (`--sandbox`, `--sandbox <mode>`, `--sandbox=<mode>`)
+    /// are removed only from the wrapped argv so a gatehouse lane does not
+    /// also start a nested sandbox.
+    static func planArgv(argv: [String], sandbox: AgentsConfig.Sandbox?,
+                         workspace: String, repo: String?,
+                         envPassthrough: [String]) -> [String] {
+        guard sandbox?.isGatehouse == true else { return argv }
+        var out = ["gate", "sandbox", "--workspace", workspace]
+        if let repo, !repo.isEmpty {
+            let gitDir = URL(fileURLWithPath: repo).appendingPathComponent(".git").path
+            out += ["--git-dir", gitDir]
+        }
+        if let net = sandbox?.net, !net.isEmpty {
+            out += ["--net", net]
+        }
+        if let preset = sandbox?.preset, !preset.isEmpty {
+            out += ["--preset", preset]
+        }
+        for name in envPassthrough where !name.isEmpty {
+            out += ["--env", name]
+        }
+        out.append("--")
+        out += stripHarnessSandbox(argv)
+        return out
+    }
+
+    /// The lane command inside a `gate sandbox -- …` wrapper, or `argv` when
+    /// it is not that wrapper. Seat detection and Cursor NDJSON filtering use
+    /// this so they still see `agent` / `claude` rather than `gate`.
+    static func laneArgv(_ argv: [String]) -> [String] {
+        guard let sep = sandboxSeparator(argv) else { return argv }
+        return Array(argv[argv.index(after: sep)...])
+    }
+
+    /// Apply `transform` to the inner lane argv of a sandbox wrapper.
+    static func mapLaneArgv(_ argv: [String], _ transform: ([String]) -> [String]) -> [String] {
+        guard let sep = sandboxSeparator(argv) else { return transform(argv) }
+        return Array(argv[...sep]) + transform(Array(argv[argv.index(after: sep)...]))
+    }
+
+    private static func sandboxSeparator(_ argv: [String]) -> Array<String>.Index? {
+        guard argv.first == "gate", let sep = argv.firstIndex(of: "--") else { return nil }
+        guard argv[..<sep].contains("sandbox") else { return nil }
+        return sep
+    }
+
+    /// Drop a harness-native sandbox flag. `--sandbox <value>` drops the value
+    /// when the next token is not itself a flag; a bare `--sandbox` (antigravity)
+    /// drops only the flag.
+    static func stripHarnessSandbox(_ argv: [String]) -> [String] {
+        var out: [String] = []
+        var i = 0
+        while i < argv.count {
+            let arg = argv[i]
+            if arg == "--sandbox" {
+                if i + 1 < argv.count, !argv[i + 1].hasPrefix("-") {
+                    i += 2
+                } else {
+                    i += 1
+                }
+                continue
+            }
+            if arg.hasPrefix("--sandbox=") {
+                i += 1
+                continue
+            }
+            out.append(arg)
+            i += 1
+        }
+        return out
     }
 
     /// Substitute the prompt into an argv template according to `promptVia`.

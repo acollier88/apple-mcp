@@ -34,6 +34,8 @@ struct DoctorOut: Codable {
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
+    /// Gatehouse probe. Missing gatehouse fills this in; it does not fail doctor.
+    let gatehouse: GatehouseDoctorStatus
     /// `--fix-modes` only: every chmod it made beyond the secret files
     /// (config dir, ledger DB/WAL/SHM, logs/, runs/*, agents.json[.bak-*]).
     let fixedModes: [ConfigPermissions.ModeChange]?
@@ -810,7 +812,16 @@ struct Doctor: AsyncParsableCommand {
                 .appendingPathComponent(".config/apple-tasks", isDirectory: true)
         }()
         // Before secretsStatus so agents.json shows up in fixedModes.
-        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir) : nil
+        // runs/ now lives under Application Support; move any legacy copies
+        // once, then tighten that tree too.
+        let layout = AppleTasksLayout.resolve()
+        let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
+        if !migration.notes.isEmpty {
+            let text = migration.notes.joined(separator: "; ")
+            FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+        }
+        let supportDir = layout.support
+        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir, supportDir: supportDir) : nil
         let secrets = Self.secretsStatus(
             configDir: configDir,
             store: Secrets.store,
@@ -875,8 +886,17 @@ struct Doctor: AsyncParsableCommand {
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
             heals: heals,
+            gatehouse: Self.gatehouseStatus(),
             fixedModes: fixedModes
         ))
+    }
+
+    /// Running / enrolled / hooks fail-closed / lanes that are still unsandboxed.
+    /// `AgentsConfig.load` failure leaves the lane list empty; the probe itself
+    /// never throws.
+    static func gatehouseStatus() -> GatehouseDoctorStatus {
+        let agents = (try? AgentsConfig.load())?.agents ?? [:]
+        return GatehouseClient.doctorStatus(agents: agents, facts: GatehouseClient.observe())
     }
 
     /// One issue per affected *system*. Hermes↔HA adapter is ignored when HA itself is down.
@@ -1100,7 +1120,7 @@ Hermes-side: start or replace the gateway (`hermes gateway run --replace` or the
                 tags: ["heal", "apple-mcp", "auto"],
                 title: "Heal failed apple-tasks dispatches",
                 notes: header + """
-Inspect apple-tasks dispatches --status failed and the run log under ~/.config/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
+Inspect apple-tasks dispatches --status failed and the run log under ~/Library/Application Support/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
 """ + footer
             )
         }

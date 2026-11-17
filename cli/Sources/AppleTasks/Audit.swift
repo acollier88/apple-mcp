@@ -88,7 +88,7 @@ final class AuditDB {
     }
 
     /// Schema version the code expects. Bump when adding a migration case.
-    static let schemaVersion: Int32 = 2
+    static let schemaVersion: Int32 = 3
 
     var schemaVersion: Int32 { Int32(scalarInt("PRAGMA user_version") ?? 0) }
 
@@ -121,6 +121,10 @@ final class AuditDB {
                 // Reviewed-branch bookkeeping: set when a human discards a
                 // succeeded worktree/branch (dispatch-discard) or GC merges it.
                 addColumnIfMissing(table: "dispatches", column: "reviewed_at", type: "TEXT")
+            case 2:
+                // Dispatcher process id, so reap can tell "the agent exited and
+                // this pass never recorded it" from "the dispatcher is gone".
+                addColumnIfMissing(table: "dispatches", column: "dispatcher_pid", type: "INTEGER")
             default:
                 return
             }
@@ -253,6 +257,8 @@ final class AuditDB {
         let summary: String?
         /// Agent process id while running (nil before spawn / for old rows).
         let pid: Int?
+        /// Dispatcher process that spawned `pid` (nil on rows from before schema v3).
+        let dispatcherPid: Int?
         /// Reminder content fingerprint captured right after Phase C write-back
         /// (TaskFingerprint.of). nil for rows finished before schema v2.
         let taskFingerprint: String?
@@ -312,15 +318,18 @@ final class AuditDB {
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 
-    /// Record the spawned agent's pid so reap/cancel can signal it.
+    /// Record the spawned agent's pid so reap/cancel can signal it, and the
+    /// dispatcher pid so a later pass can tell a stuck dispatcher from a dead one.
     @discardableResult
-    func setDispatchPid(id: Int64, pid: Int32?) -> Bool {
+    func setDispatchPid(id: Int64, pid: Int32?, dispatcherPid: Int32? = nil) -> Bool {
         guard db != nil else { return false }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET pid = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        let sql = "UPDATE dispatches SET pid = ?, dispatcher_pid = ? WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(stmt) }
         if let pid { sqlite3_bind_int(stmt, 1, pid) } else { sqlite3_bind_null(stmt, 1) }
-        sqlite3_bind_int64(stmt, 2, id)
+        if let dispatcherPid { sqlite3_bind_int(stmt, 2, dispatcherPid) } else { sqlite3_bind_null(stmt, 2) }
+        sqlite3_bind_int64(stmt, 3, id)
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 
@@ -446,6 +455,8 @@ final class AuditDB {
           AND status IN ('failed','timeout')
           AND (summary IS NULL OR (
                 summary NOT LIKE 'dispatcher died%'
+                AND summary NOT LIKE 'dispatcher process is gone%'
+                AND summary NOT LIKE 'agent exited but dispatcher never recorded%'
                 AND summary NOT LIKE 'reaped:%'))
           AND id > COALESCE(
                 (SELECT MAX(id) FROM dispatches
@@ -514,7 +525,8 @@ final class AuditDB {
         guard db != nil else { return [] }
         let sql = """
         SELECT id, task_id, agent, command, cwd, started_at, finished_at, status, exit_code, \
-        run_log_path, worktree, summary, pid, task_fingerprint, task_modified_at, verification, reviewed_at \
+        run_log_path, worktree, summary, pid, task_fingerprint, task_modified_at, verification, reviewed_at, \
+        dispatcher_pid \
         FROM dispatches WHERE \(clause) ORDER BY id DESC LIMIT \(limit)
         """
         var stmt: OpaquePointer?
@@ -536,6 +548,7 @@ final class AuditDB {
                 exitCode: sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 8)),
                 runLogPath: col(9), worktree: col(10), summary: col(11),
                 pid: sqlite3_column_type(stmt, 12) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 12)),
+                dispatcherPid: sqlite3_column_type(stmt, 17) == SQLITE_NULL ? nil : Int(sqlite3_column_int(stmt, 17)),
                 taskFingerprint: col(13), taskModifiedAt: col(14), verification: col(15), reviewedAt: col(16)))
         }
         return rows
@@ -576,7 +589,7 @@ final class AuditDB {
         let expiresAt: String?
         let answeredAt: String?
         let status: String        // pending | approved | denied | expired
-        let answeredVia: String?  // "ntfy" | "cli"
+        let answeredVia: String?  // "ntfy" | "cli" | "gatehouse"
     }
 
     func createApproval(token: String, taskId: String?, question: String, expiresAt: String?) {

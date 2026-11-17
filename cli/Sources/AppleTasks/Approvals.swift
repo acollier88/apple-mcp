@@ -9,6 +9,11 @@ import Foundation
 // approvals table; `approve answer` is the Mac-side path (and the escape
 // hatch when a push was quiet-hours suppressed). First answer wins.
 //
+// When gatehouse is running and a passkey is enrolled, the decision is a
+// `gate ask` of an ask_strong argv instead. ntfy still fires, without
+// buttons — a notification only. If gatehouse is absent the ntfy/CLI path
+// below is unchanged.
+//
 // Trust model: whoever knows the reply topic name can answer, exactly like
 // the main ntfy topic's trust model — topics are the secret. Keep both
 // unguessable. The audit table records every request and answer with caller.
@@ -70,7 +75,9 @@ struct ApproveRequest: AsyncParsableCommand {
         Push an approval request with [Approve] [Deny] buttons and emit its \
         token. The push respects quietHours (notify.json) unless --force; a \
         suppressed request still exists and can be answered with 'approve \
-        answer' or seen in 'approve list'.
+        answer' or seen in 'approve list'. When gatehouse is running and a \
+        passkey is enrolled, the decision is a gate ask_strong request and \
+        ntfy is a notification only.
         """
     )
 
@@ -87,6 +94,10 @@ struct ApproveRequest: AsyncParsableCommand {
     var force = false
 
     func run() async throws {
+        if GatehouseClient.delegatesApprovals(GatehouseClient.observe()) {
+            try await runViaGatehouse()
+            return
+        }
         let (server, topic, replyTopic) = try ApprovalTopics.resolve()
         let token = UUID().uuidString.prefix(8).lowercased()
         let iso = ISO8601DateFormatter()
@@ -108,6 +119,45 @@ struct ApproveRequest: AsyncParsableCommand {
         }
 
         guard let row = AuditDB.shared.approvalRows(token: String(token)).first else {
+            throw AppleTasksError.saveFailed("approval row vanished after insert (db unwritable?)")
+        }
+        emit(ApprovalOut(row, pushSuppressed: suppressed))
+    }
+
+    /// Gatehouse is the approval channel. ntfy, when configured, is a
+    /// notification without buttons. A missing daemon answer leaves the row
+    /// pending so `approve answer` still works.
+    private func runViaGatehouse() async throws {
+        let token = String(UUID().uuidString.prefix(8)).lowercased()
+        let iso = ISO8601DateFormatter()
+        let expiresAt = iso.string(from: Date().addingTimeInterval(TimeInterval(expiresMinutes) * 60))
+
+        AuditDB.shared.createApproval(token: token, taskId: taskId,
+                                      question: question, expiresAt: expiresAt)
+        AuditDB.shared.record(command: "approve request", taskId: taskId, detail: "\(token): \(question)")
+
+        var suppressed: String?
+        let config = NotifyConfig.load()
+        if !force, let quiet = config?.quietHours, case .inside(let window) = quiet.check() {
+            suppressed = window
+            AuditDB.shared.record(command: "approve request", taskId: taskId,
+                                  detail: token, result: "push suppressed (quiet hours \(window))")
+        } else if NotifyConfig.resolveTopic(config) != nil {
+            let title = "Agent approval needed" + (taskId.map { " (task \($0.prefix(8))…)" } ?? "")
+            _ = await Notifier.push(title: title, body: question + "\n[\(token)]\nApprove on this Mac (gatehouse).")
+        }
+
+        if let decision = GatehouseClient.askStrong(
+            token: token, question: question,
+            timeout: TimeInterval(max(expiresMinutes, 1) * 60)) {
+            let status = decision == "approved" ? "approved" : "denied"
+            if AuditDB.shared.answerApproval(token: token, status: status, via: "gatehouse") {
+                AuditDB.shared.record(command: "approve answer", taskId: taskId,
+                                      detail: "\(token): \(status) via gatehouse")
+            }
+        }
+
+        guard let row = AuditDB.shared.approvalRows(token: token).first else {
             throw AppleTasksError.saveFailed("approval row vanished after insert (db unwritable?)")
         }
         emit(ApprovalOut(row, pushSuppressed: suppressed))
