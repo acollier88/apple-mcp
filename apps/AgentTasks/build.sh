@@ -16,23 +16,18 @@ TOOLCHAIN=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}/Toolchain
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 XCODE_BUILD=$(xcodebuild -version | awk '/Build version/{print $3}')
 
-# Ensure the CLI the app shells to exists, and stamp its absolute path into the
-# bundle so /Applications/AgentTasks.app still finds it after install.
-echo "== ensuring CLI + native-tag helper =="
-# `all` builds apple-tasks and the sibling apple-tasks-private ReminderKit
-# helper. Without the helper, add/update only write [tag] title prefixes.
-make -C "$REPO_ROOT/cli" all
-CLI_BIN=""
-for candidate in \
-    "$REPO_ROOT/cli/.build/release/apple-tasks" \
-    "$REPO_ROOT/cli/.build/out/Products/Release/apple-tasks"; do
-    if [[ -x "$candidate" ]]; then
-        CLI_BIN="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
-        break
-    fi
-done
-if [[ -z "$CLI_BIN" ]]; then
-    echo "error: apple-tasks binary missing after make -C cli" >&2
+# Install the CLI the app shells to and stamp the *installed* path into the
+# bundle (#33): the build directory is not a deploy target — any `swift
+# build` there would silently swap what the app runs.
+echo "== installing CLI + native-tag helper =="
+# `make install` builds, signs and copies apple-tasks and the sibling
+# apple-tasks-private ReminderKit helper into $BINDIR (default ~/.local/bin).
+# Without the helper, add/update only write [tag] title prefixes.
+BINDIR="${BINDIR:-${PREFIX:-$HOME/.local}/bin}"
+make -C "$REPO_ROOT" install BINDIR="$BINDIR"
+CLI_BIN="$BINDIR/apple-tasks"
+if [[ ! -x "$CLI_BIN" ]]; then
+    echo "error: $CLI_BIN missing after make install" >&2
     exit 1
 fi
 HELPER_BIN="$(dirname "$CLI_BIN")/apple-tasks-private"

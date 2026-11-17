@@ -24,6 +24,8 @@ public enum AppleTasksCLI {
             if let env = ProcessInfo.processInfo.environment["APPLE_TASKS_BIN"], !env.isEmpty {
                 candidates.append(env)
             }
+            // `make install` copy (#33); the repo build dir is a dev fallback.
+            // Keep in step with the app's CLI.binaryCandidates().
             let home = FileManager.default.homeDirectoryForCurrentUser
             candidates.append(home.appendingPathComponent(".local/bin/apple-tasks").path)
             let here = URL(fileURLWithPath: #filePath)

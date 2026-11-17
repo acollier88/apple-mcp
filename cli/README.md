@@ -27,11 +27,27 @@ nor subtask relationships — title prefixes and lists are the portable equivale
 # from repo root:
 make            # builds the CLI and the optional native-tags helper
 # binaries: cli/.build/release/apple-tasks, cli/.build/release/apple-tasks-private
+make install    # signs + copies both to ~/.local/bin (override BINDIR= or PREFIX=)
 
 # or from this directory:
 make cli && make helper
 swift build -c release   # CLI only; everything works without the helper
 ```
+
+`cli/.build/` is a build directory, not a deploy target. launchd, the app and
+the Mail rule run `~/.local/bin/apple-tasks`, which only changes when you run
+`make install` (or `make install-agent` / `make app`, which run it). The
+helper is installed next to the binary because `NativeTags` looks for
+`apple-tasks-private` beside the resolved executable. `make cli` links the
+git commit into the binary (`__TEXT,__at_build`, generated under `.build/`,
+so the tracked tree stays clean):
+
+```bash
+apple-tasks --version   # 0.1.0 (commit 1a2b3c4d5e6f), or "-dirty" / "unknown"
+```
+
+A plain `swift build` / `swift test` (as in CI) has no stamp and reports
+`unknown`.
 
 ### Native tag mirroring
 
@@ -183,8 +199,12 @@ The CLI mirrors the push path as `apple-tasks notify <title> <message>
 [--push]`; the dispatcher pushes failures/timeouts automatically when
 notify.json is configured (banners follow `notifyOn`).
 
-The server shells out to the Swift binary at `cli/.build/release/apple-tasks`;
-override with the `APPLE_TASKS_BIN` env var.
+The server shells out to the Swift binary at `cli/.build/release/apple-tasks`
+(the checkout it runs from, which suits agents working on this repo).
+Override with the `APPLE_TASKS_BIN` env var, for example
+`APPLE_TASKS_BIN=~/.local/bin/apple-tasks` to use the `make install` copy that
+launchd runs. The HTTP bridge (`server/`) and AgentTasks.app look for
+`~/.local/bin/apple-tasks` before falling back to the build directory.
 
 ### Location: whereami & Find My sidecar
 
@@ -323,7 +343,30 @@ make uninstall-agent
 make install-digest             # daily 07:00 digest --note --push
 make install-digest HOUR=7 MINUTE=30
 make uninstall-digest
+
+make install                    # redeploy after pulling; the job picks it up next pass
 ```
+
+Both targets run `make install` first. The plists point at the installed
+`~/.local/bin/apple-tasks` (or `$(BINDIR)/apple-tasks`), not `cli/.build/`, so
+rebuilding any checkout does not change what launchd runs. Redeploy with
+`make install` from the checkout you want live; the plist does not need
+rewriting. `doctor`'s `deployment` block compares the commit stamped into the
+launchd binary (`launchdCommit`) with the source HEAD. It reports
+`binaryMatchesHead` and says whether the binary is behind HEAD in `cli/`,
+was built from another branch, or was built from uncommitted changes. For an
+unstamped binary it falls back to the older mtime check
+(`comparison: "mtime"`).
+
+**Upgrading an older install:** if the plist still points into
+`cli/.build/release/` (`launchctl print gui/$(id -u)/com.apple-tasks.dispatch`),
+run `make install-agent` once (and `make install-digest` if you use the
+digest). This also replaces any old `~/.local/bin/apple-tasks` →
+`cli/.build` symlinks with real copies.
+
+To dry-run the install targets without touching the live setup, override
+every destination: `make install-agent BINDIR=/tmp/x/bin
+LAUNCH_AGENTS=/tmp/x/LaunchAgents CONFIG_DIR=/tmp/x/config LAUNCHCTL=true`.
 
 `install-agent` writes a LaunchAgent that runs `apple-tasks dispatch --quiet`
 with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
@@ -594,7 +637,8 @@ move values — use `secret migrate --apply` for that). Do not run
 
 **launchd caveat.** The first Keychain read from a rebuilt ad-hoc
 `apple-tasks` binary prompts for access. `make sign-identity` (repo root)
-gives the binary a stable identity so the grant persists across rebuilds.
+gives the binary a stable identity so the grant persists across rebuilds and
+`make install` runs (the installed copies are re-signed with that identity).
 
 `launchd.env` `export NAME=value` lines stay as-is; doctor reports each as
 `launchd.env:NAME` (source `plaintext`, value omitted). Lane `env` maps in
@@ -758,7 +802,7 @@ Schedule it for coffee time (cron/launchd):
 ```bash
 make install-digest   # preferred — LaunchAgent at 07:00
 # or cron:
-# 0 7 * * * /path/to/cli/.build/release/apple-tasks digest --note --push
+# 0 7 * * * $HOME/.local/bin/apple-tasks digest --note --push   (after make install)
 ```
 
 Open Notes on your phone over breakfast and see what your agents did

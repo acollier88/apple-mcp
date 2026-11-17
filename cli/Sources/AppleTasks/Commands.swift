@@ -7,7 +7,7 @@ struct AppleTasks: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "apple-tasks",
         abstract: "Manage Apple Reminders as agent tasks using a [tag] title-prefix convention.",
-        version: "0.1.0",
+        version: BuildInfo.versionString,
         subcommands: [
             ListTasks.self, Show.self, Add.self, AddBatch.self, Update.self,
             Complete.self, Uncomplete.self, Delete.self, Lists.self,
