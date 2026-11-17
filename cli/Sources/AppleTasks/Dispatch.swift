@@ -18,8 +18,9 @@ struct Dispatch: AsyncParsableCommand {
         --dry-run the pass stops after reap/GC and appends that report. \
         --quiet (launchd) emits the paused report only when until/reason \
         changed since the last pass (dispatch.pauseLastReported); an \
-        unchanged pause plus an empty pass or repeat GC/skip noise prints \
-        nothing, so logs do not fill with 'paused' lines or [].
+        unchanged pause, an empty pass, or repeat GC/skip noise prints \
+        nothing, so logs do not fill with 'paused' lines or []. \
+        Pass start and end are timestamped on stderr either way.
         """
     )
 
@@ -113,6 +114,9 @@ struct Dispatch: AsyncParsableCommand {
         var stdinPrompt: String? = nil
         /// Set for `.stdin` and `.file`: `runs/<ledgerId>.prompt`.
         var promptFile: String? = nil
+        /// Auto-pool chose this lane; stamp it onto the title when the
+        /// agent actually starts so retries pin the provider that ran.
+        var stampLane: Bool = false
     }
 
     struct RunOutcome: Sendable {
@@ -144,16 +148,20 @@ struct Dispatch: AsyncParsableCommand {
             throw AppleTasksError.invalidInput(message)
         }
         let config = try AgentsConfig.load()
+        Self.passLog("dispatch pass start quiet=\(quiet) dryRun=\(dryRun)")
+        defer { Self.passLog("dispatch pass end") }
         // tools/launchd starts `dispatch --quiet` on StartInterval and will
         // not start another pass while this process is running. Arm the cap
         // here, not by editing the installed plist.
         let passWatchdog = PassWatchdog.arm(minutes: config.resolvedMaxPassMinutes)
         defer { passWatchdog.disarm() }
-        let layout = AppleTasksLayout.resolve()
-        let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
-        if !migration.notes.isEmpty {
-            let text = migration.notes.joined(separator: "; ")
-            FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+        if !dryRun {
+            let layout = AppleTasksLayout.resolve()
+            let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
+            if !migration.notes.isEmpty {
+                let text = migration.notes.joined(separator: "; ")
+                FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+            }
         }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
@@ -165,11 +173,14 @@ struct Dispatch: AsyncParsableCommand {
         try await store.requestAccess()
 
         var reports: [DispatchReport] = []
-        reports += await reapAndCollect(config: config, store: store)
-        // Nudge once per distinct pending-review set. Dry-run stays quiet;
-        // a paused or reap-only pass still notifies (the backlog is not a
-        // new claim). Repeats stay quiet until a row, branch, or commit changes.
+        // A dry run plans only. Reaping and GC write the ledger, tags, and
+        // worktrees; doing that before the flag is checked made --dry-run
+        // mutate the machine (#44).
         if !dryRun {
+            reports += await reapAndCollect(config: config, store: store)
+            // Nudge once per distinct pending-review set. Dry-run stays quiet;
+            // a paused or reap-only pass still notifies (the backlog is not a
+            // new claim). Repeats stay quiet until a row, branch, or commit changes.
             await PendingReview.notifyIfChanged(items: PendingReview.items(), db: .shared)
         }
         if reapOnly {
@@ -210,7 +221,17 @@ struct Dispatch: AsyncParsableCommand {
             return
         }
         reports.append(pause.report)
-        AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+        if !dryRun {
+            AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+        }
+    }
+
+    /// Timestamped line on stderr. launchd keeps that file separate from the
+    /// JSON stdout log, and stdout is only written when the pass finishes,
+    /// so a hung pass would otherwise leave no trace (#44).
+    static func passLog(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        FileHandle.standardError.write(Data("\(stamp) \(message)\n".utf8))
     }
 
     /// Wording for a `running` row whose agent pid is already gone.
