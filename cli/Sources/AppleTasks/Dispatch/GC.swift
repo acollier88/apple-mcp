@@ -97,8 +97,7 @@ extension Dispatch {
                                                   exitCode: nil, runLog: row.runLogPath, worktree: wt))
                 }
             }
-            let scratchBase = AgentsConfig.url.deletingLastPathComponent()
-                .appendingPathComponent("scratch")
+            let scratchBase = AppleTasksLayout.resolve().scratch
             // Without the ledger every dir looks orphaned — skip rather than
             // delete a running agent's scratch space.
             if AuditDB.shared.isAvailable,

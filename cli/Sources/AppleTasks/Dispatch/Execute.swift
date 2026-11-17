@@ -30,10 +30,11 @@ extension Dispatch {
     /// reap/cancel can signal it; Phase C still records the outcome.
     private static func execute(_ spec: RunSpec) async -> RunOutcome {
         var argv = spec.argv
-        var seat = AgentSeat.from(argv: argv)
-        let captureCursor = AgentSeat.isCursorAgent(argv)
+        let lane = Self.laneArgv(argv)
+        var seat = AgentSeat.from(argv: lane)
+        let captureCursor = AgentSeat.isCursorAgent(lane)
         if captureCursor {
-            argv = AgentSeat.withStreamJSON(argv)
+            argv = Self.mapLaneArgv(argv, AgentSeat.withStreamJSON)
         }
 
         let parentEnv = ProcessInfo.processInfo.environment
@@ -65,21 +66,34 @@ extension Dispatch {
             caller: "agent:\(spec.agentTag)",
             searchPath: { Self.agentSearchPath(existing: $0) })
 
-        let stdoutPipe: Pipe? = captureCursor ? Pipe() : nil
-        let filter: CursorNDJSONFilter?
-        if captureCursor, let logHandle, let stdoutPipe {
-            filter = CursorNDJSONFilter(log: logHandle)
-            process.standardOutput = stdoutPipe
-            process.standardError = logHandle
-            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                filter?.ingest(handle.availableData)
+        // Always pipes. A log-file handle as stdout/stderr makes the Cursor
+        // CLI abort under a sandbox, and readDataToEndOfFile after exit hangs
+        // when a grandchild keeps the pipe open. The dispatcher copies into
+        // the run log and bounds the post-exit drain.
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        let outputLock = NSLock()
+        let filter: CursorNDJSONFilter? = (captureCursor && logHandle != nil)
+            ? CursorNDJSONFilter(log: logHandle!, writeLock: outputLock) : nil
+        func writeLog(_ data: Data) {
+            guard let logHandle, !data.isEmpty else { return }
+            outputLock.lock()
+            logHandle.write(data)
+            outputLock.unlock()
+        }
+        let stop = PipeStop()
+        let drains = DispatchGroup()
+        PipeDrain.copy(stdoutPipe.fileHandleForReading, stop: stop, group: drains) { chunk in
+            if let filter {
+                filter.ingest(chunk)
+            } else {
+                writeLog(chunk)
             }
-        } else {
-            filter = nil
-            if let logHandle {
-                process.standardOutput = logHandle
-                process.standardError = logHandle
-            }
+        }
+        PipeDrain.copy(stderrPipe.fileHandleForReading, stop: stop, group: drains) { chunk in
+            writeLog(chunk)
         }
 
         // promptVia stdin: pipe the prompt in after spawn (written off-thread so
@@ -91,6 +105,8 @@ extension Dispatch {
         do {
             try process.run()
         } catch {
+            stop.stop()
+            PipeDrain.finish(drains, stop: stop, timeout: 1)
             return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
                               spawnError: error.localizedDescription, seat: seat)
         }
@@ -122,11 +138,8 @@ extension Dispatch {
             }
         }
         process.waitUntilExit()
-        if let stdoutPipe {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            filter?.ingest(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-            filter?.flush()
-        }
+        PipeDrain.finish(drains, stop: stop, timeout: PipeDrain.postExitTimeout)
+        filter?.flush()
         if let resolved = filter?.resolvedModel { seat.resolved = resolved }
         if let sessionId = filter?.sessionId { seat.sessionId = sessionId }
         let code = process.terminationStatus

@@ -142,6 +142,12 @@ struct Dispatch: AsyncParsableCommand {
             throw AppleTasksError.invalidInput(message)
         }
         let config = try AgentsConfig.load()
+        let layout = AppleTasksLayout.resolve()
+        let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
+        if !migration.notes.isEmpty {
+            let text = migration.notes.joined(separator: "; ")
+            FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+        }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
                 "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))

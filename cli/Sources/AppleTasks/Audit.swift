@@ -540,7 +540,7 @@ final class AuditDB {
         let expiresAt: String?
         let answeredAt: String?
         let status: String        // pending | approved | denied | expired
-        let answeredVia: String?  // "ntfy" | "cli"
+        let answeredVia: String?  // "ntfy" | "cli" | "gatehouse"
     }
 
     func createApproval(token: String, taskId: String?, question: String, expiresAt: String?) {

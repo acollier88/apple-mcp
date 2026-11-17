@@ -380,7 +380,7 @@ change, then collapses it the same way. Optional secrets go in
 so `doctor` does not flag plaintext. The wrapper rotates
 `~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
 Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
-(`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
+(`~/Library/Application Support/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
 (from argv) and, for Cursor `agent`, a `# resolved model=` line from Auto.
 `doctor` reports
 `launchAgent` / `cursorAgent` / `hermes` / `hermesGateway` / `hermesCron` /
@@ -450,20 +450,33 @@ the design):
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
-  only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
+  only if empty). Scratch dirs under `~/Library/Application Support/apple-tasks/scratch/<id>`
   for finished (or orphan) ledger rows older than the same cutoff are
   removed too. `--no-gc` skips the pass.
 - **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
   macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to
-  `~/.config/apple-tasks/runs/<ledger-id>.log`; the ledger stores the path.
+  `~/Library/Application Support/apple-tasks/runs/<ledger-id>.log`; the ledger stores the path.
+  Worktrees and scratch dirs live in that same Application Support directory,
+  not next to `agents.json` or the ledger, so a sandbox can deny
+  `~/.config/apple-tasks/`.
 - **Worktree isolation** (`"worktree": true` per agent) — the dispatcher runs
   `git worktree add` in the task's workdir and the agent works on its own
   branch (`agent/<tag>-<ledger-id>`) under
-  `~/.config/apple-tasks/worktrees/<ledger-id>`. Output is a branch, never
+  `~/Library/Application Support/apple-tasks/worktrees/<ledger-id>`. Output is a branch, never
   edits to the main checkout — this is what makes `acceptEdits` reasonable
   unattended. If worktree creation fails the dispatch is aborted, not run
   unisolated.
+- **Gatehouse sandbox** (`"sandbox": {"mode": "gatehouse", "net": "outbound", "preset": "cursor"}`,
+  optional) — absent means today's direct spawn. When set, the lane argv is
+  wrapped in `gate sandbox --workspace <worktree-or-scratch> --git-dir <repo>/.git`
+  (`--git-dir` omitted when there is no repo) plus `--net`, `--preset`, and
+  `--env KEY` for each `envPassthrough` name. Write-back commands in the prompt
+  are prefixed with `gate run --`. A nested harness `--sandbox` flag is stripped
+  from that wrapped argv. See `examples/agents.gatehouse.json` and
+  `examples/gatehouse/apple-tasks-policy.toml`. `gate sandbox` itself is not
+  shipped yet (gatehouse#7); without that binary a sandboxed lane fails at spawn
+  rather than running unsandboxed.
 - **Lane description** (`"description"` per agent, optional) — one line Jev
   sees as the Choice criteria for that lane. Without it the lane option is
   just the tag, and Jev rarely clears `applyConfidence`.
@@ -471,7 +484,7 @@ the design):
   `file`) — `argv` substitutes `{prompt}` inline (visible in `ps` to other
   processes of this user, subject to ARG_MAX). `stdin` pipes the
   prompt and drops `{prompt}` from argv (`claude -p`, `codex exec -`).
-  `file` writes it to `~/.config/apple-tasks/runs/<ledger-id>.prompt` and
+  `file` writes it to `~/Library/Application Support/apple-tasks/runs/<ledger-id>.prompt` and
   substitutes `{promptFile}`. Every mode keeps that `.prompt` copy (`600`)
   next to the run log (best-effort for `argv`). The ledger's `command`
   column and the run-log header store the argv with the prompt replaced by
