@@ -36,7 +36,7 @@ sections, and attachments; it cannot phone home by itself.
 `inherit`) and `envPassthrough`, then lane `env`,
 `APPLE_TASKS_CALLER=agent:<tag>`, and `PATH` rewritten by
 `Dispatch.agentSearchPath`. `Triage.runAgent` (triage and suggest seats)
-uses the same filter without the caller/PATH steps. `inherit` is the
+uses that same caller and PATH rewrite. `inherit` is the
 default, so a config that sets nothing still hands agents the whole
 dispatcher env, `launchd.env` included. `scrubSecrets` drops variables by
 **name** pattern only; `allowlist` keeps a small base set. Neither stops
