@@ -3,19 +3,26 @@ import Foundation
 // MARK: - osascript runner (Notes/Mail have no public framework; JXA is the only access)
 
 enum OSA {
-    static func runJXA(_ script: String, args: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-l", "JavaScript", "-e", script] + args
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        process.waitUntilExit()
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0 else {
+    /// Default budget for one osascript run. Generous because a Notes/Mail
+    /// scan walks every item through Apple Events; callers with a known
+    /// shape (a notification, a single draft) pass less, bulk scans more.
+    static let defaultTimeout: TimeInterval = 300
+
+    static func runJXA(_ script: String, args: [String],
+                       timeout: TimeInterval = defaultTimeout) throws -> String {
+        // Drain-while-running (#34): scans return whole note/message bodies,
+        // which easily exceed the pipe buffer.
+        let result = try ProcessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/osascript"),
+            ["-l", "JavaScript", "-e", script] + args,
+            timeout: timeout)
+        if result.timedOut {
+            throw AppleTasksError.automationFailed(
+                "osascript timed out after \(Int(timeout))s (is Notes/Mail stuck on a dialog?)")
+        }
+        let outData = result.stdout
+        let errData = result.stderr
+        guard result.status == 0 else {
             var message = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "osascript failed"
             if message.contains("-1743") {
@@ -222,25 +229,18 @@ enum NativeTags {
         return run(payload, externalId: externalId, what: "attachment")
     }
 
+    /// Upper bound for one helper call. ReminderKit ops are sub-second; this
+    /// only stops a wedged helper from hanging a dispatch pass forever.
+    static let helperTimeout: TimeInterval = 120
+
     /// Run a read-only helper op; returns stdout on exit 0, nil otherwise.
     private static func runRead(_ payload: [String: Any]) -> Data? {
         guard let helper = helperURL else { return nil }
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
-            let process = Process()
-            process.executableURL = helper
-            let stdin = Pipe()
-            let stdout = Pipe()
-            process.standardInput = stdin
-            process.standardOutput = stdout
-            process.standardError = Pipe()
-            try process.run()
-            stdin.fileHandleForWriting.write(data)
-            stdin.fileHandleForWriting.closeFile()
-            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            return outData
+            let result = try ProcessRunner.run(helper, stdin: data, timeout: helperTimeout)
+            guard !result.timedOut, result.status == 0 else { return nil }
+            return result.stdout
         } catch {
             return nil
         }
@@ -252,22 +252,10 @@ enum NativeTags {
         guard let helper = helperURL else { return nil }
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
-            let process = Process()
-            process.executableURL = helper
-            let stdin = Pipe()
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardInput = stdin
-            process.standardOutput = stdout
-            process.standardError = stderr
-            try process.run()
-            stdin.fileHandleForWriting.write(data)
-            stdin.fileHandleForWriting.closeFile()
-            let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 { return outData }
-            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let result = try ProcessRunner.run(helper, stdin: data, timeout: helperTimeout)
+            if !result.timedOut, result.status == 0 { return result.stdout }
+            let detail = result.timedOut ? "timed out after \(Int(helperTimeout))s"
+                : result.stderrString.trimmingCharacters(in: .whitespacesAndNewlines)
             FileHandle.standardError.write(Data("warning: \(what) failed: \(detail)\n".utf8))
             return nil
         } catch {
@@ -284,20 +272,10 @@ enum NativeTags {
         }
         do {
             let data = try JSONSerialization.data(withJSONObject: payload)
-            let process = Process()
-            process.executableURL = helper
-            let stdin = Pipe()
-            let stderr = Pipe()
-            process.standardInput = stdin
-            process.standardOutput = Pipe()
-            process.standardError = stderr
-            try process.run()
-            stdin.fileHandleForWriting.write(data)
-            stdin.fileHandleForWriting.closeFile()
-            process.waitUntilExit()
-            if process.terminationStatus == 0 { return true }
-            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let result = try ProcessRunner.run(helper, stdin: data, timeout: helperTimeout)
+            if !result.timedOut, result.status == 0 { return true }
+            let detail = result.timedOut ? "timed out after \(Int(helperTimeout))s"
+                : result.stderrString.trimmingCharacters(in: .whitespacesAndNewlines)
             FileHandle.standardError.write(Data("warning: \(what) failed: \(detail)\n".utf8))
             return false
         } catch {

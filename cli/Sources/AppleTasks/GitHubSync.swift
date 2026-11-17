@@ -152,23 +152,18 @@ struct SyncGitHub: AsyncParsableCommand {
             throw AppleTasksError.automationFailed(
                 "gh CLI not found (brew install gh; then gh auth login)")
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ghPath)
-        process.arguments = args
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let detail = String(data: errData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "gh failed"
+        // Sequential stdout-then-stderr reads deadlock if gh fills the stderr
+        // pipe first (#34); the shared runner drains both concurrently.
+        let result = try ProcessRunner.run(URL(fileURLWithPath: ghPath), args, timeout: 300)
+        if result.timedOut {
             throw AppleTasksError.automationFailed(
-                "gh \(args.prefix(2).joined(separator: " ")): \(detail)")
+                "gh \(args.prefix(2).joined(separator: " ")): timed out after 300s")
         }
-        return String(data: outData, encoding: .utf8) ?? ""
+        guard result.status == 0 else {
+            let detail = result.stderrString.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw AppleTasksError.automationFailed(
+                "gh \(args.prefix(2).joined(separator: " ")): \(detail.isEmpty ? "gh failed" : detail)")
+        }
+        return result.stdoutString
     }
 }

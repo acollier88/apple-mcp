@@ -58,16 +58,10 @@ final class GateContext {
     func powerSource() -> String? {
         if let cachedPower { return cachedPower }
         let result: String?
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "batt"]
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = FileHandle.nullDevice
-        if (try? process.run()) != nil {
-            process.waitUntilExit()
-            let out = String(data: stdout.fileHandleForReading.readDataToEndOfFile(),
-                             encoding: .utf8) ?? ""
+        if let run = try? ProcessRunner.run(URL(fileURLWithPath: "/usr/bin/pmset"),
+                                            ["-g", "batt"], timeout: 10),
+           !run.timedOut {
+            let out = run.stdoutString
             if out.contains("AC Power") { result = "ac" }
             else if out.contains("Battery Power") { result = "battery" }
             else { result = nil }

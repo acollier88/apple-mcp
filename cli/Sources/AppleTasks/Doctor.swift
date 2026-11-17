@@ -669,17 +669,9 @@ struct Doctor: AsyncParsableCommand {
 
     /// stdout of a short-lived process, or nil if it failed to launch / exited non-zero.
     private static func capture(_ exe: String, _ args: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exe)
-        process.arguments = args
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard let result = try? ProcessRunner.run(URL(fileURLWithPath: exe), args, timeout: 15),
+              !result.timedOut, result.status == 0 else { return nil }
+        return result.stdoutString
     }
 
     /// Detects the two-trees hazard: the launchd job runs a binary built from

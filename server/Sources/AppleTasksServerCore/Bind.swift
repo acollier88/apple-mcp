@@ -44,16 +44,9 @@ public enum BindResolver {
     }
 
     public static func tailscaleIPv4() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["tailscale", "ip", "-4"]
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = Pipe()
-        do { try process.run() } catch { return nil }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        guard let result = try? ChildProcess.run("/usr/bin/env", ["tailscale", "ip", "-4"], timeout: 10),
+              !result.timedOut, result.status == 0 else { return nil }
+        let text = String(data: result.stdout, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let ip = text.split(whereSeparator: { $0.isNewline || $0.isWhitespace }).first.map(String.init)
         guard let ip, ip.contains("."), !isWildcard(ip) else { return nil }
