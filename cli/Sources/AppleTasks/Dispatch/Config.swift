@@ -153,8 +153,28 @@ struct AgentsConfig: Codable {
     /// Default `envMode` for lanes that do not set one (#27). Absent =
     /// `inherit`, the pre-#27 behaviour.
     var envMode: AgentEnv.Mode?
+    /// Wall-clock cap for one `dispatch` process, in minutes. launchd will
+    /// not start the next pass while this one is alive (tools/launchd,
+    /// StartInterval), so a hang here blocks every later pass. Per-agent
+    /// `timeoutMinutes` still bounds each run; this is the backstop. Absent
+    /// uses `defaultMaxPassMinutes`. The cap lives in the process, not in
+    /// the installed LaunchAgent plist.
+    var maxPassMinutes: Int?
 
     static let defaultClaimGuard = "modified"
+
+    /// Eight hours. One pass claims every due task before running them, and
+    /// example lanes allow an hour each, so the cap sits above a short
+    /// backlog. It is still finite: a stuck pass used to block launchd until
+    /// the next reboot.
+    static let defaultMaxPassMinutes = 8 * 60
+
+    /// `maxPassMinutes` with the default applied. Zero and negative values
+    /// fall back to the default so a bad config cannot disable the backstop.
+    var resolvedMaxPassMinutes: Int {
+        guard let maxPassMinutes, maxPassMinutes > 0 else { return Self.defaultMaxPassMinutes }
+        return maxPassMinutes
+    }
 
     /// `claimGuard` with the default applied; unknown values fall back to the default.
     var resolvedClaimGuard: String {

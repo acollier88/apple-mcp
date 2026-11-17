@@ -5,10 +5,12 @@ extension Dispatch {
     func reapAndCollect(config: AgentsConfig, store: Store) async -> [DispatchReport] {
         var reports: [DispatchReport] = []
 
-        // Reap first: rows orphaned in 'running' (dispatcher killed mid-run)
-        // become 'timeout' and the task's [dispatched] tag becomes [failed],
-        // so retry policy can pick them up. A still-alive agent is signalled
-        // when the recorded pid still looks like this run.
+        // Reap first: rows orphaned in 'running' become 'timeout' and the
+        // task's [dispatched] tag becomes [failed], so retry policy can pick
+        // them up. A still-alive agent is signalled when the recorded pid
+        // still looks like this run. A dead agent pid means this row will
+        // never record itself: the dispatcher process may still be alive
+        // (stuck before write-back) or already gone.
         let iso = ISO8601DateFormatter()
         let deadCutoffDate = Date().addingTimeInterval(-10 * 60)
         for row in AuditDB.shared.dispatchRows(status: "running", limit: 1000) {
@@ -23,14 +25,18 @@ extension Dispatch {
                Date().timeIntervalSince(mtime) < 120 {
                 continue
             }
+            let dispatcherAlive = row.dispatcherPid.map {
+                AgentProcess.looksLikeDispatcher(Int32($0))
+            } ?? false
+            let summary = Self.orphanedDispatchSummary(dispatcherAlive: dispatcherAlive)
             AuditDB.shared.finishDispatch(id: Int64(row.id), status: "timeout",
-                                          exitCode: -1, summary: "dispatcher died")
+                                          exitCode: -1, summary: summary)
             await markFailed(store: store, taskId: row.taskId)
             AuditDB.shared.record(command: "dispatch-reap", taskId: row.taskId,
-                                  detail: "ledger #\(row.id) dispatcher died, pid \(pid) gone")
+                                  detail: "ledger #\(row.id) \(summary), agent pid \(pid) gone")
             reports.append(DispatchReport(taskId: row.taskId, title: "(ledger #\(row.id))",
                                           agent: row.agent, cwd: row.cwd,
-                                          action: "reaped: dispatcher died, pid \(pid) gone",
+                                          action: "reaped: \(summary), agent pid \(pid) gone",
                                           exitCode: nil, runLog: row.runLogPath, worktree: row.worktree))
         }
         let cutoff = iso.string(

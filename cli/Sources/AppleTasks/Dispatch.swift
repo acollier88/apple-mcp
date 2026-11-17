@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import EventKit
 import Foundation
 
@@ -143,6 +144,11 @@ struct Dispatch: AsyncParsableCommand {
             throw AppleTasksError.invalidInput(message)
         }
         let config = try AgentsConfig.load()
+        // tools/launchd starts `dispatch --quiet` on StartInterval and will
+        // not start another pass while this process is running. Arm the cap
+        // here, not by editing the installed plist.
+        let passWatchdog = PassWatchdog.arm(minutes: config.resolvedMaxPassMinutes)
+        defer { passWatchdog.disarm() }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
                 "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))
@@ -199,5 +205,47 @@ struct Dispatch: AsyncParsableCommand {
         }
         reports.append(pause.report)
         AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+    }
+
+    /// Wording for a `running` row whose agent pid is already gone.
+    static func orphanedDispatchSummary(dispatcherAlive: Bool) -> String {
+        if dispatcherAlive {
+            return "agent exited but dispatcher never recorded the result"
+        }
+        return "dispatcher process is gone"
+    }
+}
+
+/// Exits the process if one `dispatch` invocation outlives its cap. `defer`
+/// disarms it on the normal path. `_exit` is deliberate: a stuck pass may
+/// hold locks the ordinary `exit` would try to take.
+private final class PassWatchdog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var disarmed = false
+
+    static func arm(minutes: Int) -> PassWatchdog {
+        let watchdog = PassWatchdog()
+        let seconds = TimeInterval(max(minutes, 1) * 60)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+            watchdog.fire(minutes: max(minutes, 1))
+        }
+        return watchdog
+    }
+
+    func disarm() {
+        lock.lock()
+        disarmed = true
+        lock.unlock()
+    }
+
+    private func fire(minutes: Int) {
+        lock.lock()
+        let skip = disarmed
+        lock.unlock()
+        guard !skip else { return }
+        let message = "apple-tasks dispatch: pass exceeded \(minutes)m; exiting so launchd can start the next pass\n"
+        FileHandle.standardError.write(Data(message.utf8))
+        AgentProcess.killTracked()
+        _exit(75)
     }
 }
