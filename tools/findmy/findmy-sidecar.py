@@ -6,7 +6,7 @@ Apple account, using https://github.com/malmeloo/FindMy.py (reverse-
 engineered; read-only against your account — see README caveats).
 
 Setup (one-time, interactive):
-    pip install FindMy
+    pip install -r tools/findmy/requirements.txt   # pinned FindMy.py
     python3 findmy-sidecar.py login          # Apple ID + 2FA, saves session
     # drop accessory files into ~/.config/apple-tasks/findmy/accessories/:
     #   - AirTag pairing .plist (dumped from the FindMy app; see FindMy.py docs)
@@ -58,7 +58,30 @@ def import_findmy():
         return findmy
     except ImportError:
         die("FindMy.py is not installed",
-            hint="pip install FindMy  (https://github.com/malmeloo/FindMy.py)")
+            hint="pip install -r tools/findmy/requirements.txt  "
+                 "(https://github.com/malmeloo/FindMy.py)")
+
+
+def ensure_private_dir(path):
+    """Create path (and parents) as owner-only; tighten it if it already exists."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
+
+
+def save_account(account):
+    """Write the session file without a window where it is group/world-readable.
+
+    to_json() creates the file with the process umask (usually 0644) and the
+    old code chmod'ed it afterwards, leaving the session tokens readable by
+    other local users in between. Tighten the umask for the write instead.
+    """
+    ensure_private_dir(CONFIG_DIR)
+    old_umask = os.umask(0o077)
+    try:
+        account.to_json(ACCOUNT_FILE)
+    finally:
+        os.umask(old_umask)
+    ACCOUNT_FILE.chmod(0o600)  # in case the file pre-existed with looser bits
 
 
 def load_account(findmy):
@@ -142,8 +165,7 @@ def cmd_locate(args):
         report = account.fetch_location(acc)
     finally:
         try:
-            account.to_json(ACCOUNT_FILE)  # session tokens may have rotated
-            ACCOUNT_FILE.chmod(0o600)
+            save_account(account)  # session tokens may have rotated
         except Exception:
             pass
         close_account(account)
@@ -167,8 +189,8 @@ def cmd_login(_args):
     findmy = import_findmy()
     from getpass import getpass
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    ACCESSORIES_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(CONFIG_DIR)
+    ensure_private_dir(ACCESSORIES_DIR)
 
     email = input("Apple ID email: ").strip()
     password = getpass("Password (not stored; session tokens are): ")
@@ -195,8 +217,7 @@ def cmd_login(_args):
                      f"mistyped — run login again (SMS is the fallback if "
                      f"Trusted Device keeps failing).")
 
-    account.to_json(ACCOUNT_FILE)
-    ACCOUNT_FILE.chmod(0o600)
+    save_account(account)
     close_account(account)
     print(f"Session saved to {ACCOUNT_FILE} (mode 600).")
     print(f"Drop AirTag pairing .plist / accessory .json files into {ACCESSORIES_DIR}.")

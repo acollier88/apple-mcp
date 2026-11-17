@@ -16,6 +16,9 @@ struct PendingReviewItem: Codable {
     let branch: String
     let commitsAhead: Int
     let commits: [String]
+    /// How long the run has been waiting, from `finishedAt` ("3d old",
+    /// "just now", "age unknown"). Computed when the item is built.
+    let age: String
 
     init(row: AuditDB.DispatchRow, branch: String, commitsAhead: Int, commits: [String]) {
         self.id = row.id
@@ -33,6 +36,21 @@ struct PendingReviewItem: Codable {
         self.branch = branch
         self.commitsAhead = commitsAhead
         self.commits = commits
+        self.age = Self.ageLabel(finishedAt: row.finishedAt)
+    }
+
+    /// Compact age for digest lines and the review notification.
+    /// `now` is injectable so tests can pin a clock.
+    static func ageLabel(finishedAt: String?, now: Date = Date()) -> String {
+        guard let finishedAt,
+              let date = ISO8601DateFormatter().date(from: finishedAt) else {
+            return "age unknown"
+        }
+        let seconds = Int(now.timeIntervalSince(date))
+        if seconds < 60 { return "just now" }
+        if seconds < 3600 { return "\(seconds / 60)m old" }
+        if seconds < 86_400 { return "\(seconds / 3600)h old" }
+        return "\(seconds / 86_400)d old"
     }
 }
 
@@ -91,5 +109,62 @@ enum PendingReview {
               !raw.isEmpty
         else { return [] }
         return raw.split(whereSeparator: \.isNewline).map(String.init)
+    }
+
+    // MARK: - notification
+
+    /// Ledger state key. The value is `notifySignature` of the set we last
+    /// considered, including "" once an empty backlog has been seen.
+    static let notifyStateKey = "pendingReview.notified"
+
+    struct NotifyPlan: Equatable {
+        let shouldNotify: Bool
+        let signature: String
+        let title: String
+        let body: String
+    }
+
+    /// Same ledger id + branch with the same commits stays quiet. A new row,
+    /// a removed row, or a new commit changes the signature and notifies
+    /// again. Age is not part of the signature — it moves every hour and
+    /// would re-page on every pass.
+    static func notifySignature(_ items: [PendingReviewItem]) -> String {
+        items.map { "\($0.id)\t\($0.branch)\t\($0.commitsAhead)\t\($0.commits.first ?? "")" }
+            .sorted()
+            .joined(separator: "\n")
+    }
+
+    static func notifyPlan(items: [PendingReviewItem], previousSignature: String?) -> NotifyPlan {
+        let signature = notifySignature(items)
+        let title = items.count == 1
+            ? "1 branch awaiting review"
+            : "\(items.count) branches awaiting review"
+        let shown = items.prefix(12).map { Digest.pendingReviewLine($0) }
+        var body = shown.joined(separator: "\n")
+        if items.count > shown.count {
+            body += "\n+\(items.count - shown.count) more"
+        }
+        if body.count > 1500 {
+            body = String(body.prefix(1500))
+        }
+        let changed = signature != (previousSignature ?? "")
+        return NotifyPlan(shouldNotify: !items.isEmpty && changed,
+                          signature: signature, title: title, body: body)
+    }
+
+    /// Banner + ntfy (best-effort when no topic is configured). Records the
+    /// signature even when the backlog is empty, so the next new branch
+    /// notifies once and an unchanged set does not page on every pass.
+    @discardableResult
+    static func notifyIfChanged(items: [PendingReviewItem], db: AuditDB) async -> Bool {
+        let previous = db.getState(notifyStateKey)
+        let plan = notifyPlan(items: items, previousSignature: previous)
+        guard plan.signature != previous else { return false }
+        if plan.shouldNotify {
+            Notifier.banner(title: plan.title, body: plan.body)
+            await Notifier.push(title: plan.title, body: plan.body)
+        }
+        db.setState(notifyStateKey, plan.signature)
+        return plan.shouldNotify
     }
 }

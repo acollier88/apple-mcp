@@ -146,10 +146,13 @@ final class AuditDBTests: XCTestCase {
             return XCTFail("expected claimed, got \(claim)")
         }
         XCTAssertNil(db.dispatchRow(id: id)?.pid)
-        XCTAssertTrue(db.setDispatchPid(id: id, pid: 4242))
+        XCTAssertNil(db.dispatchRow(id: id)?.dispatcherPid)
+        XCTAssertTrue(db.setDispatchPid(id: id, pid: 4242, dispatcherPid: 4243))
         XCTAssertEqual(db.dispatchRow(id: id)?.pid, 4242)
+        XCTAssertEqual(db.dispatchRow(id: id)?.dispatcherPid, 4243)
         XCTAssertTrue(db.finishDispatch(id: id, status: "succeeded", exitCode: 0))
         XCTAssertEqual(db.dispatchRow(id: id)?.pid, 4242)
+        XCTAssertEqual(db.dispatchRow(id: id)?.dispatcherPid, 4243)
     }
 
     func testGetStateSetStateUpserts() {
