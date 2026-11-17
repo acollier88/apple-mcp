@@ -34,6 +34,8 @@ struct DoctorOut: Codable {
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
+    /// Gatehouse probe. Missing gatehouse fills this in; it does not fail doctor.
+    let gatehouse: GatehouseDoctorStatus
     /// `--fix-modes` only: every chmod it made beyond the secret files
     /// (config dir, ledger DB/WAL/SHM, logs/, runs/*, agents.json[.bak-*]).
     let fixedModes: [ConfigPermissions.ModeChange]?
@@ -87,6 +89,8 @@ struct DoctorIssue: Codable {
     let severity: String
     let summary: String
     let signature: String
+    /// When set, a person has to run this command. Never enqueue a heal for it.
+    var needsHumanCommand: String? = nil
 }
 
 struct HealReport: Codable {
@@ -413,6 +417,75 @@ struct Doctor: AsyncParsableCommand {
         return out
     }
 
+    private struct PreflightReport {
+        var issues: [DoctorIssue]
+        var classified: [LanePreflight.Classified]
+        var cursorAuth: LanePreflight.AuthKind?
+    }
+
+    /// Credential and auth failures that `doctor` already had the evidence
+    /// for, plus a dead MCP fallback on the doctor lane (#43).
+    private static func preflightIssues() async -> PreflightReport {
+        let env = ProcessInfo.processInfo.environment
+        let config = try? AgentsConfig.load()
+        let authByLane: [String: LanePreflight.AuthKind]
+        if let config {
+            authByLane = (await LaneProbe.snapshot(config: config, env: env)).authByLane
+        } else {
+            authByLane = [:]
+        }
+        var classified = LanePreflight.cronBlocked(Self.hermesCronJobs())
+        classified += LanePreflight.laneAuthIssues(authByLane: authByLane)
+        if let mcp = LanePreflight.mcpUnavailableIssue(mentioned: Self.doctorMentionedMCPUnavailable()) {
+            classified.append(mcp)
+        }
+        let issues = classified.map { item in
+            DoctorIssue(
+                system: item.signature == "mcp-unavailable" ? "mcp" : "dispatch",
+                severity: item.needsHumanCommand == nil ? "yellow" : "notice",
+                summary: item.summary,
+                signature: item.signature,
+                needsHumanCommand: item.needsHumanCommand)
+        }
+        return PreflightReport(
+            issues: issues, classified: classified, cursorAuth: authByLane["cursor"])
+    }
+
+    private static func hermesCronJobs() -> [LanePreflight.CronJob] {
+        let url = hermesHome().appendingPathComponent("cron/jobs.json")
+        guard let obj = jsonObject(at: url), let jobs = obj["jobs"] as? [[String: Any]] else {
+            return []
+        }
+        return jobs.map { job in
+            let name = (job["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (job["id"] as? String)
+                ?? "job"
+            return LanePreflight.CronJob(
+                name: name,
+                status: job["last_status"] as? String ?? "never",
+                error: (job["last_error"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+        }
+    }
+
+    /// Last doctor run logs, not the whole ledger. The phrase is detected;
+    /// the log text is not copied into the issue.
+    private static func doctorMentionedMCPUnavailable() -> Bool {
+        let rows = AuditDB.shared.dispatchRows(status: nil, limit: 40)
+            .filter { $0.agent == "doctor" }
+        for row in rows.prefix(5) {
+            let tail = row.runLogPath.flatMap { path -> String? in
+                guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                      !data.isEmpty else { return nil }
+                let start = data.index(data.endIndex, offsetBy: -16_384, limitedBy: data.startIndex) ?? data.startIndex
+                return String(data: data[start...], encoding: .utf8)
+            }
+            if LanePreflight.mentionsMCPUnavailable(summary: row.summary, logTail: tail) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Resolve a binary on PATH the same way dispatch does (/usr/bin/env).
     private static func which(_ name: String) -> String? {
         let process = Process()
@@ -430,11 +503,20 @@ struct Doctor: AsyncParsableCommand {
     }
 
     /// Resolve `agent` (Cursor Agent CLI) on PATH the same way dispatch does (/usr/bin/env).
-    private static func cursorAgentStatus() -> String {
+    private static func cursorAgentStatus(auth: LanePreflight.AuthKind?) -> String {
         guard let path = which("agent") else {
             return "not found (install: curl https://cursor.com/install -fsS | bash)"
         }
-        return "present: \(path) (tag tasks [cursor][auto]; agent login or CURSOR_API_KEY)"
+        let login: String
+        switch auth {
+        case .ready, nil:
+            login = "login ok"
+        case .needsHuman(let command):
+            login = "login missing (run \(command))"
+        case .unreachable(let detail):
+            login = "login check failed (\(detail))"
+        }
+        return "present: \(path) (tag tasks [cursor][auto]; \(login))"
     }
 
     private static func hermesHome() -> URL {
@@ -810,7 +892,16 @@ struct Doctor: AsyncParsableCommand {
                 .appendingPathComponent(".config/apple-tasks", isDirectory: true)
         }()
         // Before secretsStatus so agents.json shows up in fixedModes.
-        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir) : nil
+        // runs/ now lives under Application Support; move any legacy copies
+        // once, then tighten that tree too.
+        let layout = AppleTasksLayout.resolve()
+        let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
+        if !migration.notes.isEmpty {
+            let text = migration.notes.joined(separator: "; ")
+            FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+        }
+        let supportDir = layout.support
+        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir, supportDir: supportDir) : nil
         let secrets = Self.secretsStatus(
             configDir: configDir,
             store: Secrets.store,
@@ -834,6 +925,16 @@ struct Doctor: AsyncParsableCommand {
                 summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
                 signature: "secrets-plaintext"))
         }
+        let preflight = await Self.preflightIssues()
+        issues.append(contentsOf: preflight.issues)
+        let previous = AuditDB.shared.getState("doctor.needsHuman")
+        for item in LanePreflight.signaturesToNotify(previous: previous, issues: preflight.classified) {
+            guard let command = item.needsHumanCommand else { continue }
+            _ = await Notifier.push(
+                title: "Needs you",
+                body: "\(item.summary). Run: \(command)")
+        }
+        _ = AuditDB.shared.setState("doctor.needsHuman", LanePreflight.signatureRecord(preflight.classified))
         var heals: HealReport?
         if enqueueHeals {
             heals = await Self.enqueueHeals(issues: issues, listName: listName)
@@ -862,7 +963,7 @@ struct Doctor: AsyncParsableCommand {
             fullDiskAccess: Self.fdaStatus(),
             agentsConfig: Self.agentsConfigStatus(),
             secrets: secrets,
-            cursorAgent: Self.cursorAgentStatus(),
+            cursorAgent: Self.cursorAgentStatus(auth: preflight.cursorAuth),
             launchAgent: Self.launchAgentStatus(),
             hermes: hermes,
             hermesGateway: hermesGateway,
@@ -875,8 +976,17 @@ struct Doctor: AsyncParsableCommand {
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
             heals: heals,
+            gatehouse: Self.gatehouseStatus(),
             fixedModes: fixedModes
         ))
+    }
+
+    /// Running / enrolled / hooks fail-closed / lanes that are still unsandboxed.
+    /// `AgentsConfig.load` failure leaves the lane list empty; the probe itself
+    /// never throws.
+    static func gatehouseStatus() -> GatehouseDoctorStatus {
+        let agents = (try? AgentsConfig.load())?.agents ?? [:]
+        return GatehouseClient.doctorStatus(agents: agents, facts: GatehouseClient.observe())
     }
 
     /// One issue per affected *system*. Hermes↔HA adapter is ignored when HA itself is down.
@@ -950,6 +1060,19 @@ struct Doctor: AsyncParsableCommand {
                 signature: "dispatch"
             ))
         }
+        // Needs a person, not a heal agent: severity info is skipped by enqueueHeals.
+        if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
+            let exhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
+            if !exhausted.isEmpty {
+                let lines = exhausted.map { "\($0.taskId) (\($0.count) since last success)" }
+                issues.append(DoctorIssue(
+                    system: "dispatch",
+                    severity: "info",
+                    summary: "retries exhausted: " + lines.joined(separator: "; ")
+                        + ". Raise maxRetries or run dispatch-retry. Do not hunt for credentials.",
+                    signature: "retries-exhausted"))
+            }
+        }
         return issues
     }
 
@@ -970,6 +1093,11 @@ struct Doctor: AsyncParsableCommand {
             && (cron.localizedCaseInsensitiveContains("403")
                 || cron.localizedCaseInsensitiveContains("copilot"))
         if staleCopilot { return nil }
+        // Credential blocks are needs-human issues (hermes-cron-blocked), not heals.
+        if cron.localizedCaseInsensitiveContains("blocked_config")
+            || cron.localizedCaseInsensitiveContains("credential") {
+            return nil
+        }
         if cron.hasPrefix("no ") || cron.hasPrefix("unreadable") || cron.hasPrefix("0 jobs") {
             return nil
         }
@@ -992,6 +1120,16 @@ struct Doctor: AsyncParsableCommand {
         let open = (await store.reminders(in: nil)).filter { !$0.isCompleted }
         var actions: [HealAction] = []
         for issue in issues {
+            if issue.needsHumanCommand != nil {
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: "needs-human",
+                    taskId: nil,
+                    title: nil,
+                    reason: issue.needsHumanCommand
+                ))
+                continue
+            }
             // info/notice never become heal tasks (secrets-plaintext is info).
             if issue.severity == "info" || issue.severity == "notice" { continue }
             if issue.system == "secrets" { continue }
@@ -1087,7 +1225,7 @@ Hermes-side: start or replace the gateway (`hermes gateway run --replace` or the
                 tags: ["heal", "apple-mcp", "auto"],
                 title: "Heal failed apple-tasks dispatches",
                 notes: header + """
-Inspect apple-tasks dispatches --status failed and the run log under ~/.config/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
+Inspect apple-tasks dispatches --status failed and the run log under ~/Library/Application Support/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
 """ + footer
             )
         }

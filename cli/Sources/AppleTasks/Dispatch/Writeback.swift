@@ -91,17 +91,26 @@ extension Dispatch {
         return "open-untagged"
     }
 
-    /// Emit the pass report. Under `--quiet`, an empty pass or a repeat of
-    /// the previous GC/skip noise prints nothing — not `[]`. A dry run never
-    /// writes `dispatch.lastReportHash`.
-    func emitReports(_ reports: [DispatchReport]) {
-        if dryRun {
-            emit(reports)
-            return
-        }
+    /// What one dispatch pass should write to stdout.
+    /// `--quiet` prints nothing for an empty pass, and nothing when the pass
+    /// only repeats the previous GC/skip/gate/schedule noise
+    /// (`dispatch.lastReportHash`). A suppressed pass does not refresh that
+    /// hash. Real failures, dispatches, and the first sighting of new noise
+    /// are printed. `skipped: ledger` is not noise.
+    enum ReportEmission: Equatable {
+        case silent
+        case emit(hash: String)
+    }
+
+    static func reportHash(_ reports: [DispatchReport]) -> String {
         let key = reports.map { $0.action + $0.taskId }.sorted().joined()
-        let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        let noiseOnly = reports.allSatisfy { report in
+        return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Empty, or only GC/skip/gate/schedule lines. `skipped: ledger` is a real
+    /// line (the ledger refused the claim) and is not noise.
+    static func isRepeatableNoise(_ reports: [DispatchReport]) -> Bool {
+        reports.allSatisfy { report in
             let action = report.action
             if action.hasPrefix("skipped: ledger") { return false }
             return action.hasPrefix("gc:")
@@ -109,14 +118,44 @@ extension Dispatch {
                 || action.hasPrefix("gated:")
                 || action.hasPrefix("scheduled:")
         }
+    }
+
+    static func reportEmission(
+        reports: [DispatchReport],
+        quiet: Bool,
+        lastReportHash: String?
+    ) -> ReportEmission {
+        let hash = reportHash(reports)
+        // An empty quiet pass is idle even when the previous hash differs
+        // (the first idle cycle after real work). Repeat noise stays quiet
+        // only when it matches the last hash we actually printed.
         if Self.suppressQuietStdout(quiet: quiet, reportCount: reports.count,
-                                     noiseOnly: noiseOnly,
-                                     lastHash: AuditDB.shared.getState("dispatch.lastReportHash"),
-                                     hash: hash) {
+                                    noiseOnly: isRepeatableNoise(reports),
+                                    lastHash: lastReportHash, hash: hash) {
+            return .silent
+        }
+        return .emit(hash: hash)
+    }
+
+    /// Emit the pass report. Under `--quiet`, an idle pass (empty, or only
+    /// the same GC/skip noise as last time) prints nothing — not `[]`. A dry
+    /// run never writes `dispatch.lastReportHash`.
+    func emitReports(_ reports: [DispatchReport]) {
+        if dryRun {
+            emit(reports)
             return
         }
-        AuditDB.shared.setState("dispatch.lastReportHash", hash)
-        emit(reports)
+        switch Self.reportEmission(
+            reports: reports,
+            quiet: quiet,
+            lastReportHash: AuditDB.shared.getState("dispatch.lastReportHash")
+        ) {
+        case .silent:
+            return
+        case .emit(let hash):
+            AuditDB.shared.setState("dispatch.lastReportHash", hash)
+            emit(reports)
+        }
     }
 
     /// True when `--quiet` should write no stdout. Empty passes are idle even

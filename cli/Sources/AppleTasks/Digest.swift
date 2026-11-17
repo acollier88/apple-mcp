@@ -65,6 +65,11 @@ struct DigestOut: Codable {
     /// --suggest only (IDEAS #41): proposals from the on-device model.
     var suggestions: [SuggestionOut]?
     var suggestError: String?
+    /// True when this run sent the pending-review notification (banner + ntfy).
+    /// False when the same ledger ids and branches were already announced.
+    var pendingReviewNotified: Bool? = nil
+    /// Tasks whose countable failures since the last success exceed maxRetries.
+    var retriesExhausted: [String] = []
 
     struct DispatchLine: Codable {
         let id: Int
@@ -80,7 +85,10 @@ struct Digest: AsyncParsableCommand {
         abstract: """
         Morning digest: agent activity since yesterday, dispatch outcomes, \
         tasks due today, today's calendar. Emits JSON; --note also writes it \
-        as a new Apple Note; --push also sends it to the configured ntfy topic.
+        as a new Apple Note; --push also sends it to the configured ntfy topic. \
+        Pending-review branches are listed with age. A notification fires when \
+        that set changes and stays quiet while the same ledger rows and \
+        branches are unchanged.
         """
     )
 
@@ -137,6 +145,10 @@ struct Digest: AsyncParsableCommand {
                             auditActions: audit.count, auditByCommand: byCommand,
                             dueToday: dueToday, events: events,
                             noteCreated: nil, pushed: nil)
+        if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
+            out.retriesExhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
+                .map { "\($0.taskId) (\($0.count) since last success)" }
+        }
 
         // Suggestions are best-effort: an unavailable model annotates the
         // digest instead of failing the 7am run.
@@ -162,6 +174,8 @@ struct Digest: AsyncParsableCommand {
         if push {
             out.pushed = await Notifier.push(title: Self.noteTitle(), body: Self.pushSummary(out))
         }
+        out.pendingReviewNotified = await PendingReview.notifyIfChanged(
+            items: pendingReview, db: .shared)
         emit(out)
     }
 
@@ -181,8 +195,24 @@ struct Digest: AsyncParsableCommand {
             + "\(d.events.count) events"
         if !d.pendingReview.isEmpty {
             text += ", \(d.pendingReview.count) awaiting review"
+            if let oldest = oldestPendingAge(d.pendingReview) {
+                text += " (oldest \(oldest))"
+            }
+        }
+        if !d.retriesExhausted.isEmpty {
+            text += ", \(d.retriesExhausted.count) retries exhausted"
         }
         return text
+    }
+
+    /// Age label of the earliest `finishedAt` among pending reviews.
+    static func oldestPendingAge(_ items: [PendingReviewItem]) -> String? {
+        let dated: [(Date, String)] = items.compactMap { item in
+            guard let finished = item.finishedAt,
+                  let date = ISO8601DateFormatter().date(from: finished) else { return nil }
+            return (date, item.age)
+        }
+        return dated.min(by: { $0.0 < $1.0 })?.1
     }
 
     static func html(_ d: DigestOut) -> String {
@@ -196,6 +226,13 @@ struct Digest: AsyncParsableCommand {
                 "<li><b>#\(line.id)</b> \(HTML.escape(line.agent)) — \(HTML.escape(line.status))"
                     + (line.summary.map { ": \(HTML.escape(String($0.prefix(140))))" } ?? "")
                     + "</li>"
+            }.joined() + "</ul>")
+        }
+
+        if !d.retriesExhausted.isEmpty {
+            parts.append("<h2>Retries exhausted (\(d.retriesExhausted.count))</h2>")
+            parts.append("<ul>" + d.retriesExhausted.map {
+                "<li>\(HTML.escape($0))</li>"
             }.joined() + "</ul>")
         }
 
@@ -273,6 +310,6 @@ struct Digest: AsyncParsableCommand {
         let ahead = item.commitsAhead > 500
             ? "stale — base history rewritten"
             : "\(item.commitsAhead) commit\(item.commitsAhead == 1 ? "" : "s")"
-        return "#\(item.id) \(item.agent) — \(title) — \(ahead): \(item.commits.first ?? "")"
+        return "#\(item.id) \(item.agent) — \(title) — \(item.age) — \(ahead): \(item.commits.first ?? "")"
     }
 }

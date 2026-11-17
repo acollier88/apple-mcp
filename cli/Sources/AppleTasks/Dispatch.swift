@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import EventKit
 import Foundation
 
@@ -44,7 +45,8 @@ struct Dispatch: AsyncParsableCommand {
 
     @Flag(name: .customLong("quiet"), help: """
         Print nothing when this pass is empty or only repeats the previous \
-        pass's GC/skip noise (for launchd logs). A paused report is included \
+        pass's GC/skip/gate/schedule noise (for launchd logs). Real failures \
+        and dispatch lines are always printed. A paused report is included \
         only when the pause until/reason changed since the last pass.
         """)
     var quiet = false
@@ -148,6 +150,19 @@ struct Dispatch: AsyncParsableCommand {
         let config = try AgentsConfig.load()
         Self.passLog("dispatch pass start quiet=\(quiet) dryRun=\(dryRun)")
         defer { Self.passLog("dispatch pass end") }
+        // tools/launchd starts `dispatch --quiet` on StartInterval and will
+        // not start another pass while this process is running. Arm the cap
+        // here, not by editing the installed plist.
+        let passWatchdog = PassWatchdog.arm(minutes: config.resolvedMaxPassMinutes)
+        defer { passWatchdog.disarm() }
+        if !dryRun {
+            let layout = AppleTasksLayout.resolve()
+            let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
+            if !migration.notes.isEmpty {
+                let text = migration.notes.joined(separator: "; ")
+                FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+            }
+        }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
                 "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))
@@ -163,6 +178,10 @@ struct Dispatch: AsyncParsableCommand {
         // mutate the machine (#44).
         if !dryRun {
             reports += await reapAndCollect(config: config, store: store)
+            // Nudge once per distinct pending-review set. Dry-run stays quiet;
+            // a paused or reap-only pass still notifies (the backlog is not a
+            // new claim). Repeats stay quiet until a row, branch, or commit changes.
+            await PendingReview.notifyIfChanged(items: PendingReview.items(), db: .shared)
         }
         if reapOnly {
             emitReports(reports)
@@ -213,5 +232,47 @@ struct Dispatch: AsyncParsableCommand {
     static func passLog(_ message: String) {
         let stamp = ISO8601DateFormatter().string(from: Date())
         FileHandle.standardError.write(Data("\(stamp) \(message)\n".utf8))
+    }
+
+    /// Wording for a `running` row whose agent pid is already gone.
+    static func orphanedDispatchSummary(dispatcherAlive: Bool) -> String {
+        if dispatcherAlive {
+            return "agent exited but dispatcher never recorded the result"
+        }
+        return "dispatcher process is gone"
+    }
+}
+
+/// Exits the process if one `dispatch` invocation outlives its cap. `defer`
+/// disarms it on the normal path. `_exit` is deliberate: a stuck pass may
+/// hold locks the ordinary `exit` would try to take.
+private final class PassWatchdog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var disarmed = false
+
+    static func arm(minutes: Int) -> PassWatchdog {
+        let watchdog = PassWatchdog()
+        let seconds = TimeInterval(max(minutes, 1) * 60)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+            watchdog.fire(minutes: max(minutes, 1))
+        }
+        return watchdog
+    }
+
+    func disarm() {
+        lock.lock()
+        disarmed = true
+        lock.unlock()
+    }
+
+    private func fire(minutes: Int) {
+        lock.lock()
+        let skip = disarmed
+        lock.unlock()
+        guard !skip else { return }
+        let message = "apple-tasks dispatch: pass exceeded \(minutes)m; exiting so launchd can start the next pass\n"
+        FileHandle.standardError.write(Data(message.utf8))
+        AgentProcess.killTracked()
+        _exit(75)
     }
 }

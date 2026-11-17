@@ -50,6 +50,10 @@ extension Dispatch {
         let gates = GateContext() // probes cached across candidates this pass
         let budgetMode = AutoBudgetMode.parse(config.autoBudget)
         let bandwidth: BudgetBandwidth? = budgetMode == .off ? nil : BudgetBandwidth.load()
+        // One readiness pass for every candidate (#43). Boot, DNS, and login
+        // failures stay queued; they are not claims and not [failed].
+        let readiness = await LaneProbe.snapshot(
+            config: config, env: ProcessInfo.processInfo.environment)
 
         // IDEAS #47: open-subtask counts per parent externalId, via ONE
         // private-helper call, computed lazily when the first candidate
@@ -159,6 +163,10 @@ extension Dispatch {
                 }
                 let (attempts, lastFailure) = AuditDB.shared.failedAttempts(taskId: taskId)
                 if attempts > maxRetries {
+                    if !dryRun {
+                        await noteRetriesExhausted(taskId: taskId, title: parsed.title,
+                                                   attempts: attempts, maxRetries: maxRetries)
+                    }
                     if dryRun {
                         reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
                                                       cwd: nil,
@@ -209,9 +217,16 @@ extension Dispatch {
                 .first
                 .map { NSString(string: $0).expandingTildeInPath }
 
+            let healTarget = LanePreflight.healTargetLane(
+                tags: parsed.tags, agentNames: Set(config.agents.keys.map { $0.lowercased() }))
+            // A heal pinned to the broken lane moves to the heal lane when
+            // that lane exists. Otherwise the skip below leaves it queued.
+            let pinned = LanePreflight.retargetHealLane(
+                named: namedAgent, healTarget: healTarget,
+                hasHealLane: config.agents["heal"] != nil) ?? namedAgent
             let pool: [String]
-            if let namedAgent {
-                pool = [namedAgent]
+            if let pinned {
+                pool = [pinned]
             } else {
                 var walk = config.autoPool(preferWorktree: cwd != nil)
                 if let bandwidth { walk = bandwidth.ordered(walk) }
@@ -226,7 +241,8 @@ extension Dispatch {
                 if let reason = await Self.laneSkipReason(
                     tag: tag, agent: candidate, cwd: cwd,
                     specsPerAgent: specsPerAgent, gates: gates, config: config,
-                    fromAutoPool: fromAutoPool, bandwidth: bandwidth, budgetMode: budgetMode
+                    fromAutoPool: fromAutoPool, bandwidth: bandwidth, budgetMode: budgetMode,
+                    readiness: readiness, isHealTarget: tag == healTarget
                 ) {
                     skipNotes.append("\(tag): \(reason)")
                     continue
@@ -318,6 +334,9 @@ extension Dispatch {
                 }
                 prompt += "\n" + PromptTemplate.end("ATTACHMENTS")
             }
+            if agent.sandbox?.isGatehouse == true {
+                prompt = PromptTemplate.prefixGateRun(prompt)
+            }
             guard let template = agent.commandTemplate(tag: agentTag) else {
                 reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: agentTag,
                                               cwd: nil,
@@ -363,6 +382,11 @@ extension Dispatch {
                 ledgerId = id
             }
 
+            // Anchor the occurrence so a second agent `complete` in this run
+            // cannot roll a recurring series forward again (#42).
+            if reminder.hasRecurrenceRules, let due = Dates.formatDue(reminder.dueDateComponents) {
+                AuditDB.shared.setOccurrenceDue(id: ledgerId, due: due)
+            }
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
                                   taskId: taskId, list: reminder.calendar?.title,
                                   detail: "\(agentTag): \(parsed.title)"
@@ -378,13 +402,16 @@ extension Dispatch {
             // With no workdir tag there is no repo to isolate; the task runs
             // in a throwaway per-dispatch scratch directory instead (IDEAS
             // #54) — worktree lanes included, since scratch IS the isolation.
+            // Runtime dirs live under Application Support, not the config dir.
+            let layout = AppleTasksLayout.resolve()
             var runCwd = cwd
             var worktreePath: String?
             var branchName: String?
             if cwd == nil {
-                let scratch = AgentsConfig.url.deletingLastPathComponent()
-                    .appendingPathComponent("scratch/\(ledgerId)").path
+                let scratch = layout.scratchDir(ledgerId).path
                 do {
+                    _ = ConfigPermissions.ensurePrivateDirectory(layout.support)
+                    _ = ConfigPermissions.ensurePrivateDirectory(layout.scratch)
                     try FileManager.default.createDirectory(
                         atPath: scratch, withIntermediateDirectories: true)
                 } catch {
@@ -397,8 +424,9 @@ extension Dispatch {
                 }
                 runCwd = scratch
             } else if agent.worktree == true, let repo = cwd {
-                let wt = AgentsConfig.url.deletingLastPathComponent()
-                    .appendingPathComponent("worktrees/\(ledgerId)").path
+                _ = ConfigPermissions.ensurePrivateDirectory(layout.support)
+                _ = ConfigPermissions.ensurePrivateDirectory(layout.worktrees)
+                let wt = layout.worktreeDir(ledgerId).path
                 let branch = "agent/\(agentTag)-\(ledgerId)"
                 let gitCode = Self.runGit(["worktree", "add", "-b", branch, wt], repo: repo)
                 guard gitCode == 0 else {
@@ -415,7 +443,8 @@ extension Dispatch {
             }
 
             // Run log: everything the agent prints, kept per ledger row.
-            let runsDir = AgentsConfig.url.deletingLastPathComponent().appendingPathComponent("runs")
+            _ = ConfigPermissions.ensurePrivateDirectory(layout.support)
+            let runsDir = layout.runs
             RunLogs.ensureDirectory(runsDir)
             let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
             AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: worktreePath)
@@ -447,14 +476,23 @@ extension Dispatch {
                 finalArgv = Self.renderArgv(template, prompt: prompt, via: promptVia, promptFile: promptURL.path)
             }
 
+            let workspace = runCwd ?? cwd ?? ""
+            let passthrough = agent.envPassthrough ?? []
+            finalArgv = Self.planArgv(
+                argv: finalArgv, sandbox: agent.sandbox, workspace: workspace,
+                repo: cwd, envPassthrough: passthrough)
+            let ledgerArgv = Self.renderArgv(
+                template, prompt: Self.ledgerPromptMarker, via: promptVia,
+                promptFile: promptFile ?? "{promptFile}")
+            let displayArgv = Self.planArgv(
+                argv: ledgerArgv, sandbox: agent.sandbox, workspace: workspace,
+                repo: cwd, envPassthrough: passthrough)
             specs.append(RunSpec(ledgerId: ledgerId, taskId: taskId, title: parsed.title,
                                  agentTag: agentTag, argv: finalArgv, repo: cwd, runCwd: runCwd,
                                  worktree: worktreePath, branch: branchName,
                                  timeoutMinutes: agent.timeoutMinutes,
                                  envPolicy: AgentEnv.Policy.resolve(lane: agent, config: config),
-                                 displayCommand: Self.ledgerCommand(
-                                     template, via: promptVia,
-                                     promptFile: promptFile ?? "{promptFile}"),
+                                 displayCommand: displayArgv.joined(separator: " "),
                                  logPath: logURL.path,
                                  promptVia: promptVia,
                                  stdinPrompt: promptVia == .stdin ? prompt : nil,
@@ -491,10 +529,20 @@ extension Dispatch {
         config: AgentsConfig,
         fromAutoPool: Bool,
         bandwidth: BudgetBandwidth?,
-        budgetMode: AutoBudgetMode
+        budgetMode: AutoBudgetMode,
+        readiness: LanePreflight.Pass,
+        isHealTarget: Bool
     ) async -> String? {
         guard agent.commandTemplate(tag: tag) != nil else {
             return "no command or llm"
+        }
+        if let block = LanePreflight.block(
+            uptime: readiness.uptime,
+            networkUp: readiness.networkUp,
+            auth: readiness.authByLane[tag],
+            isHealTarget: isHealTarget
+        ) {
+            return LanePreflight.skipReason(block)
         }
         if let cap = agent.maxConcurrent,
            AuditDB.shared.activeDispatchCount(agent: tag)
@@ -534,6 +582,80 @@ extension Dispatch {
             .joined(separator: " ")
     }
 
+    /// Argv Phase B executes. A gatehouse lane is wrapped in `gate sandbox`;
+    /// every other lane (including `sandbox == nil`) is returned unchanged.
+    /// Harness flags (`--sandbox`, `--sandbox <mode>`, `--sandbox=<mode>`)
+    /// are removed only from the wrapped argv so a gatehouse lane does not
+    /// also start a nested sandbox.
+    static func planArgv(argv: [String], sandbox: AgentsConfig.Sandbox?,
+                         workspace: String, repo: String?,
+                         envPassthrough: [String]) -> [String] {
+        guard sandbox?.isGatehouse == true else { return argv }
+        var out = ["gate", "sandbox", "--workspace", workspace]
+        if let repo, !repo.isEmpty {
+            let gitDir = URL(fileURLWithPath: repo).appendingPathComponent(".git").path
+            out += ["--git-dir", gitDir]
+        }
+        if let net = sandbox?.net, !net.isEmpty {
+            out += ["--net", net]
+        }
+        if let preset = sandbox?.preset, !preset.isEmpty {
+            out += ["--preset", preset]
+        }
+        for name in envPassthrough where !name.isEmpty {
+            out += ["--env", name]
+        }
+        out.append("--")
+        out += stripHarnessSandbox(argv)
+        return out
+    }
+
+    /// The lane command inside a `gate sandbox -- …` wrapper, or `argv` when
+    /// it is not that wrapper. Seat detection and Cursor NDJSON filtering use
+    /// this so they still see `agent` / `claude` rather than `gate`.
+    static func laneArgv(_ argv: [String]) -> [String] {
+        guard let sep = sandboxSeparator(argv) else { return argv }
+        return Array(argv[argv.index(after: sep)...])
+    }
+
+    /// Apply `transform` to the inner lane argv of a sandbox wrapper.
+    static func mapLaneArgv(_ argv: [String], _ transform: ([String]) -> [String]) -> [String] {
+        guard let sep = sandboxSeparator(argv) else { return transform(argv) }
+        return Array(argv[...sep]) + transform(Array(argv[argv.index(after: sep)...]))
+    }
+
+    private static func sandboxSeparator(_ argv: [String]) -> Array<String>.Index? {
+        guard argv.first == "gate", let sep = argv.firstIndex(of: "--") else { return nil }
+        guard argv[..<sep].contains("sandbox") else { return nil }
+        return sep
+    }
+
+    /// Drop a harness-native sandbox flag. `--sandbox <value>` drops the value
+    /// when the next token is not itself a flag; a bare `--sandbox` (antigravity)
+    /// drops only the flag.
+    static func stripHarnessSandbox(_ argv: [String]) -> [String] {
+        var out: [String] = []
+        var i = 0
+        while i < argv.count {
+            let arg = argv[i]
+            if arg == "--sandbox" {
+                if i + 1 < argv.count, !argv[i + 1].hasPrefix("-") {
+                    i += 2
+                } else {
+                    i += 1
+                }
+                continue
+            }
+            if arg.hasPrefix("--sandbox=") {
+                i += 1
+                continue
+            }
+            out.append(arg)
+            i += 1
+        }
+        return out
+    }
+
     /// Substitute the prompt into an argv template according to `promptVia`.
     /// - argv: `{prompt}` → the prompt, inline.
     /// - stdin: entries that are exactly `{prompt}` are dropped (the prompt
@@ -552,5 +674,17 @@ extension Dispatch {
                     .replacingOccurrences(of: "{promptFile}", with: promptFile)
             }
         }
+    }
+
+    /// One push per (task, attempt count). A later success resets the count,
+    /// so the next exhaustion notifies again. Missing ntfy config is not an error.
+    private func noteRetriesExhausted(taskId: String, title: String,
+                                      attempts: Int, maxRetries: Int) async {
+        let key = "retries.exhausted.\(taskId).\(attempts)"
+        guard AuditDB.shared.getState(key) == nil else { return }
+        _ = AuditDB.shared.setState(key, ISO8601DateFormatter().string(from: Date()))
+        _ = await Notifier.push(
+            title: "Retries exhausted",
+            body: "\(title) has \(attempts) failures since its last success (max \(maxRetries)). It stays queued until you raise maxRetries or run dispatch-retry.")
     }
 }

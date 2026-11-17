@@ -133,7 +133,7 @@
     "reviewConfidence": 0.45
   },
   "workdirs": {
-    "apple-mcp": "~/Code/apple-mcp",
+    "apple-mcp": "~/apple-mcp",
     "home-lab": "~/Documents/home-lab",
     "hermes-agent": "~/.hermes/hermes-agent"
   },
@@ -147,6 +147,7 @@
   "retryBackoffMinutes": 30,
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
+  "pendingReviewWorktreeDays": 0,
   "notifyOn": "failure",
   "modelPrefs": {
     "auto": [
