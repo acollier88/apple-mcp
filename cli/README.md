@@ -191,7 +191,7 @@ Setup (one-time):
 
 ```bash
 python3 -m venv ~/.config/apple-tasks/findmy/venv
-~/.config/apple-tasks/findmy/venv/bin/pip install FindMy
+~/.config/apple-tasks/findmy/venv/bin/pip install -r ../tools/findmy/requirements.txt   # pinned FindMy.py
 ~/.config/apple-tasks/findmy/venv/bin/python3 ../tools/findmy/findmy-sidecar.py login   # Apple ID + 2FA
 # then drop AirTag pairing .plist / accessory .json files into
 # ~/.config/apple-tasks/findmy/accessories/ (see FindMy.py docs for export)

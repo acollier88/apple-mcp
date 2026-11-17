@@ -1,0 +1,4 @@
+# FindMy.py is reverse-engineered against Apple's private API and its
+# account/session JSON format changes between releases. Pin the version the
+# sidecar was tested against; bump deliberately and re-test login + locate.
+FindMy==0.10.1
