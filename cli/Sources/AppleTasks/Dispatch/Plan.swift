@@ -50,6 +50,10 @@ extension Dispatch {
         let gates = GateContext() // probes cached across candidates this pass
         let budgetMode = AutoBudgetMode.parse(config.autoBudget)
         let bandwidth: BudgetBandwidth? = budgetMode == .off ? nil : BudgetBandwidth.load()
+        // One readiness pass for every candidate (#43). Boot, DNS, and login
+        // failures stay queued; they are not claims and not [failed].
+        let readiness = await LaneProbe.snapshot(
+            config: config, env: ProcessInfo.processInfo.environment)
 
         // IDEAS #47: open-subtask counts per parent externalId, via ONE
         // private-helper call, computed lazily when the first candidate
@@ -213,9 +217,16 @@ extension Dispatch {
                 .first
                 .map { NSString(string: $0).expandingTildeInPath }
 
+            let healTarget = LanePreflight.healTargetLane(
+                tags: parsed.tags, agentNames: Set(config.agents.keys.map { $0.lowercased() }))
+            // A heal pinned to the broken lane moves to the heal lane when
+            // that lane exists. Otherwise the skip below leaves it queued.
+            let pinned = LanePreflight.retargetHealLane(
+                named: namedAgent, healTarget: healTarget,
+                hasHealLane: config.agents["heal"] != nil) ?? namedAgent
             let pool: [String]
-            if let namedAgent {
-                pool = [namedAgent]
+            if let pinned {
+                pool = [pinned]
             } else {
                 var walk = config.autoPool(preferWorktree: cwd != nil)
                 if let bandwidth { walk = bandwidth.ordered(walk) }
@@ -230,7 +241,8 @@ extension Dispatch {
                 if let reason = await Self.laneSkipReason(
                     tag: tag, agent: candidate, cwd: cwd,
                     specsPerAgent: specsPerAgent, gates: gates, config: config,
-                    fromAutoPool: fromAutoPool, bandwidth: bandwidth, budgetMode: budgetMode
+                    fromAutoPool: fromAutoPool, bandwidth: bandwidth, budgetMode: budgetMode,
+                    readiness: readiness, isHealTarget: tag == healTarget
                 ) {
                     skipNotes.append("\(tag): \(reason)")
                     continue
@@ -543,10 +555,20 @@ extension Dispatch {
         config: AgentsConfig,
         fromAutoPool: Bool,
         bandwidth: BudgetBandwidth?,
-        budgetMode: AutoBudgetMode
+        budgetMode: AutoBudgetMode,
+        readiness: LanePreflight.Pass,
+        isHealTarget: Bool
     ) async -> String? {
         guard agent.commandTemplate(tag: tag) != nil else {
             return "no command or llm"
+        }
+        if let block = LanePreflight.block(
+            uptime: readiness.uptime,
+            networkUp: readiness.networkUp,
+            auth: readiness.authByLane[tag],
+            isHealTarget: isHealTarget
+        ) {
+            return LanePreflight.skipReason(block)
         }
         if let cap = agent.maxConcurrent,
            AuditDB.shared.activeDispatchCount(agent: tag)
