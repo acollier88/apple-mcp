@@ -191,13 +191,111 @@ struct ContentView: View {
             DispatchesTab(refreshToken: $refreshToken)
                 .tabItem { Label("Dispatches", systemImage: "bolt.horizontal.circle") }
                 .tag(2)
+            ProposedTab(refreshToken: $refreshToken)
+                .tabItem { Label("Proposed", systemImage: "lightbulb") }
+                .tag(3)
             PermissionsSettingsTab()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(3)
+                .tag(4)
         }
         .frame(minWidth: 680, maxWidth: .infinity, minHeight: 500, maxHeight: .infinity)
         .onReceive(NotificationCenter.default.publisher(for: .agentTasksEventKitChanged)) { _ in
             refreshToken += 1
+        }
+    }
+}
+
+// MARK: - Proposed
+
+struct ProposedTab: View {
+    @Binding var refreshToken: Int
+
+    private struct Row: Codable, Identifiable {
+        let id: Int
+        let detector: String
+        let summary: String
+        let evidence: String
+        let lane: String?
+    }
+
+    private struct Payload: Codable {
+        let proposals: [Row]
+        let muted: [String]
+    }
+
+    @State private var rows: [Row] = []
+    @State private var muted: [String] = []
+    @State private var status: String?
+    @State private var busyId: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Proposed").font(.title2)
+                Spacer()
+                if !muted.isEmpty {
+                    Text("Muted: \(muted.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Reload") { Task { await reload() } }
+            }
+            .padding()
+            if let status {
+                Text(status).font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+            }
+            Divider()
+            if rows.isEmpty {
+                Text("No open proposals.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(rows) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.summary).font(.headline)
+                        Text("\(row.detector)\(row.lane.map { " · \($0)" } ?? "")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(row.evidence).font(.callout).lineLimit(3)
+                        HStack {
+                            Button("Accept") { Task { await decide(row.id, accept: true) } }
+                                .disabled(busyId != nil)
+                            Button("Dismiss") { Task { await decide(row.id, accept: false) } }
+                                .disabled(busyId != nil)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .task { await reload() }
+        .onChange(of: refreshToken) { _, _ in Task { await reload() } }
+    }
+
+    private func reload() async {
+        do {
+            let raw = try CLI.run(["proposals", "list"])
+            let payload = try JSONDecoder().decode(Payload.self, from: Data(raw.utf8))
+            rows = payload.proposals
+            muted = payload.muted
+            status = nil
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func decide(_ id: Int, accept: Bool) async {
+        busyId = id
+        defer { busyId = nil }
+        do {
+            if accept {
+                _ = try CLI.run(["proposals", "accept", String(id)], timeout: CLI.statusIntentTimeout)
+            } else {
+                _ = try CLI.run(["proposals", "dismiss", String(id)])
+            }
+            await reload()
+        } catch {
+            status = error.localizedDescription
         }
     }
 }

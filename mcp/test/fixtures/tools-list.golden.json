@@ -3161,6 +3161,149 @@
     }
   },
   {
+    "name": "proposals_accept",
+    "description": "Accept one proposal: create a Reminders task carrying its evidence. Tags it [auto] only when the detector names a lane.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Finding id from proposals_list."
+        },
+        "list": {
+          "type": "string",
+          "description": "Reminders list. Default Code Tasks."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "proposals_dismiss",
+    "description": "Dismiss one proposal. The same evidence will not be listed again. mute_detector hides the whole detector.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number",
+          "description": "Finding id from proposals_list."
+        },
+        "mute_detector": {
+          "type": "boolean",
+          "description": "Also mute this detector."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "number"
+        },
+        "state": {
+          "type": "string"
+        },
+        "muted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "proposals_list",
+    "description": "List open proposals. A dismissed proposal stays hidden until its evidence changes. Muted detectors are omitted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "proposals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "number"
+              },
+              "detector": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "detector",
+              "summary",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "muted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
     "name": "readinglist_scan",
     "description": "Read Safari Reading List items added since the last scan (watermark auto-advances; first run looks back 24h). Emits {title, url, dateAdded, previewText}, oldest first. Requires Full Disk Access for the host process; the doctor command reports FDA status. Read-only.",
     "inputSchema": {

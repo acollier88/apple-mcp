@@ -848,6 +848,7 @@ struct Doctor: AsyncParsableCommand {
                 summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
                 signature: "secrets-plaintext"))
         }
+        issues.append(contentsOf: ProposalsInbox.mutedIssues())
         var heals: HealReport?
         if enqueueHeals {
             let cap = (try? AgentsConfig.load())?.doctor?.detectors?.thresholds?.healDailyCap ?? 3

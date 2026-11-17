@@ -70,6 +70,11 @@ struct Suggest: AsyncParsableCommand {
             store: store, days: days, staleWeeks: staleWeeks, includeContacts: !noContacts)
         let suggestions = try await SuggestClassifier.propose(
             context: lines, max: maxSuggestions, agent: agent)
+        let settings = (try? AgentsConfig.load())?.doctor?.detectors
+        if Findings.enabled(ProposalsInbox.modelSnapshot, settings) {
+            ProposalsInbox.rememberSuggestions(
+                suggestions, lane: settings?.lanes?[ProposalsInbox.modelSnapshot])
+        }
 
         emit(SuggestOut(generatedAt: ISO8601DateFormatter().string(from: Date()),
                         inputs: inputs, suggestions: suggestions))
