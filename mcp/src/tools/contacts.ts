@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { defineTool } from "../lib";
+import { defineTool, opt, positionals } from "../lib";
 import { contactShape } from "../schemas";
 
 export function registerContactTools(server: McpServer): void {
@@ -17,8 +17,9 @@ export function registerContactTools(server: McpServer): void {
     output: { contacts: z.array(z.object(contactShape)) },
     annotations: { title: "Search contacts", readOnlyHint: true },
     argv: ({ query, limit }) => {
-      const args = ["contacts", "search", query];
-      if (limit !== undefined) args.push("--limit", String(limit));
+      const args = ["contacts", "search"];
+      if (limit !== undefined) args.push(...opt("--limit", String(limit)));
+      args.push(...positionals(query));
       return args;
     },
     wrap: (parsed) => ({ contacts: parsed }),
@@ -32,6 +33,6 @@ export function registerContactTools(server: McpServer): void {
     },
     output: contactShape,
     annotations: { title: "Show contact", readOnlyHint: true },
-    argv: ({ id }) => ["contacts", "show", id],
+    argv: ({ id }) => ["contacts", "show", ...positionals(id)],
   });
 }

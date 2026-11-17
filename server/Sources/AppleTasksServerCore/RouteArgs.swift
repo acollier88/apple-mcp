@@ -15,15 +15,15 @@ public enum RouteArgs {
             return .health
         case ("GET", "/v1/dispatches"):
             var args = ["dispatches"]
-            if let s = query["status"], !s.isEmpty { args += ["--status", s] }
-            if let l = query["limit"], !l.isEmpty { args += ["--limit", l] }
+            if let s = query["status"], !s.isEmpty { args.append(option("--status", s)) }
+            if let l = query["limit"], !l.isEmpty { args.append(option("--limit", l)) }
             return .cli(args: args, timeout: 30)
         case ("GET", "/v1/log"):
             var args = ["log"]
-            if let l = query["limit"], !l.isEmpty { args += ["--limit", l] }
-            if let s = query["since"], !s.isEmpty { args += ["--since", s] }
-            if let t = query["task"], !t.isEmpty { args += ["--task", t] }
-            if let c = query["caller"], !c.isEmpty { args += ["--caller", c] }
+            if let l = query["limit"], !l.isEmpty { args.append(option("--limit", l)) }
+            if let s = query["since"], !s.isEmpty { args.append(option("--since", s)) }
+            if let t = query["task"], !t.isEmpty { args.append(option("--task", t)) }
+            if let c = query["caller"], !c.isEmpty { args.append(option("--caller", c)) }
             return .cli(args: args, timeout: 30)
         case ("POST", "/v1/dispatch"):
             return dispatch(body)
@@ -44,6 +44,15 @@ public enum RouteArgs {
         }
     }
 
+    /// `--flag=value`: swift-argument-parser rejects `--flag -x` ("Missing
+    /// value") but accepts the attached form for any value, so a query or
+    /// body value starting with `-` is passed as a value, never as an
+    /// option. Callers only pass non-empty values (`--flag=` is itself
+    /// "missing value"). Same rule as `opt()` in mcp/src/lib.ts.
+    static func option(_ flag: String, _ value: String) -> String {
+        "\(flag)=\(value)"
+    }
+
     private static func jsonObject(_ body: Data) -> [String: Any] {
         (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
     }
@@ -53,8 +62,8 @@ public enum RouteArgs {
         var args = ["dispatch"]
         let live = (obj["dryRun"] as? Bool) == false
         if !live { args.append("--dry-run") }
-        if let agent = obj["agent"] as? String, !agent.isEmpty { args += ["--agent", agent] }
-        if let list = obj["list"] as? String, !list.isEmpty { args += ["--list", list] }
+        if let agent = obj["agent"] as? String, !agent.isEmpty { args.append(option("--agent", agent)) }
+        if let list = obj["list"] as? String, !list.isEmpty { args.append(option("--list", list)) }
         if obj["reapOnly"] as? Bool == true { args.append("--reap-only") }
         return .cli(args: args, timeout: live ? 1800 : 60)
     }
@@ -63,8 +72,8 @@ public enum RouteArgs {
         let obj = jsonObject(body)
         var args = ["triage"]
         if obj["apply"] as? Bool == true { args.append("--apply") }
-        if let list = obj["list"] as? String, !list.isEmpty { args += ["--inbox", list] }
-        if let agent = obj["agent"] as? String, !agent.isEmpty { args += ["--agent", agent] }
+        if let list = obj["list"] as? String, !list.isEmpty { args.append(option("--inbox", list)) }
+        if let agent = obj["agent"] as? String, !agent.isEmpty { args.append(option("--agent", agent)) }
         if obj["notes"] as? Bool == true { args.append("--notes") }
         return .cli(args: args, timeout: 120)
     }

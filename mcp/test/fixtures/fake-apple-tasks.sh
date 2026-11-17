@@ -5,6 +5,15 @@ if [ -n "$FAKE_ARGV_LOG" ]; then
   printf '%s\n' "$*" >> "$FAKE_ARGV_LOG"
 fi
 
+# Exact argv: each arg terminated by US (0x1f), each invocation by RS (0x1e),
+# so args containing spaces or newlines round-trip.
+if [ -n "$FAKE_ARGV_RAW_LOG" ]; then
+  for arg in "$@"; do
+    printf '%s\037' "$arg" >> "$FAKE_ARGV_RAW_LOG"
+  done
+  printf '\036' >> "$FAKE_ARGV_RAW_LOG"
+fi
+
 if [ -n "$FAKE_EXIT" ] && [ "$FAKE_EXIT" != "0" ]; then
   printf '%s\n' "fake failure" >&2
   exit "$FAKE_EXIT"

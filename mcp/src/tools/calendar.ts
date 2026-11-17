@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { defineTool } from "../lib";
+import { defineTool, opt, positionals } from "../lib";
 import { calendarShape, deletedShape, eventSchema, eventShape, tagsField } from "../schemas";
 
 export function registerCalendarTools(server: McpServer): void {
@@ -18,10 +18,10 @@ export function registerCalendarTools(server: McpServer): void {
     annotations: { title: "List events", readOnlyHint: true },
     argv: ({ calendar, tags, from, to }) => {
       const args = ["events", "list"];
-      if (calendar) args.push("--calendar", calendar);
-      for (const t of tags ?? []) args.push("--tag", t);
-      if (from) args.push("--from", from);
-      if (to) args.push("--to", to);
+      if (calendar) args.push(...opt("--calendar", calendar));
+      for (const t of tags ?? []) args.push(...opt("--tag", t));
+      if (from) args.push(...opt("--from", from));
+      if (to) args.push(...opt("--to", to));
       return args;
     },
     wrap: (parsed) => ({ events: parsed }),
@@ -33,7 +33,7 @@ export function registerCalendarTools(server: McpServer): void {
     input: { id: z.string().describe("Event id from event_list/event_create.") },
     output: eventShape,
     annotations: { title: "Show event", readOnlyHint: true },
-    argv: ({ id }) => ["events", "show", id],
+    argv: ({ id }) => ["events", "show", ...positionals(id)],
   });
 
   defineTool(server, {
@@ -59,16 +59,16 @@ export function registerCalendarTools(server: McpServer): void {
     output: eventShape,
     annotations: { title: "Create event", destructiveHint: false },
     argv: ({ calendar, title, tags, start, end, duration, location, notes, url, recurrence }) => {
-      const args = ["events", "add", "--start", start];
-      if (calendar) args.push("--calendar", calendar);
-      for (const t of tags ?? []) args.push("--tag", t);
-      if (end) args.push("--end", end);
-      if (duration !== undefined) args.push("--duration", String(duration));
-      if (location) args.push("--location", location);
-      if (notes) args.push("--notes", notes);
-      if (url) args.push("--url", url);
-      if (recurrence) args.push("--recurrence", recurrence);
-      args.push(title);
+      const args = ["events", "add", ...opt("--start", start)];
+      if (calendar) args.push(...opt("--calendar", calendar));
+      for (const t of tags ?? []) args.push(...opt("--tag", t));
+      if (end) args.push(...opt("--end", end));
+      if (duration !== undefined) args.push(...opt("--duration", String(duration)));
+      if (location) args.push(...opt("--location", location));
+      if (notes) args.push(...opt("--notes", notes));
+      if (url) args.push(...opt("--url", url));
+      if (recurrence) args.push(...opt("--recurrence", recurrence));
+      args.push(...positionals(title));
       return args;
     },
   });
@@ -92,17 +92,18 @@ export function registerCalendarTools(server: McpServer): void {
     output: eventShape,
     annotations: { title: "Update event", idempotentHint: true },
     argv: ({ id, title, add_tags, remove_tags, start, end, location, notes, calendar, url, clear_url }) => {
-      const args = ["events", "update", id];
-      if (url) args.push("--url", url);
+      const args = ["events", "update"];
+      if (url) args.push(...opt("--url", url));
       if (clear_url) args.push("--clear-url");
-      if (title) args.push("--title", title);
-      for (const t of add_tags ?? []) args.push("--add-tag", t);
-      for (const t of remove_tags ?? []) args.push("--remove-tag", t);
-      if (start) args.push("--start", start);
-      if (end) args.push("--end", end);
-      if (location !== undefined) args.push("--location", location);
-      if (notes !== undefined) args.push("--notes", notes);
-      if (calendar) args.push("--calendar", calendar);
+      if (title) args.push(...opt("--title", title));
+      for (const t of add_tags ?? []) args.push(...opt("--add-tag", t));
+      for (const t of remove_tags ?? []) args.push(...opt("--remove-tag", t));
+      if (start) args.push(...opt("--start", start));
+      if (end) args.push(...opt("--end", end));
+      if (location !== undefined) args.push(...opt("--location", location));
+      if (notes !== undefined) args.push(...opt("--notes", notes));
+      if (calendar) args.push(...opt("--calendar", calendar));
+      args.push(...positionals(id));
       return args;
     },
   });
@@ -113,7 +114,7 @@ export function registerCalendarTools(server: McpServer): void {
     input: { id: z.string() },
     output: deletedShape,
     annotations: { title: "Delete event", destructiveHint: true },
-    argv: ({ id }) => ["events", "delete", id],
+    argv: ({ id }) => ["events", "delete", ...positionals(id)],
   });
 
   defineTool(server, {

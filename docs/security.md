@@ -82,6 +82,14 @@ follow instructions inside a block.
 CLI `Dispatch.run` uses `Dispatch.recursionRefusal` — live dispatch
 throws; `--dry-run` and `--reap-only` stay allowed.
 
+**Argv injection.** MCP tools and `RouteArgs` build CLI argv from
+agent/HTTP strings. Free-text positionals go behind `--`
+(`positionals()` in `mcp/src/lib.ts`), and option values use the
+attached `--flag=value` form (`opt()`, `RouteArgs.option`) because
+swift-argument-parser rejects `--flag -x` but accepts `--flag=-x`; an
+empty value keeps the split form (`--flag=` is "missing value").
+`ArgvParsingTests` pins that parser behaviour.
+
 **Not isolated.** Inherited env (including `launchd.env` via
 `run-with-env.sh` `set -a`) unless a lane sets `envMode`, and even then
 only by name; the whole home directory; login Keychain; TCC of the

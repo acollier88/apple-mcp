@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { defineTool } from "../lib";
+import { defineTool, opt, positionals } from "../lib";
 
 export function registerNotesTools(server: McpServer): void {
   defineTool(server, {
@@ -30,9 +30,9 @@ export function registerNotesTools(server: McpServer): void {
     annotations: { title: "Scan notes", readOnlyHint: true },
     argv: ({ folder, since, max_chars }) => {
       const args = ["notes", "scan"];
-      if (folder) args.push("--folder", folder);
-      if (since) args.push("--since", since);
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      if (folder) args.push(...opt("--folder", folder));
+      if (since) args.push(...opt("--since", since));
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
       return args;
     },
     wrap: (parsed) => ({ notes: parsed }),
@@ -52,9 +52,9 @@ export function registerNotesTools(server: McpServer): void {
     output: { id: z.string(), name: z.string() },
     annotations: { title: "Create note", destructiveHint: true },
     argv: ({ title, body_html, folder }) => {
-      const args = ["notes", "create", "--title", title];
-      if (folder) args.push("--folder", folder);
-      args.push(body_html);
+      const args = ["notes", "create", ...opt("--title", title)];
+      if (folder) args.push(...opt("--folder", folder));
+      args.push(...positionals(body_html));
       return args;
     },
   });

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { defineTool } from "../lib";
+import { defineTool, opt, positionals } from "../lib";
 import { deletedShape, tagsField, taskSchema, taskShape, listShape } from "../schemas";
 
 const nativeTagsField = z
@@ -31,12 +31,12 @@ export function registerTaskTools(server: McpServer): void {
     annotations: { title: "List tasks", readOnlyHint: true },
     argv: ({ list, tags, status, due_before, overdue, search }) => {
       const args = ["list"];
-      if (list) args.push("--list", list);
-      for (const t of tags ?? []) args.push("--tag", t);
-      if (status) args.push("--status", status);
-      if (due_before) args.push("--due-before", due_before);
+      if (list) args.push(...opt("--list", list));
+      for (const t of tags ?? []) args.push(...opt("--tag", t));
+      if (status) args.push(...opt("--status", status));
+      if (due_before) args.push(...opt("--due-before", due_before));
       if (overdue) args.push("--overdue");
-      if (search) args.push("--search", search);
+      if (search) args.push(...opt("--search", search));
       return args;
     },
     wrap: (parsed) => ({ tasks: parsed }),
@@ -64,15 +64,15 @@ export function registerTaskTools(server: McpServer): void {
     output: taskShape,
     annotations: { title: "Create task", destructiveHint: false },
     argv: ({ list, title, tags, notes, due, priority, url, recurrence, native_tags }) => {
-      const args = ["add", "--list", list];
-      for (const t of tags ?? []) args.push("--tag", t);
-      if (notes) args.push("--notes", notes);
-      if (due) args.push("--due", due);
-      if (priority) args.push("--priority", priority);
-      if (url) args.push("--url", url);
-      if (recurrence) args.push("--recurrence", recurrence);
+      const args = ["add", ...opt("--list", list)];
+      for (const t of tags ?? []) args.push(...opt("--tag", t));
+      if (notes) args.push(...opt("--notes", notes));
+      if (due) args.push(...opt("--due", due));
+      if (priority) args.push(...opt("--priority", priority));
+      if (url) args.push(...opt("--url", url));
+      if (recurrence) args.push(...opt("--recurrence", recurrence));
       if (native_tags === false) args.push("--no-native-tags");
-      args.push(title);
+      args.push(...positionals(title));
       return args;
     },
   });
@@ -176,27 +176,28 @@ export function registerTaskTools(server: McpServer): void {
       native_tags,
       mirror_tags,
     }) => {
-      const args = ["update", id];
-      if (title) args.push("--title", title);
-      for (const t of add_tags ?? []) args.push("--add-tag", t);
-      for (const t of remove_tags ?? []) args.push("--remove-tag", t);
-      if (notes !== undefined) args.push("--notes", notes);
-      if (append_notes !== undefined) args.push("--append-notes", append_notes);
-      if (url) args.push("--url", url);
+      const args = ["update"];
+      if (title) args.push(...opt("--title", title));
+      for (const t of add_tags ?? []) args.push(...opt("--add-tag", t));
+      for (const t of remove_tags ?? []) args.push(...opt("--remove-tag", t));
+      if (notes !== undefined) args.push(...opt("--notes", notes));
+      if (append_notes !== undefined) args.push(...opt("--append-notes", append_notes));
+      if (url) args.push(...opt("--url", url));
       if (clear_url) args.push("--clear-url");
       if (clear_due) args.push("--clear-due");
-      if (due) args.push("--due", due);
-      if (priority) args.push("--priority", priority);
-      if (list) args.push("--list", list);
-      if (parent) args.push("--parent", parent);
-      if (recurrence) args.push("--recurrence", recurrence);
+      if (due) args.push(...opt("--due", due));
+      if (priority) args.push(...opt("--priority", priority));
+      if (list) args.push(...opt("--list", list));
+      if (parent) args.push(...opt("--parent", parent));
+      if (recurrence) args.push(...opt("--recurrence", recurrence));
       if (clear_recurrence) args.push("--clear-recurrence");
-      if (attach_file) args.push("--attach-file", attach_file);
-      if (attach_url) args.push("--attach-url", attach_url);
+      if (attach_file) args.push(...opt("--attach-file", attach_file));
+      if (attach_url) args.push(...opt("--attach-url", attach_url));
       if (clear_parent) args.push("--clear-parent");
-      if (section) args.push("--section", section);
+      if (section) args.push(...opt("--section", section));
       if (native_tags === false) args.push("--no-native-tags");
       if (mirror_tags) args.push("--mirror-tags");
+      args.push(...positionals(id));
       return args;
     },
   });
@@ -236,10 +237,10 @@ export function registerTaskTools(server: McpServer): void {
     argv: ({ dry_run, list, tags, status, id }) => {
       const args = ["remirror-tags"];
       if (dry_run) args.push("--dry-run");
-      if (list) args.push("--list", list);
-      for (const t of tags ?? []) args.push("--tag", t);
-      if (status) args.push("--status", status);
-      if (id) args.push("--id", id);
+      if (list) args.push(...opt("--list", list));
+      for (const t of tags ?? []) args.push(...opt("--tag", t));
+      if (status) args.push(...opt("--status", status));
+      if (id) args.push(...opt("--id", id));
       return args;
     },
     wrap: (parsed) => ({ reports: parsed }),
@@ -252,7 +253,7 @@ export function registerTaskTools(server: McpServer): void {
     input: { id: z.string() },
     output: taskShape,
     annotations: { title: "Complete task", idempotentHint: true },
-    argv: ({ id }) => ["complete", id],
+    argv: ({ id }) => ["complete", ...positionals(id)],
   });
 
   defineTool(server, {
@@ -261,7 +262,7 @@ export function registerTaskTools(server: McpServer): void {
     input: { id: z.string() },
     output: deletedShape,
     annotations: { title: "Delete task", destructiveHint: true },
-    argv: ({ id }) => ["delete", id],
+    argv: ({ id }) => ["delete", ...positionals(id)],
   });
 
   defineTool(server, {
@@ -280,7 +281,7 @@ export function registerTaskTools(server: McpServer): void {
     input: { name: z.string().describe("Name for the new list/plan.") },
     output: listShape,
     annotations: { title: "Create plan", destructiveHint: false },
-    argv: ({ name }) => ["lists", "add", name],
+    argv: ({ name }) => ["lists", "add", ...positionals(name)],
   });
 
   defineTool(server, {
@@ -295,9 +296,10 @@ export function registerTaskTools(server: McpServer): void {
     output: taskShape,
     annotations: { title: "Show task", readOnlyHint: true },
     argv: ({ id, attachments, section }) => {
-      const args = ["show", id];
+      const args = ["show"];
       if (attachments) args.push("--attachments");
       if (section) args.push("--section");
+      args.push(...positionals(id));
       return args;
     },
   });
@@ -308,6 +310,6 @@ export function registerTaskTools(server: McpServer): void {
     input: { id: z.string().describe("Task id.") },
     output: taskShape,
     annotations: { title: "Uncomplete task", idempotentHint: true },
-    argv: ({ id }) => ["uncomplete", id],
+    argv: ({ id }) => ["uncomplete", ...positionals(id)],
   });
 }

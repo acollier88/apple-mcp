@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { defineTool } from "../lib";
+import { defineTool, opt, positionals } from "../lib";
 import { gmailHeaderShape, mailHeaderShape } from "../schemas";
 
 export function registerMailTools(server: McpServer): void {
@@ -27,10 +27,10 @@ export function registerMailTools(server: McpServer): void {
     annotations: { title: "Draft mail", destructiveHint: true },
     timeoutMs: 60_000,
     argv: ({ to, subject, body, reply_to }) => {
-      const args = ["mail", "draft", "--body", body];
-      for (const addr of to ?? []) args.push("--to", addr);
-      if (subject) args.push("--subject", subject);
-      if (reply_to) args.push("--reply-to", reply_to);
+      const args = ["mail", "draft", ...opt("--body", body)];
+      for (const addr of to ?? []) args.push(...opt("--to", addr));
+      if (subject) args.push(...opt("--subject", subject));
+      if (reply_to) args.push(...opt("--reply-to", reply_to));
       return args;
     },
   });
@@ -48,8 +48,8 @@ export function registerMailTools(server: McpServer): void {
     annotations: { title: "Scan mail", readOnlyHint: true },
     argv: ({ since, limit }) => {
       const args = ["mail", "scan"];
-      if (since) args.push("--since", since);
-      if (limit !== undefined) args.push("--limit", String(limit));
+      if (since) args.push(...opt("--since", since));
+      if (limit !== undefined) args.push(...opt("--limit", String(limit)));
       return args;
     },
     wrap: (parsed) => ({ messages: parsed }),
@@ -65,8 +65,9 @@ export function registerMailTools(server: McpServer): void {
     output: { ...mailHeaderShape, body: z.string() },
     annotations: { title: "Show mail", readOnlyHint: true },
     argv: ({ id, max_chars }) => {
-      const args = ["mail", "show", id];
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      const args = ["mail", "show"];
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
+      args.push(...positionals(id));
       return args;
     },
   });
@@ -85,8 +86,8 @@ export function registerMailTools(server: McpServer): void {
     annotations: { title: "Scan Gmail", readOnlyHint: true, openWorldHint: true },
     argv: ({ limit, query }) => {
       const args = ["gmail", "scan"];
-      if (limit !== undefined) args.push("--limit", String(limit));
-      if (query) args.push("--query", query);
+      if (limit !== undefined) args.push(...opt("--limit", String(limit)));
+      if (query) args.push(...opt("--query", query));
       return args;
     },
     wrap: (parsed) => ({ messages: parsed }),
@@ -102,8 +103,9 @@ export function registerMailTools(server: McpServer): void {
     output: { ...gmailHeaderShape, body: z.string() },
     annotations: { title: "Show Gmail", readOnlyHint: true, openWorldHint: true },
     argv: ({ id, max_chars }) => {
-      const args = ["gmail", "show", id];
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      const args = ["gmail", "show"];
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
+      args.push(...positionals(id));
       return args;
     },
   });
