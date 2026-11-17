@@ -21,9 +21,35 @@ jobs:
       - name: Test server
         working-directory: server
         run: swift test
+      # Typecheck only. build.sh / make install write ~/.local/bin and
+      # /Applications; macos-26 images have no macOS 27 SDK, so skip then.
+      - name: Typecheck AgentTasks
+        run: |
+          set -euo pipefail
+          DEPLOY_MAJOR=27
+          SDK_VER="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+          SDK_MAJOR="${SDK_VER%%.*}"
+          case "$SDK_MAJOR" in
+            ''|*[!0-9]*)
+              echo "skip: macOS SDK version '${SDK_VER:-unknown}' is not numeric; apps/AgentTasks needs SDK ${DEPLOY_MAJOR} or newer"
+              exit 0
+              ;;
+          esac
+          if [ "$SDK_MAJOR" -lt "$DEPLOY_MAJOR" ]; then
+            echo "skip: macOS SDK ${SDK_VER} does not support apps/AgentTasks deployment target ${DEPLOY_MAJOR}.0"
+            exit 0
+          fi
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          ARCH="$(uname -m)"
+          echo "typecheck apps/AgentTasks/Sources with macOS SDK ${SDK_VER} (target ${ARCH}-apple-macos${DEPLOY_MAJOR}.0)"
+          swiftc -typecheck -parse-as-library \
+            -target "${ARCH}-apple-macos${DEPLOY_MAJOR}.0" \
+            -sdk "$SDK" \
+            -module-name AgentTasks \
+            apps/AgentTasks/Sources/*.swift
 
-  # apps/AgentTasks is not built here: it needs the Xcode 27 beta.
-  # `make betacheck` remains the local gate for it.
+  # Full `make betacheck` / apps/AgentTasks/build.sh stay local: build.sh
+  # installs over ~/.local/bin and /Applications.
 
   mcp:
     runs-on: ubuntu-latest
