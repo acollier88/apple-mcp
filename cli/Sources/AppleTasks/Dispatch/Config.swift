@@ -148,6 +148,23 @@ struct AgentsConfig: Codable {
     /// `inherit`, the pre-#27 behaviour.
     var envMode: AgentEnv.Mode?
 
+    /// Which detectors run, and how many heals a day they may file (#52).
+    var doctor: DoctorSettings?
+
+    struct DoctorSettings: Codable {
+        var detectors: DetectorSettings? = nil
+    }
+
+    struct DetectorSettings: Codable {
+        var enabled: [String]? = nil
+        var disabled: [String]? = nil
+        var thresholds: DetectorThresholds? = nil
+    }
+
+    struct DetectorThresholds: Codable {
+        var healDailyCap: Int? = nil
+    }
+
     static let defaultClaimGuard = "modified"
 
     /// `claimGuard` with the default applied; unknown values fall back to the default.
