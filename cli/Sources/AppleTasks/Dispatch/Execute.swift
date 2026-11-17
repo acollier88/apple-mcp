@@ -36,11 +36,19 @@ extension Dispatch {
             argv = AgentSeat.withStreamJSON(argv)
         }
 
+        let parentEnv = ProcessInfo.processInfo.environment
+        // Env reporting lists dropped NAMES only, never values.
+        var envLine = "# env: \(spec.envPolicy.mode.rawValue)"
+        if spec.envPolicy.mode != .inherit {
+            let dropped = AgentEnv.droppedNames(parent: parentEnv, policy: spec.envPolicy)
+            envLine += " (dropped \(dropped.count)\(dropped.isEmpty ? "" : ": " + dropped.joined(separator: ", ")))"
+        }
         let logHandle = RunLogs.create(at: spec.logPath)
         logHandle?.write(Data("""
         # dispatch #\(spec.ledgerId) \(ISO8601DateFormatter().string(from: Date()))
         # task \(spec.taskId): \(spec.title)
         \(seat.logLine)
+        \(envLine)
         # \(spec.argv.joined(separator: " "))\n\n
         """.utf8))
         defer { try? logHandle?.close() }
@@ -49,13 +57,13 @@ extension Dispatch {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
         if let runCwd = spec.runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
-        var env = ProcessInfo.processInfo.environment
-        for (name, value) in spec.env ?? [:] { env[name] = value }
-        env["APPLE_TASKS_CALLER"] = "agent:\(spec.agentTag)"
         // GUI apps and launchd do not source ~/.zshrc — bare `agent` / `claude`
-        // live in ~/.local/bin or Homebrew. Prepend those so /usr/bin/env finds them.
-        env["PATH"] = Self.agentSearchPath(existing: env["PATH"])
-        process.environment = env
+        // live in ~/.local/bin or Homebrew. The PATH rewrite prepends those so
+        // /usr/bin/env finds them.
+        process.environment = AgentEnv.build(
+            parent: parentEnv, policy: spec.envPolicy,
+            caller: "agent:\(spec.agentTag)",
+            searchPath: { Self.agentSearchPath(existing: $0) })
 
         let stdoutPipe: Pipe? = captureCursor ? Pipe() : nil
         let filter: CursorNDJSONFilter?

@@ -217,7 +217,8 @@ enum SuggestClassifier {
         \(context.joined(separator: "\n"))
         """
         let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
-        let raw = try Triage.runAgent(argv, timeoutMinutes: lane.timeoutMinutes ?? 5, env: lane.env)
+        let raw = try Triage.runAgent(argv, timeoutMinutes: lane.timeoutMinutes ?? 5,
+                                      envPolicy: .resolve(lane: lane, config: config))
         let items: [SuggestionOut] = try Triage.parseJSONArray(raw)
         return Array(items.prefix(maxItems))
     }

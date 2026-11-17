@@ -99,7 +99,8 @@ struct Dispatch: AsyncParsableCommand {
         let worktree: String?
         let branch: String?
         let timeoutMinutes: Int?
-        let env: [String: String]?
+        /// envMode / envPassthrough / lane env, applied by `AgentEnv.build`.
+        let envPolicy: AgentEnv.Policy
         let logPath: String
         /// How Phase B hands the prompt over (see AgentsConfig.Agent.promptVia).
         var promptVia: AgentsConfig.PromptVia = .argv

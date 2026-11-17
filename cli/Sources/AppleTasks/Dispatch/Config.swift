@@ -23,16 +23,26 @@ struct AgentsConfig: Codable {
         /// Max simultaneous runs for THIS agent (default: no per-agent cap).
         let maxConcurrent: Int?
         /// Extra environment variables for the agent process (IDEAS #51) —
-        /// endpoint overrides, API keys — merged over the inherited env.
+        /// endpoint overrides, API keys — applied over the (filtered) inherited
+        /// env. Always applied, whatever `envMode` says.
         let env: [String: String]?
+        /// What the agent inherits from the dispatcher's environment (#27):
+        /// `inherit` (default) | `scrubSecrets` | `allowlist`. Falls back to
+        /// the top-level `envMode`. See `AgentEnv`.
+        let envMode: AgentEnv.Mode?
+        /// Dispatcher env variable NAMES this lane needs even when `envMode`
+        /// would drop them (e.g. `CURSOR_API_KEY` for the Cursor CLI).
+        let envPassthrough: [String]?
         /// How the rendered prompt reaches the agent (default `argv`):
         /// - `argv`: `{prompt}` in `command` is replaced inline (visible in
-        ///   `ps`, subject to ARG_MAX, echoed into the ledger's command column).
+        ///   `ps`, subject to ARG_MAX). The ledger's command column stores
+        ///   `Dispatch.ledgerPromptMarker` in its place.
         /// - `stdin`: the prompt is piped to the process; `{prompt}` entries
         ///   are dropped from argv. Use with `claude -p` / `codex exec -`.
         /// - `file`: the prompt is written to `runs/<ledgerId>.prompt` and
         ///   `{promptFile}` in `command` is replaced with that path.
-        /// Both non-argv modes keep a copy at `runs/<ledgerId>.prompt`.
+        /// Every mode keeps a copy at `runs/<ledgerId>.prompt` (0600); for
+        /// `argv` it is a best-effort debugging copy.
         let promptVia: PromptVia?
 
         /// The argv template for this lane ({prompt} not yet substituted),
@@ -134,6 +144,9 @@ struct AgentsConfig: Codable {
     /// nothing changed — so a human edit or recurrence roll unstrands a
     /// task that an agent left open. Set `"running"` to opt out.
     var claimGuard: String?
+    /// Default `envMode` for lanes that do not set one (#27). Absent =
+    /// `inherit`, the pre-#27 behaviour.
+    var envMode: AgentEnv.Mode?
 
     static let defaultClaimGuard = "modified"
 
