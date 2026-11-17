@@ -33,6 +33,10 @@ struct AgentsConfig: Codable {
         /// Dispatcher env variable NAMES this lane needs even when `envMode`
         /// would drop them (e.g. `CURSOR_API_KEY` for the Cursor CLI).
         let envPassthrough: [String]?
+        /// Launch this lane through gatehouse. Absent means today's direct
+        /// spawn. `mode` is `"gatehouse"`; `net` and `preset` are forwarded
+        /// as `gate sandbox --net` / `--preset`.
+        let sandbox: Sandbox?
         /// How the rendered prompt reaches the agent (default `argv`):
         /// - `argv`: `{prompt}` in `command` is replaced inline (visible in
         ///   `ps`, subject to ARG_MAX). The ledger's command column stores
@@ -57,6 +61,15 @@ struct AgentsConfig: Codable {
         /// Context gates (IDEAS #22): all must pass or the task stays queued
         /// (no claim, no [failed]) and is retried next pass.
         let conditions: Conditions?
+    }
+
+    /// Per-lane gatehouse sandbox. Only `mode == "gatehouse"` changes dispatch.
+    struct Sandbox: Codable, Equatable, Sendable {
+        let mode: String
+        let net: String?
+        let preset: String?
+
+        var isGatehouse: Bool { mode.lowercased() == "gatehouse" }
     }
 
     enum PromptVia: String, Codable, Sendable {
@@ -128,6 +141,12 @@ struct AgentsConfig: Codable {
     var retryBackoffMinutes: Int?
     /// Keep failed/timeout worktrees this many days before GC (default 7).
     var keepFailedWorktreeDays: Int?
+    /// Remove the worktree directory of an unmerged succeeded run after this
+    /// many days (`git worktree remove`) and leave the branch. The row stays
+    /// pending review — the branch is still the deliverable. Absent, or less
+    /// than 1, disables age-out (the default). A positive default would
+    /// delete checkouts the user did not opt into; set `14` to reclaim disk.
+    var pendingReviewWorktreeDays: Int?
     /// macOS notification on run finish: "failure" (default) | "all" | "none".
     var notifyOn: String?
     /// Hermes-style preference lists (IDEAS #52). `auto` is the ordered pool
@@ -147,6 +166,13 @@ struct AgentsConfig: Codable {
     /// Default `envMode` for lanes that do not set one (#27). Absent =
     /// `inherit`, the pre-#27 behaviour.
     var envMode: AgentEnv.Mode?
+    /// Wall-clock cap for one `dispatch` process, in minutes. launchd will
+    /// not start the next pass while this one is alive (tools/launchd,
+    /// StartInterval), so a hang here blocks every later pass. Per-agent
+    /// `timeoutMinutes` still bounds each run; this is the backstop. Absent
+    /// uses `defaultMaxPassMinutes`. The cap lives in the process, not in
+    /// the installed LaunchAgent plist.
+    var maxPassMinutes: Int?
 
     /// Proactive diagnostics (#47). Absent means every detector runs with
     /// the built-in thresholds.
@@ -177,6 +203,19 @@ struct AgentsConfig: Codable {
     }
 
     static let defaultClaimGuard = "modified"
+
+    /// Eight hours. One pass claims every due task before running them, and
+    /// example lanes allow an hour each, so the cap sits above a short
+    /// backlog. It is still finite: a stuck pass used to block launchd until
+    /// the next reboot.
+    static let defaultMaxPassMinutes = 8 * 60
+
+    /// `maxPassMinutes` with the default applied. Zero and negative values
+    /// fall back to the default so a bad config cannot disable the backstop.
+    var resolvedMaxPassMinutes: Int {
+        guard let maxPassMinutes, maxPassMinutes > 0 else { return Self.defaultMaxPassMinutes }
+        return maxPassMinutes
+    }
 
     /// `claimGuard` with the default applied; unknown values fall back to the default.
     var resolvedClaimGuard: String {

@@ -118,7 +118,10 @@ enum DiagnosticsLive {
     private static func diskUse() -> Diagnostics.DiskUse {
         let base = configDir()
         let logs = directoryBytes(base.appendingPathComponent("logs"))
-        let runs = directoryBytes(base.appendingPathComponent("runs"))
+        let runsDir = AppleTasksLayout.resolve().runs
+        let runs = FileManager.default.fileExists(atPath: runsDir.path)
+            ? directoryBytes(runsDir)
+            : directoryBytes(base.appendingPathComponent("runs"))
         var worktrees: Int64 = 0
         var workComplete = true
         var seen = 0
