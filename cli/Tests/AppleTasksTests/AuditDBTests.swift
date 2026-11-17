@@ -120,9 +120,57 @@ final class AuditDBTests: XCTestCase {
         _ = db.reapStale(before: cutoff)
         XCTAssertEqual(db.dispatchRow(id: id2)?.status, "timeout")
 
+        // The reaped row is infrastructure, not an agent failure.
         let attempts = db.failedAttempts(taskId: "retries")
-        XCTAssertEqual(attempts.count, 2)
+        XCTAssertEqual(attempts.count, 1)
         XCTAssertNotNil(attempts.lastFinishedAt)
+        XCTAssertEqual(db.dispatchRow(id: id2)?.summary, "reaped: stale running")
+    }
+
+    func testSuccessResetsFailedAttempts() {
+        let db = openDB()
+        let failed = db.claimDispatch(taskId: "daily", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let failedId) = failed else {
+            return XCTFail("expected claimed, got \(failed)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: failedId, status: "failed", exitCode: 1))
+        let ok = db.claimDispatch(taskId: "daily", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let okId) = ok else {
+            return XCTFail("expected claimed, got \(ok)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: okId, status: "succeeded", exitCode: 0))
+        let again = db.claimDispatch(taskId: "daily", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let againId) = again else {
+            return XCTFail("expected claimed, got \(again)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: againId, status: "failed", exitCode: 1))
+        XCTAssertEqual(db.failedAttempts(taskId: "daily").count, 1)
+        XCTAssertTrue(db.retriesExhausted(maxRetries: 0).isEmpty)
+        XCTAssertTrue(db.retriesExhausted(maxRetries: 1).isEmpty)
+        let fourth = db.claimDispatch(taskId: "daily", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let fourthId) = fourth else {
+            return XCTFail("expected claimed, got \(fourth)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: fourthId, status: "failed", exitCode: 1))
+        XCTAssertEqual(db.failedAttempts(taskId: "daily").count, 2)
+        XCTAssertEqual(db.retriesExhausted(maxRetries: 1).map(\.taskId), ["daily"])
+    }
+
+    func testDispatcherHangDoesNotCountAsFailedAttempt() {
+        let db = openDB()
+        let hang = db.claimDispatch(taskId: "hung", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let hangId) = hang else {
+            return XCTFail("expected claimed, got \(hang)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: hangId, status: "timeout", exitCode: -1,
+                                        summary: "dispatcher died"))
+        let agent = db.claimDispatch(taskId: "hung", agent: "cursor", command: "x", cwd: nil)
+        guard case .claimed(let agentId) = agent else {
+            return XCTFail("expected claimed, got \(agent)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: agentId, status: "timeout", exitCode: 1,
+                                        summary: "timeout waiting on agent"))
+        XCTAssertEqual(db.failedAttempts(taskId: "hung").count, 1)
     }
 
     func testCancelledDoesNotCountAsFailedAttempt() {

@@ -159,6 +159,10 @@ extension Dispatch {
                 }
                 let (attempts, lastFailure) = AuditDB.shared.failedAttempts(taskId: taskId)
                 if attempts > maxRetries {
+                    if !dryRun {
+                        await noteRetriesExhausted(taskId: taskId, title: parsed.title,
+                                                   attempts: attempts, maxRetries: maxRetries)
+                    }
                     if dryRun {
                         reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
                                                       cwd: nil,
@@ -577,5 +581,17 @@ extension Dispatch {
                     .replacingOccurrences(of: "{promptFile}", with: promptFile)
             }
         }
+    }
+
+    /// One push per (task, attempt count). A later success resets the count,
+    /// so the next exhaustion notifies again. Missing ntfy config is not an error.
+    private func noteRetriesExhausted(taskId: String, title: String,
+                                      attempts: Int, maxRetries: Int) async {
+        let key = "retries.exhausted.\(taskId).\(attempts)"
+        guard AuditDB.shared.getState(key) == nil else { return }
+        _ = AuditDB.shared.setState(key, ISO8601DateFormatter().string(from: Date()))
+        _ = await Notifier.push(
+            title: "Retries exhausted",
+            body: "\(title) has \(attempts) failures since its last success (max \(maxRetries)). It stays queued until you raise maxRetries or run dispatch-retry.")
     }
 }
