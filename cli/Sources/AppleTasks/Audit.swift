@@ -26,13 +26,16 @@ final class AuditDB {
     }
 
     init(url: URL) {
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Owner-only: the ledger holds callers, commands (argv prompts) and
+        // approvals. Dir 0700, DB created 0600 (SQLite copies that mode to
+        // -wal/-shm); older files are tightened. Best effort, never fatal.
+        ConfigPermissions.prepareDatabase(url)
         guard sqlite3_open(url.path, &db) == SQLITE_OK else {
             db = nil
             return
         }
         exec("PRAGMA journal_mode=WAL")
+        ConfigPermissions.tightenDatabase(url)
         // Two writers (launchd pass + manual/MCP dispatch) briefly overlap on
         // the claim insert; wait instead of surfacing SQLITE_BUSY as a failure.
         sqlite3_busy_timeout(db, 2000)

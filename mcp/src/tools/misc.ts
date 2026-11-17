@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { cli, defineTool, fail, ok, okJson, trackTool } from "../lib";
+import { cli, defineTool, fail, ok, okJson, opt, positionals, trackTool } from "../lib";
 import { eventSchema, suggestionSchema, tagsField, taskSchema } from "../schemas";
 
 const execFileAsync = promisify(execFile);
@@ -74,9 +74,9 @@ export function registerMiscTools(server: McpServer): void {
     },
     async ({ since, note, note_folder, push, suggest }) => {
       const args = ["digest"];
-      if (since) args.push("--since", since);
+      if (since) args.push(...opt("--since", since));
       if (note) args.push("--note");
-      if (note_folder) args.push("--note-folder", note_folder);
+      if (note_folder) args.push(...opt("--note-folder", note_folder));
       if (push) args.push("--push");
       if (suggest) args.push("--suggest");
       try {
@@ -116,11 +116,11 @@ export function registerMiscTools(server: McpServer): void {
     timeoutMs: 180_000,
     argv: ({ days, stale_weeks, max, no_contacts, agent }) => {
       const args = ["suggest"];
-      if (days !== undefined) args.push("--days", String(days));
-      if (stale_weeks !== undefined) args.push("--stale-weeks", String(stale_weeks));
-      if (max !== undefined) args.push("--max", String(max));
+      if (days !== undefined) args.push(...opt("--days", String(days)));
+      if (stale_weeks !== undefined) args.push(...opt("--stale-weeks", String(stale_weeks)));
+      if (max !== undefined) args.push(...opt("--max", String(max)));
       if (no_contacts) args.push("--no-contacts");
-      if (agent) args.push("--agent", agent);
+      if (agent) args.push(...opt("--agent", agent));
       return args;
     },
   });
@@ -155,11 +155,11 @@ export function registerMiscTools(server: McpServer): void {
     annotations: { title: "Sync GitHub", destructiveHint: true, openWorldHint: true },
     timeoutMs: 120_000,
     argv: ({ repo, list, tags, assignee, limit, close_issues, dry_run }) => {
-      const args = ["sync-github", "--repo", repo];
-      if (list) args.push("--list", list);
-      for (const t of tags ?? []) args.push("--tag", t);
-      if (assignee) args.push("--assignee", assignee);
-      if (limit !== undefined) args.push("--limit", String(limit));
+      const args = ["sync-github", ...opt("--repo", repo)];
+      if (list) args.push(...opt("--list", list));
+      for (const t of tags ?? []) args.push(...opt("--tag", t));
+      if (assignee) args.push(...opt("--assignee", assignee));
+      if (limit !== undefined) args.push(...opt("--limit", String(limit)));
       if (close_issues) args.push("--close-issues");
       if (dry_run !== false) args.push("--dry-run");
       return args;
@@ -212,12 +212,15 @@ export function registerMiscTools(server: McpServer): void {
       const dir = await mkdtemp(path.join(os.tmpdir(), "apple-tasks-"));
       const outPath = path.join(dir, "out.txt");
       try {
-        const args = ["run", name, "--output-path", outPath];
+        const args = ["run", "--output-path", outPath];
         if (input !== undefined) {
           const inPath = path.join(dir, "in.txt");
           await writeFile(inPath, input, "utf8");
           args.push("--input-path", inPath);
         }
+        // shortcuts(1) is swift-argument-parser too: `--` keeps a name
+        // starting with "-" from being parsed as an option.
+        args.push(...positionals(name));
         await execFileAsync("shortcuts", args, { timeout: 120_000 });
         const output = await readFile(outPath, "utf8").catch(() => "");
         return ok(output.trim() || "(shortcut ran; no output)");
@@ -253,10 +256,11 @@ export function registerMiscTools(server: McpServer): void {
     },
     annotations: { title: "Send notification", openWorldHint: true },
     argv: ({ title, message, sound, push, force }) => {
-      const args = ["notify", title, message];
+      const args = ["notify"];
       if (sound) args.push("--sound");
       if (push) args.push("--push");
       if (force) args.push("--force");
+      args.push(...positionals(title, message));
       return args;
     },
   });
@@ -288,10 +292,10 @@ export function registerMiscTools(server: McpServer): void {
     annotations: { title: "Read audit log", readOnlyHint: true },
     argv: ({ since, task, caller, limit }) => {
       const args = ["log"];
-      if (since) args.push("--since", since);
-      if (task) args.push("--task", task);
-      if (caller) args.push("--caller", caller);
-      if (limit !== undefined) args.push("--limit", String(limit));
+      if (since) args.push(...opt("--since", since));
+      if (task) args.push(...opt("--task", task));
+      if (caller) args.push(...opt("--caller", caller));
+      if (limit !== undefined) args.push(...opt("--limit", String(limit)));
       return args;
     },
     wrap: (parsed) => ({ entries: parsed }),
@@ -324,7 +328,7 @@ export function registerMiscTools(server: McpServer): void {
     annotations: { title: "Where am I", readOnlyHint: true },
     argv: ({ timeout, no_geocode }) => {
       const args = ["whereami"];
-      if (timeout !== undefined) args.push("--timeout", String(timeout));
+      if (timeout !== undefined) args.push(...opt("--timeout", String(timeout)));
       if (no_geocode) args.push("--no-geocode");
       return args;
     },
@@ -396,7 +400,7 @@ export function registerMiscTools(server: McpServer): void {
     },
     async ({ name }) => {
       try {
-        return okJson(await findmy(["locate", name]));
+        return okJson(await findmy(["locate", ...positionals(name)])); // argparse honours `--`
       } catch (err) {
         return fail(err);
       }
@@ -493,7 +497,7 @@ export function registerMiscTools(server: McpServer): void {
       try {
         const args = ["doctor"];
         if (enqueue_heals) args.push("--enqueue-heals");
-        if (list) args.push("--list", list);
+        if (list) args.push(...opt("--list", list));
         return okJson(await cli(args, { timeoutMs: enqueue_heals ? 60_000 : 30_000 }));
       } catch (err) {
         return fail(err);

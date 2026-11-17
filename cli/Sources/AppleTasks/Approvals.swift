@@ -254,6 +254,9 @@ struct ApproveAnswer: AsyncParsableCommand {
     var verdict: Verdict
 
     func run() async throws {
+        try CallerGuard.enforce(
+            CallerGuard.approvalAnswerRefusal(caller: CallerGuard.currentCaller),
+            command: "approve answer", detail: token)
         let status = verdict == .approve ? "approved" : "denied"
         guard AuditDB.shared.answerApproval(token: token, status: status, via: "cli") else {
             let existing = AuditDB.shared.approvalRows(token: token).first

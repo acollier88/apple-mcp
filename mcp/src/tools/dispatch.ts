@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { cli, defineTool, fail, ok, okJson, readRunLogTail, trackTool } from "../lib";
+import { cli, defineTool, fail, ok, okJson, opt, positionals, readRunLogTail, trackTool } from "../lib";
 
 export function registerDispatchTools(server: McpServer): void {
   const dispatchRunDescription =
@@ -51,10 +51,10 @@ export function registerDispatchTools(server: McpServer): void {
       }
       const args = ["dispatch"];
       if (dry_run !== false) args.push("--dry-run");
-      if (agent) args.push("--agent", agent);
-      if (list) args.push("--list", list);
+      if (agent) args.push(...opt("--agent", agent));
+      if (list) args.push(...opt("--list", list));
       if (reap_only) args.push("--reap-only");
-      if (reap_hours !== undefined) args.push("--reap-hours", String(reap_hours));
+      if (reap_hours !== undefined) args.push(...opt("--reap-hours", String(reap_hours)));
       if (no_gc) args.push("--no-gc");
       try {
         // Real runs execute agents inline; give them 2h, not the 30s default.
@@ -99,8 +99,8 @@ export function registerDispatchTools(server: McpServer): void {
     annotations: { title: "List dispatches", readOnlyHint: true },
     argv: ({ status, limit }) => {
       const args = ["dispatches"];
-      if (status) args.push("--status", status);
-      if (limit) args.push("--limit", String(limit));
+      if (status) args.push(...opt("--status", status));
+      if (limit) args.push(...opt("--limit", String(limit)));
       return args;
     },
     wrap: (parsed) => ({ dispatches: parsed }),
@@ -128,7 +128,7 @@ export function registerDispatchTools(server: McpServer): void {
     },
     annotations: { title: "Cancel dispatch", destructiveHint: true, idempotentHint: true },
     timeoutMs: 30_000,
-    argv: ({ ledger_id }) => ["dispatch-cancel", String(ledger_id)],
+    argv: ({ ledger_id }) => ["dispatch-cancel", ...positionals(String(ledger_id))],
   });
 
   defineTool(server, {
@@ -147,9 +147,9 @@ export function registerDispatchTools(server: McpServer): void {
     annotations: { title: "Pause dispatcher", idempotentHint: true },
     argv: ({ for_duration, until, reason }) => {
       const args = ["dispatch-pause"];
-      if (for_duration) args.push("--for", for_duration);
-      if (until) args.push("--until", until);
-      if (reason) args.push("--reason", reason);
+      if (for_duration) args.push(...opt("--for", for_duration));
+      if (until) args.push(...opt("--until", until));
+      if (reason) args.push(...opt("--reason", reason));
       return args;
     },
   });
@@ -199,7 +199,7 @@ export function registerDispatchTools(server: McpServer): void {
     },
     annotations: { title: "Discard reviewed branch", destructiveHint: true, idempotentHint: true },
     timeoutMs: 60_000,
-    argv: ({ ledger_id }) => ["dispatch-discard", String(ledger_id)],
+    argv: ({ ledger_id }) => ["dispatch-discard", ...positionals(String(ledger_id))],
   });
 
   const runLogDescription =
@@ -278,8 +278,8 @@ export function registerDispatchTools(server: McpServer): void {
     timeoutMs: 360_000, // classifier spawn can take a minute
     argv: ({ inbox, agent, include_notes, dry_run }) => {
       const args = ["triage"];
-      if (inbox) args.push("--inbox", inbox);
-      if (agent) args.push("--agent", agent);
+      if (inbox) args.push(...opt("--inbox", inbox));
+      if (agent) args.push(...opt("--agent", agent));
       if (include_notes) args.push("--notes");
       if (dry_run === false) args.push("--apply");
       return args;

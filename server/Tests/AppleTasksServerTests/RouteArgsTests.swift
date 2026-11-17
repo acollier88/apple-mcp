@@ -12,8 +12,8 @@ final class RouteArgsTests: XCTestCase {
         guard case .cli(let args, _) = route else {
             return XCTFail("expected cli, got \(route)")
         }
-        XCTAssertTrue(containsPair(args, "--inbox", "Reminders"))
-        XCTAssertFalse(args.contains("--list"))
+        XCTAssertTrue(args.contains("--inbox=Reminders"))
+        XCTAssertFalse(args.contains { $0.hasPrefix("--list") })
         XCTAssertEqual(args.first, "triage")
     }
 
@@ -28,7 +28,7 @@ final class RouteArgsTests: XCTestCase {
             return XCTFail("expected cli, got \(route)")
         }
         XCTAssertTrue(args.contains("--apply"))
-        XCTAssertTrue(containsPair(args, "--agent", "local"))
+        XCTAssertTrue(args.contains("--agent=local"))
         XCTAssertTrue(args.contains("--notes"))
     }
 
@@ -66,8 +66,8 @@ final class RouteArgsTests: XCTestCase {
             return XCTFail("expected cli, got \(route)")
         }
         XCTAssertTrue(args.contains("--dry-run"))
-        XCTAssertTrue(containsPair(args, "--agent", "cursor"))
-        XCTAssertTrue(containsPair(args, "--list", "Code Tasks"))
+        XCTAssertTrue(args.contains("--agent=cursor"))
+        XCTAssertTrue(args.contains("--list=Code Tasks"))
         XCTAssertTrue(args.contains("--reap-only"))
         XCTAssertEqual(timeout, 60)
     }
@@ -105,7 +105,7 @@ final class RouteArgsTests: XCTestCase {
         guard case .cli(let args, _) = route else {
             return XCTFail("expected cli, got \(route)")
         }
-        XCTAssertEqual(args, ["dispatches", "--status", "running", "--limit", "5"])
+        XCTAssertEqual(args, ["dispatches", "--status=running", "--limit=5"])
     }
 
     func testDispatchCancel() {
@@ -154,7 +154,67 @@ final class RouteArgsTests: XCTestCase {
         )
     }
 
-    private func containsPair(_ args: [String], _ flag: String, _ value: String) -> Bool {
-        zip(args, args.dropFirst()).contains { $0.0 == flag && $0.1 == value }
+    // MARK: - #32: values starting with "-" stay values
+
+    func testLogQueryValuesStartingWithDashStayAttached() {
+        let route = RouteArgs.build(
+            method: "GET",
+            path: "/v1/log",
+            query: ["limit": "-1", "since": "--task", "task": "-T1", "caller": "--limit"],
+            body: Data()
+        )
+        guard case .cli(let args, _) = route else {
+            return XCTFail("expected cli, got \(route)")
+        }
+        XCTAssertEqual(args, ["log", "--limit=-1", "--since=--task", "--task=-T1", "--caller=--limit"])
+    }
+
+    func testDispatchesQueryValuesStartingWithDash() {
+        let route = RouteArgs.build(
+            method: "GET",
+            path: "/v1/dispatches",
+            query: ["status": "--dry-run", "limit": "-5"],
+            body: Data()
+        )
+        XCTAssertEqual(route, .cli(args: ["dispatches", "--status=--dry-run", "--limit=-5"], timeout: 30))
+    }
+
+    func testDispatchBodyCannotInjectFlags() {
+        let route = RouteArgs.build(
+            method: "POST",
+            path: "/v1/dispatch",
+            query: [:],
+            body: Data(#"{"agent":"--reap-only","list":"-x"}"#.utf8)
+        )
+        guard case .cli(let args, let timeout) = route else {
+            return XCTFail("expected cli, got \(route)")
+        }
+        XCTAssertEqual(args, ["dispatch", "--dry-run", "--agent=--reap-only", "--list=-x"])
+        XCTAssertFalse(args.contains("--reap-only"))
+        XCTAssertEqual(timeout, 60)
+    }
+
+    func testTriageBodyCannotInjectApply() {
+        let route = RouteArgs.build(
+            method: "POST",
+            path: "/v1/triage",
+            query: [:],
+            body: Data(#"{"list":"--apply","agent":"-a"}"#.utf8)
+        )
+        guard case .cli(let args, _) = route else {
+            return XCTFail("expected cli, got \(route)")
+        }
+        XCTAssertEqual(args, ["triage", "--inbox=--apply", "--agent=-a"])
+        XCTAssertFalse(args.contains("--apply"))
+    }
+
+    func testEmptyValuesAreOmitted() {
+        let route = RouteArgs.build(
+            method: "GET",
+            path: "/v1/log",
+            query: ["limit": "", "since": "", "task": "", "caller": ""],
+            body: Data()
+        )
+        XCTAssertEqual(route, .cli(args: ["log"], timeout: 30))
     }
 }

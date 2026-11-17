@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { defineTool } from "../lib";
+import { defineTool, opt, positionals } from "../lib";
 import { watchItemShape } from "../schemas";
 
 export function registerCaptureTools(server: McpServer): void {
@@ -29,9 +29,9 @@ export function registerCaptureTools(server: McpServer): void {
     timeoutMs: 120_000, // OCR of many images can be slow
     argv: ({ dir, since, max_chars }) => {
       const args = ["screenshots", "scan"];
-      if (dir) args.push("--dir", dir);
-      if (since) args.push("--since", since);
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      if (dir) args.push(...opt("--dir", dir));
+      if (since) args.push(...opt("--since", since));
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
       return args;
     },
     wrap: (parsed) => ({ screenshots: parsed }),
@@ -64,9 +64,9 @@ export function registerCaptureTools(server: McpServer): void {
     annotations: { title: "Scan files", readOnlyHint: false, destructiveHint: false },
     argv: ({ dir, since, max_chars, archive }) => {
       const args = ["files", "scan"];
-      if (dir) args.push("--dir", dir);
-      if (since) args.push("--since", since);
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      if (dir) args.push(...opt("--dir", dir));
+      if (since) args.push(...opt("--since", since));
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
       if (archive) args.push("--archive");
       return args;
     },
@@ -103,9 +103,9 @@ export function registerCaptureTools(server: McpServer): void {
     timeoutMs: 300_000, // transcription of many memos can be slow
     argv: ({ dir, since, max_chars, archive }) => {
       const args = ["audio", "scan"];
-      if (dir) args.push("--dir", dir);
-      if (since) args.push("--since", since);
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      if (dir) args.push(...opt("--dir", dir));
+      if (since) args.push(...opt("--since", since));
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
       if (archive) args.push("--archive");
       return args;
     },
@@ -136,8 +136,8 @@ export function registerCaptureTools(server: McpServer): void {
     annotations: { title: "Scan Reading List", readOnlyHint: true },
     argv: ({ since, max_items }) => {
       const args = ["reading-list", "scan"];
-      if (since) args.push("--since", since);
-      if (max_items !== undefined) args.push("--max-items", String(max_items));
+      if (since) args.push(...opt("--since", since));
+      if (max_items !== undefined) args.push(...opt("--max-items", String(max_items)));
       return args;
     },
     wrap: (parsed) => ({ items: parsed }),
@@ -163,7 +163,7 @@ export function registerCaptureTools(server: McpServer): void {
     annotations: { title: "Scan clipboard", readOnlyHint: true },
     argv: ({ max_chars }) => {
       const args = ["clipboard", "scan"];
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
       return args;
     },
     wrap: (parsed) => ({ clippings: parsed }),
@@ -193,9 +193,9 @@ export function registerCaptureTools(server: McpServer): void {
     timeoutMs: 120_000, // N sequential fetches
     argv: ({ watch, force, max_items }) => {
       const args = ["watch", "scan"];
-      if (watch) args.push("--watch", watch);
+      if (watch) args.push(...opt("--watch", watch));
       if (force) args.push("--force");
-      if (max_items !== undefined) args.push("--max-items", String(max_items));
+      if (max_items !== undefined) args.push(...opt("--max-items", String(max_items)));
       return args;
     },
   });
@@ -239,8 +239,9 @@ export function registerCaptureTools(server: McpServer): void {
     annotations: { title: "Fetch web page", readOnlyHint: true, openWorldHint: true },
     timeoutMs: 60_000,
     argv: ({ url, max_chars }) => {
-      const args = ["web", "fetch", url];
-      if (max_chars !== undefined) args.push("--max-chars", String(max_chars));
+      const args = ["web", "fetch"];
+      if (max_chars !== undefined) args.push(...opt("--max-chars", String(max_chars)));
+      args.push(...positionals(url));
       return args;
     },
   });

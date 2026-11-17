@@ -23,6 +23,7 @@ type Session = {
 const sessions: Session[] = [];
 let tmpDir = "";
 let argvLog = "";
+let argvRawLog = "";
 let configDir = "";
 
 function childEnv(overrides: Record<string, string>): Record<string, string> {
@@ -31,6 +32,7 @@ function childEnv(overrides: Record<string, string>): Record<string, string> {
     APPLE_TASKS_BIN: fakeBin,
     APPLE_TASKS_CONFIG_DIR: configDir,
     FAKE_ARGV_LOG: argvLog,
+    FAKE_ARGV_RAW_LOG: argvRawLog,
     ...overrides,
   };
 }
@@ -97,6 +99,25 @@ async function argvSince(before: string): Promise<string[]> {
   return after.slice(before.length).split("\n").filter(Boolean);
 }
 
+/** Exact argv of each CLI invocation since `before` (see FAKE_ARGV_RAW_LOG). */
+async function rawArgvSince(before: string): Promise<string[][]> {
+  const after = await readFile(argvRawLog, "utf8");
+  return after
+    .slice(before.length)
+    .split("\x1e")
+    .filter((record) => record.length > 0)
+    .map((record) => record.split("\x1f").slice(0, -1));
+}
+
+/** Call one tool and return the single argv it handed the CLI. */
+async function argvOf(client: Client, name: string, args: Record<string, unknown>): Promise<string[]> {
+  const before = await readFile(argvRawLog, "utf8");
+  await client.callTool({ name, arguments: args });
+  const calls = await rawArgvSince(before);
+  expect(calls.length, name).toBe(1);
+  return calls[0] ?? [];
+}
+
 function textOf(result: unknown): string {
   if (!result || typeof result !== "object" || !("content" in result)) return "";
   const content = (result as { content?: unknown }).content;
@@ -121,8 +142,10 @@ describe("apple-tasks MCP smoke", () => {
   beforeAll(async () => {
     tmpDir = await mkdtemp(path.join(tmpdir(), "apple-mcp-smoke-"));
     argvLog = path.join(tmpDir, "argv.log");
+    argvRawLog = path.join(tmpDir, "argv.raw.log");
     configDir = path.join(tmpDir, "config");
     await writeFile(argvLog, "");
+    await writeFile(argvRawLog, "");
     await seedConfigDir(configDir);
     const session = await startServer();
     client = session.client;
@@ -202,7 +225,7 @@ describe("apple-tasks MCP smoke", () => {
     expect(Array.isArray(tasks)).toBe(true);
     expect((tasks as unknown[]).length).toBe(1);
     const lines = await argvSince(before);
-    expect(lines.some((line) => line.includes("list --list Inbox"))).toBe(true);
+    expect(lines.some((line) => line.includes("list --list=Inbox"))).toBe(true);
   });
 
   test("dispatch_run {} defaults to --dry-run", async () => {
@@ -252,7 +275,7 @@ describe("apple-tasks MCP smoke", () => {
     const before = await readFile(argvLog, "utf8");
     await client.callTool({ name: "dispatch_run", arguments: { reap_hours: 3, no_gc: true } });
     const lines = await argvSince(before);
-    expect(lines.some((line) => line.includes("--reap-hours 3") && line.includes("--no-gc"))).toBe(true);
+    expect(lines.some((line) => line.includes("--reap-hours=3") && line.includes("--no-gc"))).toBe(true);
   });
 
   test("dispatch_pause/resume/status map to the flat CLI verbs", async () => {
@@ -264,7 +287,7 @@ describe("apple-tasks MCP smoke", () => {
     await client.callTool({ name: "dispatch_status", arguments: {} });
     await client.callTool({ name: "dispatch_resume", arguments: {} });
     const lines = await argvSince(before);
-    expect(lines).toContain("dispatch-pause --for 2h --reason probe");
+    expect(lines).toContain("dispatch-pause --for=2h --reason=probe");
     expect(lines).toContain("dispatch-status");
     expect(lines).toContain("dispatch-resume");
     const structured =
@@ -319,13 +342,176 @@ describe("apple-tasks MCP smoke", () => {
       arguments: { dry_run: true, list: "Inbox", tags: ["claude"], status: "all", id: "T1" },
     });
     const lines = await argvSince(before);
-    expect(lines).toContain("remirror-tags --dry-run --list Inbox --tag claude --status all --id T1");
+    expect(lines).toContain("remirror-tags --dry-run --list=Inbox --tag=claude --status=all --id=T1");
     const structured =
       result && typeof result === "object" && "structuredContent" in result
         ? (result.structuredContent as { reports?: Array<{ duplicatesRemoved?: unknown }> } | undefined)
         : undefined;
     expect(structured?.reports?.length).toBe(1);
     expect(structured?.reports?.[0]?.duplicatesRemoved).toBe(1);
+  });
+
+  // #32: free text beginning with "-" must reach the CLI as a value, never
+  // as an option. Positionals go behind `--`; option values use --flag=value
+  // (swift-argument-parser rejects `--flag -x`; see opt() in src/lib.ts).
+  describe("argv hardening (#32)", () => {
+    test("task_create puts the title behind -- and attaches option values", async () => {
+      expect(
+        await argvOf(client, "task_create", { list: "-Inbox", title: "-x", notes: "--list", tags: ["-t"] })
+      ).toEqual(["add", "--list=-Inbox", "--tag=-t", "--notes=--list", "--", "-x"]);
+    });
+
+    test("task_update moves the id behind -- and keeps empty notes as a split pair", async () => {
+      expect(
+        await argvOf(client, "task_update", { id: "-T1", title: "--help", notes: "", append_notes: "-a b" })
+      ).toEqual(["update", "--title=--help", "--notes", "", "--append-notes=-a b", "--", "-T1"]);
+    });
+
+    test("task_list search and due_before values starting with - are attached", async () => {
+      expect(await argvOf(client, "task_list", { search: "-urgent", due_before: "-1" })).toEqual([
+        "list",
+        "--due-before=-1",
+        "--search=-urgent",
+      ]);
+    });
+
+    test("id-only task tools use --", async () => {
+      expect(await argvOf(client, "task_complete", { id: "-c" })).toEqual(["complete", "--", "-c"]);
+      expect(await argvOf(client, "task_uncomplete", { id: "-u" })).toEqual(["uncomplete", "--", "-u"]);
+      expect(await argvOf(client, "task_delete", { id: "--force" })).toEqual(["delete", "--", "--force"]);
+      expect(await argvOf(client, "task_show", { id: "-s", section: true })).toEqual([
+        "show",
+        "--section",
+        "--",
+        "-s",
+      ]);
+      expect(await argvOf(client, "plan_create", { name: "-plan" })).toEqual(["lists", "add", "--", "-plan"]);
+    });
+
+    test("event tools", async () => {
+      expect(
+        await argvOf(client, "event_create", { title: "-standup", start: "-1", location: "-room" })
+      ).toEqual(["events", "add", "--start=-1", "--location=-room", "--", "-standup"]);
+      expect(await argvOf(client, "event_update", { id: "-E1", notes: "-n" })).toEqual([
+        "events",
+        "update",
+        "--notes=-n",
+        "--",
+        "-E1",
+      ]);
+      expect(await argvOf(client, "event_show", { id: "-E1" })).toEqual(["events", "show", "--", "-E1"]);
+      expect(await argvOf(client, "event_delete", { id: "-E1" })).toEqual(["events", "delete", "--", "-E1"]);
+    });
+
+    test("notify passes both positionals behind --", async () => {
+      expect(await argvOf(client, "notify", { title: "-t", message: "--push", sound: true })).toEqual([
+        "notify",
+        "--sound",
+        "--",
+        "-t",
+        "--push",
+      ]);
+    });
+
+    test("approval tools", async () => {
+      expect(await argvOf(client, "approval_request", { question: "--force", task: "-T" })).toEqual([
+        "approve",
+        "request",
+        "--task=-T",
+        "--",
+        "--force",
+      ]);
+      expect(await argvOf(client, "approval_check", { token: "-tok" })).toEqual([
+        "approve",
+        "check",
+        "--",
+        "-tok",
+      ]);
+    });
+
+    test("mail, gmail, contacts, notes, web", async () => {
+      expect(await argvOf(client, "mail_draft", { body: "-- signed", subject: "-s", to: ["-a@b"] })).toEqual([
+        "mail",
+        "draft",
+        "--body=-- signed",
+        "--to=-a@b",
+        "--subject=-s",
+      ]);
+      expect(await argvOf(client, "mail_show", { id: "-1", max_chars: 5 })).toEqual([
+        "mail",
+        "show",
+        "--max-chars=5",
+        "--",
+        "-1",
+      ]);
+      expect(await argvOf(client, "gmail_scan", { query: "-from:boss@example.com" })).toEqual([
+        "gmail",
+        "scan",
+        "--query=-from:boss@example.com",
+      ]);
+      expect(await argvOf(client, "gmail_show", { id: "-g" })).toEqual(["gmail", "show", "--", "-g"]);
+      expect(await argvOf(client, "contact_search", { query: "-sarah", limit: 2 })).toEqual([
+        "contacts",
+        "search",
+        "--limit=2",
+        "--",
+        "-sarah",
+      ]);
+      expect(await argvOf(client, "contact_show", { id: "-c" })).toEqual(["contacts", "show", "--", "-c"]);
+      expect(await argvOf(client, "note_create", { title: "-t", body_html: "--<b>x</b>" })).toEqual([
+        "notes",
+        "create",
+        "--title=-t",
+        "--",
+        "--<b>x</b>",
+      ]);
+      expect(await argvOf(client, "web_fetch", { url: "-x", max_chars: 10 })).toEqual([
+        "web",
+        "fetch",
+        "--max-chars=10",
+        "--",
+        "-x",
+      ]);
+    });
+
+    test("dispatch tools", async () => {
+      expect(await argvOf(client, "dispatch_cancel", { ledger_id: -1 })).toEqual([
+        "dispatch-cancel",
+        "--",
+        "-1",
+      ]);
+      expect(await argvOf(client, "dispatch_discard", { ledger_id: 9 })).toEqual(["dispatch-discard", "--", "9"]);
+      expect(await argvOf(client, "dispatch_run", { agent: "--reap-only", list: "-L" })).toEqual([
+        "dispatch",
+        "--dry-run",
+        "--agent=--reap-only",
+        "--list=-L",
+      ]);
+      expect(await argvOf(client, "dispatch_pause", { for_duration: "1h", reason: "-r" })).toEqual([
+        "dispatch-pause",
+        "--for=1h",
+        "--reason=-r",
+      ]);
+      expect(await argvOf(client, "triage_inbox", { inbox: "-in", agent: "-a" })).toEqual([
+        "triage",
+        "--inbox=-in",
+        "--agent=-a",
+      ]);
+    });
+
+    test("misc tools", async () => {
+      expect(await argvOf(client, "audit_log", { caller: "--limit", since: "-1" })).toEqual([
+        "log",
+        "--since=-1",
+        "--caller=--limit",
+      ]);
+      expect(await argvOf(client, "github_sync", { repo: "-o/r", assignee: "-me" })).toEqual([
+        "sync-github",
+        "--repo=-o/r",
+        "--assignee=-me",
+        "--dry-run",
+      ]);
+    });
   });
 
   test("resources/list includes static URIs and templates", async () => {

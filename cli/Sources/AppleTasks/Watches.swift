@@ -368,22 +368,39 @@ struct WebGet: AsyncParsableCommand {
         return data
     }
 
-    /// Shared session so redirects re-run `HostPolicy` (cap 5). Escape hatch
-    /// `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` skips the policy for LAN watches.
-    private static let session = URLSession(
-        configuration: .default, delegate: WebGetRedirects.shared, delegateQueue: nil)
+    /// Ephemeral, cache-less session: every load is a network load, so the
+    /// post-load `remoteAddress` check below always has an address to vet.
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
+    }()
 
-    static func request(_ urlString: String) async throws -> (Data, HTTPURLResponse) {
+    /// SSRF policy (`HostPolicy`, docs/security.md §4): resolve-and-check
+    /// before the request and on every redirect hop (cap 5), then vet the
+    /// address actually connected to before returning the body. Escape
+    /// hatch `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` skips all of it (LAN watches).
+    static func request(_ urlString: String,
+                        resolve: @escaping HostPolicy.Resolver = HostPolicy.systemResolve,
+                        allowPrivate: Bool = HostPolicy.allowsPrivateURLs()) async throws
+        -> (Data, HTTPURLResponse) {
         guard let url = URL(string: urlString), let scheme = url.scheme,
               ["http", "https"].contains(scheme.lowercased()) else {
             throw AppleTasksError.saveFailed("not an http(s) URL: \(urlString)")
         }
-        if !HostPolicy.allowsPrivateURLs(), let reason = HostPolicy.refusal(for: url) {
+        if !allowPrivate, let reason = HostPolicy.refusal(for: url, resolve: resolve) {
             throw AppleTasksError.saveFailed("refused URL (\(reason)): \(urlString)")
         }
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("apple-tasks/0.1 (+watch-scan)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
+        let delegate = WebGetTaskDelegate(resolve: resolve, allowPrivate: allowPrivate)
+        let (data, response) = try await session.data(for: request, delegate: delegate)
+        if !allowPrivate, let reason = delegate.connectedAddressRefusal() {
+            // The request already went out; withholding the body is what
+            // stops a rebound name from turning into a read of a LAN service.
+            throw AppleTasksError.saveFailed("refused URL (\(reason)): \(urlString)")
+        }
         guard let http = response as? HTTPURLResponse else {
             throw AppleTasksError.automationFailed("non-HTTP response from \(urlString)")
         }
@@ -420,41 +437,82 @@ struct WebGet: AsyncParsableCommand {
     }
 }
 
-/// Re-checks `HostPolicy.refusal` on each hop and stops after 5 redirects.
-private final class WebGetRedirects: NSObject, URLSessionTaskDelegate {
-    static let shared = WebGetRedirects()
+/// Per-request delegate: resolve-and-check each redirect hop (cap 5) and
+/// keep the task metrics so `WebGet.request` can vet the connected address.
+final class WebGetTaskDelegate: NSObject, URLSessionTaskDelegate {
+    private let resolve: HostPolicy.Resolver
+    private let allowPrivate: Bool
     private let lock = NSLock()
-    private var counts: [Int: Int] = [:]
-    private let maxRedirects = 5
+    private var redirects = 0
+    private var metrics: URLSessionTaskMetrics?
+    static let maxRedirects = 5
+
+    init(resolve: @escaping HostPolicy.Resolver, allowPrivate: Bool) {
+        self.resolve = resolve
+        self.allowPrivate = allowPrivate
+    }
+
+    /// nil to follow, else why the hop is refused. Pure enough to unit-test.
+    func redirectRefusal(to url: URL?) -> String? {
+        lock.lock()
+        redirects += 1
+        let count = redirects
+        lock.unlock()
+        guard count <= Self.maxRedirects else { return "more than \(Self.maxRedirects) redirects" }
+        guard let url else { return "redirect without a URL" }
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            return "redirect to a non-http(s) URL"
+        }
+        if allowPrivate { return nil }
+        return HostPolicy.refusal(for: url, resolve: resolve)
+    }
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        lock.lock()
-        let count = (counts[task.taskIdentifier] ?? 0) + 1
-        counts[task.taskIdentifier] = count
-        lock.unlock()
-
-        guard count <= maxRedirects, let url = request.url else {
-            completionHandler(nil)
-            return
-        }
-        let scheme = url.scheme?.lowercased() ?? ""
-        guard ["http", "https"].contains(scheme) else {
-            completionHandler(nil)
-            return
-        }
-        if !HostPolicy.allowsPrivateURLs(), HostPolicy.refusal(for: url) != nil {
-            completionHandler(nil)
-            return
-        }
-        completionHandler(request)
+        // Refusing returns the 3xx itself; `fetch` treats it as a failure.
+        completionHandler(redirectRefusal(to: request.url) == nil ? request : nil)
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didFinishCollecting metrics: URLSessionTaskMetrics) {
         lock.lock()
-        counts.removeValue(forKey: task.taskIdentifier)
+        self.metrics = metrics
         lock.unlock()
+    }
+
+    /// Vet `remoteAddress` of every network load in the task (one per hop).
+    /// Missing metrics fail closed. Proxied loads are skipped: the address
+    /// is the proxy's, and the proxy — not us — resolves the origin.
+    func connectedAddressRefusal() -> String? {
+        lock.lock()
+        let metrics = self.metrics
+        lock.unlock()
+        guard let metrics else { return "no connection metrics to verify the connected address" }
+        return Self.connectedAddressRefusal(metrics.transactionMetrics.map {
+            .init(isNetworkLoad: $0.resourceFetchType == .networkLoad,
+                  isProxy: $0.isProxyConnection, remoteAddress: $0.remoteAddress)
+        })
+    }
+
+    struct Hop: Equatable {
+        let isNetworkLoad: Bool
+        let isProxy: Bool
+        let remoteAddress: String?
+    }
+
+    static func connectedAddressRefusal(_ hops: [Hop]) -> String? {
+        let network = hops.filter(\.isNetworkLoad)
+        guard !network.isEmpty else { return "no network load to verify the connected address" }
+        for hop in network where !hop.isProxy {
+            guard let address = hop.remoteAddress else {
+                return "connected address unknown"
+            }
+            if let reason = HostPolicy.refusal(remoteAddress: address) {
+                return "connected to \(address) (\(reason))"
+            }
+        }
+        return nil
     }
 }

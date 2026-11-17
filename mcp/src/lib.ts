@@ -46,6 +46,29 @@ export async function readRunLogTail(ledgerId: number | string, tail = 100): Pro
   }
 }
 
+/**
+ * An option and its value as argv, safe for values that begin with `-`.
+ *
+ * swift-argument-parser (cli/Package.resolved: 1.8.2) refuses
+ * `--notes -x` ("Missing value for '--notes'") but accepts `--notes=-x`,
+ * so non-empty values use the attached form. `--notes=` is ALSO "missing
+ * value", so an empty string keeps the split form, which it accepts.
+ * Pinned by cli/Tests/AppleTasksTests/ArgvParsingTests.swift.
+ */
+export function opt(flag: string, value: string | number): string[] {
+  const text = String(value);
+  return text === "" ? [flag, ""] : [`${flag}=${text}`];
+}
+
+/**
+ * Trailing positionals behind `--`, so free text starting with `-` is never
+ * parsed as an option. Must be the LAST thing in argv: after `--` every
+ * element is positional, including anything that looks like a flag.
+ */
+export function positionals(...values: string[]): string[] {
+  return ["--", ...values];
+}
+
 export type CliOpts = { timeoutMs?: number };
 
 export type ToolRecord = {

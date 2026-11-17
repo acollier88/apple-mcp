@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { cli, defineTool, fail, okJson, trackTool } from "../lib";
+import { cli, defineTool, fail, okJson, opt, positionals, trackTool } from "../lib";
 import { approvalShape } from "../schemas";
 
 export function registerApprovalTools(server: McpServer): void {
@@ -20,10 +20,11 @@ export function registerApprovalTools(server: McpServer): void {
     annotations: { title: "Request approval", openWorldHint: true },
     timeoutMs: 30_000,
     argv: ({ question, task, expires_minutes, force }) => {
-      const args = ["approve", "request", question];
-      if (task) args.push("--task", task);
-      if (expires_minutes !== undefined) args.push("--expires-minutes", String(expires_minutes));
+      const args = ["approve", "request"];
+      if (task) args.push(...opt("--task", task));
+      if (expires_minutes !== undefined) args.push(...opt("--expires-minutes", String(expires_minutes)));
       if (force) args.push("--force");
+      args.push(...positionals(question));
       return args;
     },
   });
@@ -47,8 +48,9 @@ export function registerApprovalTools(server: McpServer): void {
       annotations: approvalCheckAnnotations,
     },
     async ({ token, wait_seconds }) => {
-      const args = ["approve", "check", token];
-      if (wait_seconds !== undefined) args.push("--wait-seconds", String(wait_seconds));
+      const args = ["approve", "check"];
+      if (wait_seconds !== undefined) args.push(...opt("--wait-seconds", String(wait_seconds)));
+      args.push(...positionals(token));
       try {
         return okJson(await cli(args, { timeoutMs: (wait_seconds ?? 0) * 1000 + 30_000 }));
       } catch (err) {
@@ -68,8 +70,8 @@ export function registerApprovalTools(server: McpServer): void {
     annotations: { title: "List approvals", readOnlyHint: true },
     argv: ({ status, limit }) => {
       const args = ["approve", "list"];
-      if (status) args.push("--status", status);
-      if (limit !== undefined) args.push("--limit", String(limit));
+      if (status) args.push(...opt("--status", status));
+      if (limit !== undefined) args.push(...opt("--limit", String(limit)));
       return args;
     },
     wrap: (parsed) => ({ approvals: parsed }),
