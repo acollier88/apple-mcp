@@ -156,5 +156,17 @@
       "antigravity"
     ]
   },
-  "autoBudget": "skipRed"
+  "autoBudget": "skipRed",
+  "doctor": {
+    "detectors": {
+      "thresholds": {
+        "launchSilentIntervals": 2,
+        "worktreeMegabytes": 2048,
+        "logMegabytes": 512,
+        "volumeFreePercent": 5,
+        "healCooldownHours": 24,
+        "healDailyCap": 3
+      }
+    }
+  }
 }

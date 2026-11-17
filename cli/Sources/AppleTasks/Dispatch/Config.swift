@@ -148,6 +148,34 @@ struct AgentsConfig: Codable {
     /// `inherit`, the pre-#27 behaviour.
     var envMode: AgentEnv.Mode?
 
+    /// Proactive diagnostics (#47). Absent means every detector runs with
+    /// the built-in thresholds.
+    var doctor: DoctorSettings?
+
+    struct DoctorSettings: Codable {
+        var detectors: DetectorSettings? = nil
+    }
+
+    struct DetectorSettings: Codable {
+        /// When set, only these detector ids run.
+        var enabled: [String]? = nil
+        /// Always skipped, even if listed in `enabled`.
+        var disabled: [String]? = nil
+        var thresholds: DetectorThresholds? = nil
+    }
+
+    struct DetectorThresholds: Codable {
+        /// Flag a loaded launchd job when its log is older than this many intervals.
+        var launchSilentIntervals: Int? = nil
+        var worktreeMegabytes: Int? = nil
+        var logMegabytes: Int? = nil
+        /// Finding when free space is below this percent of the volume.
+        var volumeFreePercent: Double? = nil
+        var healCooldownHours: Int? = nil
+        /// Max `[heal]` tasks `doctor --enqueue-heals` may create per local day.
+        var healDailyCap: Int? = nil
+    }
+
     static let defaultClaimGuard = "modified"
 
     /// `claimGuard` with the default applied; unknown values fall back to the default.
