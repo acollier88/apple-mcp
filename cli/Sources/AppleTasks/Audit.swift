@@ -452,10 +452,15 @@ final class AuditDB {
     func failedAttempts(taskId: String) -> (count: Int, lastFinishedAt: String?) {
         guard db != nil else { return (0, nil) }
         var stmt: OpaquePointer?
-        let sql = "SELECT COUNT(*), MAX(finished_at) FROM dispatches WHERE task_id = ? AND status IN ('failed','timeout')"
+        let sql = """
+        SELECT COUNT(*), MAX(finished_at) FROM dispatches \
+        WHERE task_id = ? AND status IN ('failed','timeout') AND finished_at > ?
+        """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return (0, nil) }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
+        let ignoreBefore = getState("heal.retryReset.\(taskId)") ?? ""
+        sqlite3_bind_text(stmt, 2, ignoreBefore, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return (0, nil) }
         let last = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
         return (Int(sqlite3_column_int(stmt, 0)), last)

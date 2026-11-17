@@ -1009,6 +1009,23 @@ struct Doctor: AsyncParsableCommand {
                     break
                 }
             }
+            switch Playbooks.rung(for: issue.signature) {
+            case .playbook(let id):
+                actions.append(HealAction(
+                    system: issue.system, action: "playbook", taskId: nil, title: nil,
+                    reason: "apple-tasks heal --dry-run --run \(id)"))
+                continue
+            case .needsHuman(let id):
+                let sent = await Notifier.push(
+                    title: "apple-tasks needs you",
+                    body: "\(issue.summary) Playbook \(id) does not change the machine.")
+                actions.append(HealAction(
+                    system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                    reason: sent ? id : "notification failed: \(id)"))
+                continue
+            case .agent:
+                break
+            }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")
