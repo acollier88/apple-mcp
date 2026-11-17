@@ -227,6 +227,9 @@ struct Heal: AsyncParsableCommand {
         abstract: "Run a known fix for a finding. Default is a dry run. Nothing pushes or deletes a branch."
     )
 
+    @Flag(name: .long, help: "Open healable findings and which rung they are on.")
+    var report = false
+
     @Flag(name: .long, help: "List playbooks and their blast radius.")
     var list = false
 
@@ -237,6 +240,11 @@ struct Heal: AsyncParsableCommand {
     var playbook: String?
 
     func run() async throws {
+        if report {
+            let rows = AuditDB.shared.findings(state: "open", findingClass: "healable", limit: 100)
+            emit(HealPolicy.report(rows) { AuditDB.shared.getState(HealPolicy.levelKey($0)) })
+            return
+        }
         if list || (playbook == nil && !dryRun) {
             emit(Playbooks.catalog)
             if playbook == nil { return }

@@ -1009,19 +1009,45 @@ struct Doctor: AsyncParsableCommand {
                     break
                 }
             }
-            switch Playbooks.rung(for: issue.signature) {
+            switch HealPolicy.decide(
+                fingerprint: issue.signature,
+                rung: Playbooks.rung(for: issue.signature),
+                previous: AuditDB.shared.getState(HealPolicy.levelKey(issue.signature)),
+                evidenceChanged: decisions[issue.signature] != "quiet",
+                healsToday: Self.healsCreatedToday(),
+                cap: dailyCap) {
+            case .quiet:
+                actions.append(HealAction(
+                    system: issue.system, action: "unchanged", taskId: nil, title: nil,
+                    reason: "heal rung already used for this evidence"))
+                continue
             case .playbook(let id):
+                HealPolicy.remember(.playbook(id), fingerprint: issue.signature)
+                Self.noteHealCreated()
                 actions.append(HealAction(
                     system: issue.system, action: "playbook", taskId: nil, title: nil,
                     reason: "apple-tasks heal --dry-run --run \(id)"))
                 continue
             case .needsHuman(let id):
+                HealPolicy.remember(.needsHuman(id), fingerprint: issue.signature)
                 let sent = await Notifier.push(
                     title: "apple-tasks needs you",
-                    body: "\(issue.summary) Playbook \(id) does not change the machine.")
+                    body: "\(issue.summary) Automatic healing stopped for \(id).")
                 actions.append(HealAction(
                     system: issue.system, action: "needs-human", taskId: nil, title: nil,
                     reason: sent ? id : "notification failed: \(id)"))
+                continue
+            case .breaker:
+                let day = HealPolicy.dayStamp()
+                if AuditDB.shared.getState(HealPolicy.breakerKey) != day {
+                    _ = await Notifier.push(
+                        title: "apple-tasks needs you",
+                        body: "Automatic healing is paused for today (\(dailyCap) heals).")
+                    _ = AuditDB.shared.setState(HealPolicy.breakerKey, day)
+                }
+                actions.append(HealAction(
+                    system: issue.system, action: "paused", taskId: nil, title: nil,
+                    reason: "heal circuit breaker"))
                 continue
             case .agent:
                 break
@@ -1067,6 +1093,7 @@ struct Doctor: AsyncParsableCommand {
                     reason: nil
                 ))
                 Self.noteHealCreated()
+                HealPolicy.remember(.agent, fingerprint: issue.signature)
             } catch {
                 let reason = (error as? AppleTasksError)?.description ?? error.localizedDescription
                 actions.append(HealAction(
