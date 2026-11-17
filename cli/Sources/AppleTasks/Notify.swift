@@ -74,7 +74,7 @@ enum Notifier {
             app.displayNotification(argv[1], \(options));
         }
         """
-        _ = try? OSA.runJXA(script, args: [title, body])
+        _ = try? OSA.runJXA(script, args: [title, body], timeout: 30)
     }
 
     /// ntfy push, best-effort. False when unconfigured or the POST failed.

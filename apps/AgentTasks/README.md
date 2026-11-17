@@ -57,12 +57,18 @@ Siri. The ops console keeps its own, usually longer, timeouts.
 
 ```bash
 # from repo root
-make            # build the CLI the app shells to
-make app        # → /Applications/AgentTasks.app (replaces any existing install)
+make app        # make install (CLI → ~/.local/bin), then → /Applications/AgentTasks.app
 
 # or
-cd apps/AgentTasks && ./build.sh
+cd apps/AgentTasks && ./build.sh   # BINDIR=… to install the CLI elsewhere
 ```
+
+`build.sh` runs `make install` and stamps the **installed** CLI path
+(`~/.local/bin/apple-tasks` by default) into the bundle as
+`apple-tasks-bin.path`, never `cli/.build/`. Lookup order:
+`APPLE_TASKS_BIN` → stamped path → `~/.local/bin/apple-tasks` → repo build
+dirs → `PATH`. An app built before this change still has the build-directory
+path stamped; re-run `make app` once.
 
 `build.sh` always installs into **`/Applications/AgentTasks.app`**, quitting a
 running copy first, then re-registers Launch Services so Siri/Shortcuts pick

@@ -4,7 +4,8 @@ import Foundation
 
 enum CLI {
     /// Absolute path to the apple-tasks binary. Order: env → path stamped at
-    /// app build time → monorepo `.build` candidates → PATH.
+    /// app build time (the `make install` copy) → ~/.local/bin → monorepo
+    /// `.build` candidates → PATH.
     static var resolvedBinary: String {
         get throws {
             let candidates = binaryCandidates()
@@ -16,7 +17,7 @@ enum CLI {
                 domain: "AgentTasks", code: 3,
                 userInfo: [NSLocalizedDescriptionKey:
                     "apple-tasks binary not found. Tried:\n  \(listed)\n"
-                    + "Build the CLI (`make` in the repo) or set APPLE_TASKS_BIN."])
+                    + "Install the CLI (`make install` in the repo) or set APPLE_TASKS_BIN."])
         }
     }
 
@@ -36,6 +37,11 @@ enum CLI {
             let path = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !path.isEmpty { paths.append(path) }
         }
+        // `make install` default (#33) — same position as the HTTP bridge's
+        // AppleTasksCLI.binary (env → ~/.local/bin → repo build → PATH).
+        paths.append(FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/apple-tasks").path)
+        // Dev fallbacks only: a build dir changes under any `swift build`.
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // Sources
             .deletingLastPathComponent() // AgentTasks

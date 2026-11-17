@@ -54,11 +54,20 @@ struct DoctorOut: Codable {
     /// drifted from it (uncommitted edits, or a HEAD newer than the build).
     struct DeploymentStatus: Codable {
         let launchdBinary: String?
+        /// Commit stamped into the launchd binary (`apple-tasks --version`);
+        /// nil for an unstamped build (plain `swift build`, pre-#33).
+        let launchdCommit: String?
         let binaryModified: String?
         let sourceTree: String?
         let sourceHead: String?
         let sourceDirty: Bool?
+        /// Commit comparison: true when the launchd binary carries the same
+        /// cli/ code as HEAD. nil when it could not be compared.
+        let binaryMatchesHead: Bool?
+        /// mtime fallback, only set when `comparison` is "mtime".
         let binaryOlderThanCliCommit: Bool?
+        /// "commit" | "mtime" | "none" — which check produced the verdict.
+        let comparison: String
         let note: String
     }
 }
@@ -669,17 +678,9 @@ struct Doctor: AsyncParsableCommand {
 
     /// stdout of a short-lived process, or nil if it failed to launch / exited non-zero.
     private static func capture(_ exe: String, _ args: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exe)
-        process.arguments = args
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard let result = try? ProcessRunner.run(URL(fileURLWithPath: exe), args, timeout: 15),
+              !result.timedOut, result.status == 0 else { return nil }
+        return result.stdoutString
     }
 
     /// Detects the two-trees hazard: the launchd job runs a binary built from
@@ -694,46 +695,100 @@ struct Doctor: AsyncParsableCommand {
                 .first { $0.hasSuffix("/apple-tasks") }
         }
         guard let bin = launchdBinary else {
-            return .init(launchdBinary: nil, binaryModified: nil, sourceTree: nil, sourceHead: nil,
-                         sourceDirty: nil, binaryOlderThanCliCommit: nil,
+            return .init(launchdBinary: nil, launchdCommit: nil, binaryModified: nil, sourceTree: nil,
+                         sourceHead: nil, sourceDirty: nil, binaryMatchesHead: nil,
+                         binaryOlderThanCliCommit: nil, comparison: "none",
                          note: "launchd dispatch not loaded; nothing to compare")
         }
+        return deploymentStatus(binary: bin, sourceTreeHint: BuildInfo.sourceRoot)
+    }
+
+    /// Compare `binary` with its source checkout (#33). Preferred: the commit
+    /// stamped into the binary vs HEAD, which tells a stale build from one
+    /// made off another branch. Fallback for unstamped binaries: mtime vs the
+    /// last cli/ commit. The checkout is found by walking up from the binary
+    /// (pre-#33 builds ran from cli/.build), else `sourceTreeHint` (the stamp
+    /// of the binary running doctor — usually the same install), else by
+    /// walking up from this binary.
+    static func deploymentStatus(binary bin: String, sourceTreeHint: String?) -> DoctorOut.DeploymentStatus {
         let iso = ISO8601DateFormatter()
         let binaryDate = (try? FileManager.default.attributesOfItem(atPath: bin))?[.modificationDate] as? Date
-        // Walk up from cli/.build/release/apple-tasks to the checkout root.
-        var dir = URL(fileURLWithPath: bin).deletingLastPathComponent()
-        var tree: String?
-        for _ in 0..<6 {
-            if FileManager.default.fileExists(atPath: dir.appendingPathComponent(".git").path) {
-                tree = dir.path
-                break
+        let launchdCommit = capture(bin, ["--version"]).flatMap(BuildInfo.commit(fromVersionOutput:))
+
+        func checkout(above path: URL) -> String? {
+            var dir = path.resolvingSymlinksInPath().deletingLastPathComponent()
+            for _ in 0..<6 {
+                if FileManager.default.fileExists(atPath: dir.appendingPathComponent(".git").path) {
+                    return dir.path
+                }
+                dir = dir.deletingLastPathComponent()
             }
-            dir = dir.deletingLastPathComponent()
+            return nil
         }
-        guard let tree else {
-            return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string),
-                         sourceTree: nil, sourceHead: nil, sourceDirty: nil, binaryOlderThanCliCommit: nil,
-                         note: "binary is not inside a git checkout")
+        let hint = sourceTreeHint.flatMap {
+            FileManager.default.fileExists(atPath: URL(fileURLWithPath: $0).appendingPathComponent(".git").path)
+                ? $0 : nil
         }
-        let git = ["/usr/bin/git", "-c", "core.fsmonitor=false", "-C", tree]
-        let head = capture(git[0], Array(git[1...]) + ["rev-parse", "--short", "HEAD"])?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let porcelain = capture(git[0], Array(git[1...]) + ["status", "--porcelain"])
-        let dirty = porcelain.map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        // Only commits that touch the CLI sources matter; a docs-only commit
-        // must not flag a perfectly current binary.
-        let headEpoch = capture(git[0], Array(git[1...]) + ["log", "-1", "--format=%ct", "--", "cli"])
-            .flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard let tree = checkout(above: URL(fileURLWithPath: bin)) ?? hint ?? checkout(above: Executable.url) else {
+            return .init(launchdBinary: bin, launchdCommit: launchdCommit,
+                         binaryModified: binaryDate.map(iso.string), sourceTree: nil, sourceHead: nil,
+                         sourceDirty: nil, binaryMatchesHead: nil, binaryOlderThanCliCommit: nil,
+                         comparison: "none", note: "no source checkout found to compare against")
+        }
+        let gitArgs = ["-c", "core.fsmonitor=false", "-C", tree]
+        func git(_ args: String...) -> String? {
+            capture("/usr/bin/git", gitArgs + args)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let head = git("rev-parse", "--short=12", "HEAD")
+        let dirty = git("status", "--porcelain").map { !$0.isEmpty }
+
+        var notes: [String] = []
+        if dirty == true { notes.append("source tree has uncommitted changes — commit or they exist only on this Mac") }
+        let redeploy = "run make install (from the checkout you want live)"
+
+        if let launchdCommit {
+            let builtDirty = launchdCommit.hasSuffix("-dirty")
+            let base = builtDirty ? String(launchdCommit.dropLast("-dirty".count)) : launchdCommit
+            var matches: Bool
+            if git("rev-parse", "--verify", "--quiet", "\(base)^{commit}") == nil {
+                matches = false
+                notes.append("binary built from \(base), which this checkout does not have — \(redeploy)")
+            } else if git("rev-parse", "\(base)^{commit}") == git("rev-parse", "HEAD") {
+                matches = true
+            } else if git("merge-base", "--is-ancestor", base, "HEAD") != nil {
+                // Behind HEAD; only cli/ changes matter (docs-only commits don't).
+                matches = git("diff", "--quiet", base, "HEAD", "--", "cli") != nil
+                if !matches { notes.append("binary (\(base)) is behind HEAD (\(head ?? "?")) in cli/ — \(redeploy)") }
+            } else {
+                matches = false
+                notes.append("binary built from \(base), not in HEAD's history (another branch?) — \(redeploy)")
+            }
+            if builtDirty {
+                matches = false
+                notes.append("binary was built from uncommitted cli/ changes on top of \(base)")
+            }
+            return .init(launchdBinary: bin, launchdCommit: launchdCommit,
+                         binaryModified: binaryDate.map(iso.string), sourceTree: tree, sourceHead: head,
+                         sourceDirty: dirty, binaryMatchesHead: matches, binaryOlderThanCliCommit: nil,
+                         comparison: "commit",
+                         note: notes.isEmpty ? "ok: launchd runs a build of HEAD's cli/ (\(base))"
+                             : notes.joined(separator: "; "))
+        }
+
+        // Unstamped binary: mtime vs the last commit touching cli/ (a
+        // docs-only commit must not flag a current binary). Cannot tell a
+        // stale build from a branch build — hence the stamp.
+        let headEpoch = git("log", "-1", "--format=%ct", "--", "cli").flatMap { Double($0) }
         var older: Bool?
         if let binaryDate, let headEpoch {
             older = binaryDate.timeIntervalSince1970 < headEpoch
         }
-        var notes: [String] = []
-        if dirty == true { notes.append("source tree has uncommitted changes — commit or they exist only on this Mac") }
-        if older == true { notes.append("binary predates the last cli/ commit — rebuild (make cli helper) so launchd runs the committed code") }
-        return .init(launchdBinary: bin, binaryModified: binaryDate.map(iso.string), sourceTree: tree,
-                     sourceHead: head, sourceDirty: dirty, binaryOlderThanCliCommit: older,
-                     note: notes.isEmpty ? "ok: launchd runs a build of the committed HEAD" : notes.joined(separator: "; "))
+        if older == true { notes.append("binary predates the last cli/ commit — \(redeploy)") }
+        notes.append("binary has no build stamp (mtime comparison only); make install stamps it")
+        return .init(launchdBinary: bin, launchdCommit: nil, binaryModified: binaryDate.map(iso.string),
+                     sourceTree: tree, sourceHead: head, sourceDirty: dirty, binaryMatchesHead: nil,
+                     binaryOlderThanCliCommit: older, comparison: "mtime",
+                     note: notes.joined(separator: "; "))
     }
 
     func run() async throws {

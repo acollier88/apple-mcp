@@ -89,7 +89,8 @@ struct NotesScan: AsyncParsableCommand {
     /// One scan pass (no watermark side effects — callers decide).
     static func scan(folder: String?, since sinceDate: Date, maxChars: Int) throws -> [NoteOut] {
         let sinceMs = String(Int(sinceDate.timeIntervalSince1970 * 1000))
-        let raw = try OSA.runJXA(script, args: [sinceMs, folder ?? ""])
+        // Walks every note body through Apple Events; a large library is slow.
+        let raw = try OSA.runJXA(script, args: [sinceMs, folder ?? ""], timeout: 900)
 
         struct RawNote: Codable {
             let id: String

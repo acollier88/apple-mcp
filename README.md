@@ -28,10 +28,42 @@ Full picture: [`docs/architecture.md`](docs/architecture.md).
 
 ```bash
 make                 # → cli/.build/release/apple-tasks (+ private helper)
+make install         # sign + copy both into ~/.local/bin (BINDIR=/PREFIX= to override)
 make mcp             # bun install for the MCP server
-make app             # build → /Applications/AgentTasks.app (replaces existing)
-make install-agent   # LaunchAgent: dispatch every 5 min (seeds examples/agents.json)
+make app             # make install, then build → /Applications/AgentTasks.app
+make install-agent   # make install + LaunchAgent: dispatch every 5 min (seeds examples/agents.json)
 ```
+
+### Deploy path
+
+launchd (dispatch and digest), the AgentTasks app and the Mail rule run the
+**installed** copy, `~/.local/bin/apple-tasks`, plus the `apple-tasks-private`
+helper next to it. They never run `cli/.build/`. Building in a checkout, a
+worktree or on a branch therefore leaves the live dispatcher alone until you run
+`make install` from the checkout you want live. `make install` replaces each
+file atomically, so a running dispatch pass never sees a half-copied binary.
+`make cli` stamps the git commit into the binary (`apple-tasks --version`
+prints `0.1.0 (commit <sha>)`, with `-dirty` when `cli/` had uncommitted
+changes). `apple-tasks doctor` then reports `deployment.launchdCommit`
+against the source HEAD. A plain `swift build` has no stamp and reports
+`unknown`, and doctor falls back to comparing file modification times.
+
+**Migrating an existing install** (anything set up before this change, whose
+LaunchAgent points at `cli/.build/release/apple-tasks` or whose
+`~/.local/bin/apple-tasks` is a symlink into the build directory). Do this
+once, from the checkout you want live:
+
+```bash
+make install-agent    # installs ~/.local/bin copies (replacing old symlinks), rewrites + reloads the plist
+make install-digest   # only if you use the morning digest
+make app              # only if you use AgentTasks.app, so it stamps the installed path
+apple-tasks doctor | jq .deployment   # launchdBinary should be ~/.local/bin/apple-tasks
+```
+
+TCC grants (Reminders, Calendar, Automation) follow the code signature. With
+the `make sign-identity` certificate they carry over to the new path. With
+ad-hoc signatures, expect macOS to ask for Reminders/Automation access again
+the first time the installed copy runs.
 
 Agent lanes (tag tasks `[cursor]`, `[claude]`, …): see [`examples/agents.json`](examples/agents.json).
 
@@ -46,7 +78,8 @@ Reminders access (TCC is per host process — Terminal ≠ your MCP host).
 
 Ad-hoc signatures change on every rebuild, so TCC (Reminders / Calendar /
 Automation) and Keychain ACLs reset. Create a persistent self-signed identity
-once — later `make` / `make app` pick it up automatically:
+once — later `make` / `make install` / `make app` pick it up automatically
+(`make install` re-signs the installed copies with the same identity):
 
 ```bash
 make sign-identity   # "AgentTasks Dev" in the login keychain; idempotent

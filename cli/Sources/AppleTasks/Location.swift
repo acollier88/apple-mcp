@@ -101,20 +101,17 @@ final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sen
     }
 
     private static func fetchViaApp(timeout: TimeInterval) throws -> CLLocation {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: appHelper)
-        process.arguments = ["--whereami", "--timeout", String(Int(timeout))]
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let detail = String(data: stderr.fileHandleForReading.readDataToEndOfFile(),
-                                encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The helper enforces `timeout` itself; the extra slack covers app
+        // launch so only a wedged helper is killed.
+        let result = try ProcessRunner.run(
+            URL(fileURLWithPath: appHelper),
+            ["--whereami", "--timeout", String(Int(timeout))],
+            timeout: timeout + 15)
+        guard !result.timedOut, result.status == 0 else {
+            let detail = result.timedOut ? "timed out"
+                : result.stderrString.trimmingCharacters(in: .whitespacesAndNewlines)
             throw AppleTasksError.automationFailed(
-                "AgentTasks location helper failed: \(detail ?? "unknown error")")
+                "AgentTasks location helper failed: \(detail.isEmpty ? "unknown error" : detail)")
         }
 
         struct HelperFix: Decodable {
@@ -123,8 +120,7 @@ final class LocationFetcher: NSObject, CLLocationManagerDelegate, @unchecked Sen
             let accuracyMeters: Double
             let timestamp: String
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        let fix = try JSONDecoder().decode(HelperFix.self, from: data)
+        let fix = try JSONDecoder().decode(HelperFix.self, from: result.stdout)
         return CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude),
             altitude: 0, horizontalAccuracy: fix.accuracyMeters, verticalAccuracy: -1,

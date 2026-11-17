@@ -3,6 +3,8 @@
 <!--
   Always-on dispatcher. Installed by make install-agent.
   Placeholders (WRAPPER, APPLE_TASKS_BIN, HOME, INTERVAL) are substituted at install.
+  APPLE_TASKS_BIN is the `make install` copy ($BINDIR/apple-tasks, default
+  ~/.local/bin), never cli/.build — a rebuild must not swap the live job.
 -->
 <plist version="1.0">
 <dict>

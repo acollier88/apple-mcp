@@ -3,6 +3,7 @@
 <!--
   Morning digest to Apple Note (+ optional ntfy). Installed by make install-digest.
   Placeholders (WRAPPER, APPLE_TASKS_BIN, HOME, HOUR, MINUTE) are substituted at install.
+  APPLE_TASKS_BIN is the `make install` copy ($BINDIR/apple-tasks), never cli/.build.
 -->
 <plist version="1.0">
 <dict>
