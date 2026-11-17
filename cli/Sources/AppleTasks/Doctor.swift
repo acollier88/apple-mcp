@@ -84,13 +84,60 @@ struct SecretStatus: Codable {
     let note: String?
 }
 
-struct DoctorIssue: Codable {
+struct DoctorIssue {
     let system: String
     let severity: String
     let summary: String
     let signature: String
     /// When set, a person has to run this command. Never enqueue a heal for it.
     var needsHumanCommand: String? = nil
+    /// `healable` or `needs-human`. Nil keeps the pre-#47 enqueue behavior.
+    var kind: String? = nil
+    var evidence: String? = nil
+    var suggestedAction: String? = nil
+
+    init(system: String, severity: String, summary: String, signature: String,
+         needsHumanCommand: String? = nil,
+         kind: String? = nil, evidence: String? = nil, suggestedAction: String? = nil) {
+        self.system = system
+        self.severity = severity
+        self.summary = summary
+        self.signature = signature
+        self.needsHumanCommand = needsHumanCommand
+        self.kind = kind
+        self.evidence = evidence
+        self.suggestedAction = suggestedAction
+    }
+}
+
+extension DoctorIssue: Codable {
+    enum CodingKeys: String, CodingKey {
+        case system, severity, summary, signature, needsHumanCommand, kind, evidence, suggestedAction
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        system = try c.decode(String.self, forKey: .system)
+        severity = try c.decode(String.self, forKey: .severity)
+        summary = try c.decode(String.self, forKey: .summary)
+        signature = try c.decode(String.self, forKey: .signature)
+        needsHumanCommand = try c.decodeIfPresent(String.self, forKey: .needsHumanCommand)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        evidence = try c.decodeIfPresent(String.self, forKey: .evidence)
+        suggestedAction = try c.decodeIfPresent(String.self, forKey: .suggestedAction)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(system, forKey: .system)
+        try c.encode(severity, forKey: .severity)
+        try c.encode(summary, forKey: .summary)
+        try c.encode(signature, forKey: .signature)
+        try c.encodeIfPresent(needsHumanCommand, forKey: .needsHumanCommand)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(evidence, forKey: .evidence)
+        try c.encodeIfPresent(suggestedAction, forKey: .suggestedAction)
+    }
 }
 
 struct HealReport: Codable {
@@ -767,7 +814,7 @@ struct Doctor: AsyncParsableCommand {
 
     /// Detects the two-trees hazard: the launchd job runs a binary built from
     /// a checkout that may carry uncommitted edits or lag its own HEAD.
-    private static func deploymentStatus() -> DoctorOut.DeploymentStatus {
+    static func deploymentStatus() -> DoctorOut.DeploymentStatus {
         var launchdBinary: String?
         if let out = capture("/bin/launchctl", ["print", "gui/\(getuid())/com.apple-tasks.dispatch"]),
            let start = out.range(of: "arguments = {") {
@@ -917,6 +964,9 @@ struct Doctor: AsyncParsableCommand {
         if let pause, let issue = Self.pauseIssue(pause) {
             issues.append(issue)
         }
+        let loadedConfig = try? AgentsConfig.load()
+        let findings = await DiagnosticsLive.findings(config: loadedConfig)
+        issues.append(contentsOf: findings.map(\.issue))
         let plaintextCount = secrets.filter { $0.source == SecretSource.plaintext.rawValue }.count
         if plaintextCount > 0 {
             issues.append(DoctorIssue(
@@ -937,7 +987,7 @@ struct Doctor: AsyncParsableCommand {
         _ = AuditDB.shared.setState("doctor.needsHuman", LanePreflight.signatureRecord(preflight.classified))
         var heals: HealReport?
         if enqueueHeals {
-            heals = await Self.enqueueHeals(issues: issues, listName: listName)
+            heals = await Self.enqueueHeals(issues: issues, listName: listName, config: loadedConfig)
         }
         emit(DoctorOut(
             binary: Executable.url.path,
@@ -1104,10 +1154,15 @@ struct Doctor: AsyncParsableCommand {
         return "cron: \(cron)"
     }
 
-    private static func enqueueHeals(issues: [DoctorIssue], listName: String) async -> HealReport {
+    private static func enqueueHeals(issues: [DoctorIssue], listName: String,
+                                     config: AgentsConfig?) async -> HealReport {
         guard !issues.isEmpty else {
             return HealReport(list: listName, actions: [])
         }
+        let limits = Diagnostics.thresholds(config?.doctor?.detectors)
+        let cooldown = TimeInterval(limits.healCooldownHours) * 3600
+        let now = Date()
+        var healState = loadHealState()
         let store = Store()
         do {
             try await store.requestAccess()
@@ -1133,6 +1188,12 @@ struct Doctor: AsyncParsableCommand {
             // info/notice never become heal tasks (secrets-plaintext is info).
             if issue.severity == "info" || issue.severity == "notice" { continue }
             if issue.system == "secrets" { continue }
+            if issue.kind == Diagnostics.Kind.needsHuman.rawValue {
+                actions.append(HealAction(
+                    system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                    reason: issue.suggestedAction ?? issue.summary))
+                continue
+            }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")
@@ -1144,6 +1205,21 @@ struct Doctor: AsyncParsableCommand {
                     reason: "open heal already queued"
                 ))
                 continue
+            }
+            switch Diagnostics.gate(signature: issue.signature, now: now, state: healState,
+                                    cooldown: cooldown, dailyCap: limits.healDailyCap) {
+            case .cooldown:
+                actions.append(HealAction(
+                    system: issue.system, action: "cooldown", taskId: nil, title: spec.title,
+                    reason: "heal for \(issue.signature) was enqueued within \(limits.healCooldownHours)h"))
+                continue
+            case .capped:
+                actions.append(HealAction(
+                    system: issue.system, action: "capped", taskId: nil, title: spec.title,
+                    reason: "daily heal cap \(limits.healDailyCap) already reached"))
+                continue
+            case .enqueue:
+                break
             }
             do {
                 let out = try createTask(
@@ -1159,6 +1235,8 @@ struct Doctor: AsyncParsableCommand {
                     mirrorNativeTags: true,
                     auditCommand: "doctor-heal"
                 )
+                healState = Diagnostics.marked(healState, signature: issue.signature, now: now)
+                saveHealState(healState)
                 actions.append(HealAction(
                     system: issue.system,
                     action: "created",
@@ -1178,6 +1256,33 @@ struct Doctor: AsyncParsableCommand {
             }
         }
         return HealReport(list: listName, actions: actions)
+    }
+
+    private static func loadHealState() -> Diagnostics.HealLedgerState {
+        let iso = ISO8601DateFormatter()
+        var last: [String: Date] = [:]
+        if let raw = AuditDB.shared.getState("doctor.heal.last"),
+           let data = raw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+            for (key, value) in obj {
+                if let date = iso.date(from: value) { last[key] = date }
+            }
+        }
+        return Diagnostics.HealLedgerState(
+            lastEnqueued: last,
+            day: AuditDB.shared.getState("doctor.heal.day") ?? "",
+            count: Int(AuditDB.shared.getState("doctor.heal.count") ?? "") ?? 0)
+    }
+
+    private static func saveHealState(_ state: Diagnostics.HealLedgerState) {
+        let iso = ISO8601DateFormatter()
+        let obj = Dictionary(uniqueKeysWithValues: state.lastEnqueued.map { ($0.key, iso.string(from: $0.value)) })
+        if let data = try? JSONSerialization.data(withJSONObject: obj),
+           let text = String(data: data, encoding: .utf8) {
+            _ = AuditDB.shared.setState("doctor.heal.last", text)
+        }
+        _ = AuditDB.shared.setState("doctor.heal.day", state.day)
+        _ = AuditDB.shared.setState("doctor.heal.count", String(state.count))
     }
 
     private static func isOpenHeal(_ reminder: EKReminder, signature: String) -> Bool {
@@ -1201,6 +1306,19 @@ struct Doctor: AsyncParsableCommand {
 Never toggle Home Assistant entities (lights, climate, locks, covers). Never print tokens or .env values. Do not call dispatch_run (recursive dispatch is blocked). Launchd will not re-dispatch this task until you complete it.
 When finished: apple-tasks update <id> --append-notes "<what you did>" then apple-tasks complete <id> and apple-tasks update <id> --remove-tag dispatched:\(ClaimTags.host)
 """
+        if issue.kind == Diagnostics.Kind.healable.rawValue, let action = issue.suggestedAction {
+            let evidence = issue.evidence ?? issue.summary
+            return HealSpec(
+                tags: ["heal", "apple-mcp", "auto"],
+                title: "Heal \(issue.system): \(issue.signature)",
+                notes: header + """
+Evidence:
+\(evidence)
+
+Allowed scope: \(action)
+Do not look for credentials, tokens, SSH keys, or .env files. If the fix needs a login or a permission prompt, stop and leave this task for a person.
+""" + footer)
+        }
         switch issue.system {
         case "homeassistant":
             return HealSpec(
