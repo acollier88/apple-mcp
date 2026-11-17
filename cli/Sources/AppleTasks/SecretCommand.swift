@@ -126,6 +126,9 @@ struct SecretCommand: AsyncParsableCommand {
         var fromStdin = false
 
         func run() async throws {
+            try CallerGuard.enforce(
+                CallerGuard.secretRefusal(command: "secret set", caller: CallerGuard.currentCaller),
+                command: "secret set", detail: name)
             let value = try Self.readValue(name: name, fromStdin: fromStdin)
             guard !value.isEmpty else {
                 throw AppleTasksError.invalidInput("secret '\(name)' value is empty")
@@ -169,6 +172,12 @@ struct SecretCommand: AsyncParsableCommand {
         var quiet = false
 
         func run() async throws {
+            // --quiet prints nothing, so presence checks stay open to every caller.
+            if !quiet {
+                try CallerGuard.enforce(
+                    CallerGuard.secretRefusal(command: "secret get", caller: CallerGuard.currentCaller),
+                    command: "secret get", detail: name)
+            }
             AuditDB.shared.record(command: "secret get", detail: name)
             let value = try Secrets.store.get(name)
             guard let value, !value.isEmpty else {
@@ -193,6 +202,9 @@ struct SecretCommand: AsyncParsableCommand {
         var name: String
 
         func run() async throws {
+            try CallerGuard.enforce(
+                CallerGuard.secretRefusal(command: "secret rm", caller: CallerGuard.currentCaller),
+                command: "secret rm", detail: name)
             let removed = try Secrets.store.remove(name)
             AuditDB.shared.record(command: "secret rm", detail: name)
             emit(RmOut(name: name, removed: removed))
@@ -236,6 +248,13 @@ struct SecretCommand: AsyncParsableCommand {
         var shouldApply = false
 
         func run() async throws {
+            // Dry run only reports names/paths, never values; --apply writes.
+            if shouldApply {
+                try CallerGuard.enforce(
+                    CallerGuard.secretRefusal(command: "secret migrate --apply",
+                                              caller: CallerGuard.currentCaller),
+                    command: "secret migrate", detail: "--apply")
+            }
             let configDir = SecretCommand.resolvedConfigDir()
             let steps = try SecretCommand.plan(configDir: configDir, store: Secrets.store)
             if shouldApply {
