@@ -68,6 +68,8 @@ struct DigestOut: Codable {
     /// True when this run sent the pending-review notification (banner + ntfy).
     /// False when the same ledger ids and branches were already announced.
     var pendingReviewNotified: Bool? = nil
+    /// Tasks whose countable failures since the last success exceed maxRetries.
+    var retriesExhausted: [String] = []
 
     struct DispatchLine: Codable {
         let id: Int
@@ -143,6 +145,10 @@ struct Digest: AsyncParsableCommand {
                             auditActions: audit.count, auditByCommand: byCommand,
                             dueToday: dueToday, events: events,
                             noteCreated: nil, pushed: nil)
+        if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
+            out.retriesExhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
+                .map { "\($0.taskId) (\($0.count) since last success)" }
+        }
 
         // Suggestions are best-effort: an unavailable model annotates the
         // digest instead of failing the 7am run.
@@ -193,6 +199,9 @@ struct Digest: AsyncParsableCommand {
                 text += " (oldest \(oldest))"
             }
         }
+        if !d.retriesExhausted.isEmpty {
+            text += ", \(d.retriesExhausted.count) retries exhausted"
+        }
         return text
     }
 
@@ -217,6 +226,13 @@ struct Digest: AsyncParsableCommand {
                 "<li><b>#\(line.id)</b> \(HTML.escape(line.agent)) — \(HTML.escape(line.status))"
                     + (line.summary.map { ": \(HTML.escape(String($0.prefix(140))))" } ?? "")
                     + "</li>"
+            }.joined() + "</ul>")
+        }
+
+        if !d.retriesExhausted.isEmpty {
+            parts.append("<h2>Retries exhausted (\(d.retriesExhausted.count))</h2>")
+            parts.append("<ul>" + d.retriesExhausted.map {
+                "<li>\(HTML.escape($0))</li>"
             }.joined() + "</ul>")
         }
 

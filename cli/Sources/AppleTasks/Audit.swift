@@ -429,7 +429,11 @@ final class AuditDB {
             where: "status = 'running' AND started_at < ?", binds: [cutoff], limit: 1000)
         guard !stale.isEmpty else { return [] }
         var stmt: OpaquePointer?
-        let sql = "UPDATE dispatches SET finished_at = ?, status = 'timeout' WHERE status = 'running' AND started_at < ?"
+        // Summary marks an infrastructure reap so retry accounting can ignore it.
+        let sql = """
+        UPDATE dispatches SET finished_at = ?, status = 'timeout', summary = 'reaped: stale running' \
+        WHERE status = 'running' AND started_at < ?
+        """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
@@ -438,18 +442,52 @@ final class AuditDB {
         return stale
     }
 
-    /// Failed/timed-out attempt count and latest finish time, for retry backoff.
-    /// `cancelled` is a human decision and must not count (no retry/backoff).
+    /// Failures since the latest success. Infrastructure reaps and hangs
+    /// (`dispatcher died`, `reaped:`) do not count, and neither does `cancelled`.
+    /// A later success starts the budget over so a recurring task is not
+    /// stranded by an old occurrence.
     func failedAttempts(taskId: String) -> (count: Int, lastFinishedAt: String?) {
         guard db != nil else { return (0, nil) }
         var stmt: OpaquePointer?
-        let sql = "SELECT COUNT(*), MAX(finished_at) FROM dispatches WHERE task_id = ? AND status IN ('failed','timeout')"
+        let sql = """
+        SELECT COUNT(*), MAX(finished_at) FROM dispatches
+        WHERE task_id = ?1
+          AND status IN ('failed','timeout')
+          AND (summary IS NULL OR (
+                summary NOT LIKE 'dispatcher died%'
+                AND summary NOT LIKE 'dispatcher process is gone%'
+                AND summary NOT LIKE 'agent exited but dispatcher never recorded%'
+                AND summary NOT LIKE 'reaped:%'))
+          AND id > COALESCE(
+                (SELECT MAX(id) FROM dispatches
+                 WHERE task_id = ?1 AND status = 'succeeded'),
+                0)
+        """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return (0, nil) }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return (0, nil) }
         let last = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
         return (Int(sqlite3_column_int(stmt, 0)), last)
+    }
+
+    /// Tasks whose countable failures since the last success exceed `maxRetries`.
+    func retriesExhausted(maxRetries: Int) -> [(taskId: String, count: Int)] {
+        guard db != nil, maxRetries > 0 else { return [] }
+        var stmt: OpaquePointer?
+        let sql = "SELECT DISTINCT task_id FROM dispatches WHERE status IN ('failed','timeout')"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var ids: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) {
+                ids.append(id)
+            }
+        }
+        return ids.compactMap { id in
+            let count = failedAttempts(taskId: id).count
+            return count > maxRetries ? (taskId: id, count: count) : nil
+        }
     }
 
     @discardableResult

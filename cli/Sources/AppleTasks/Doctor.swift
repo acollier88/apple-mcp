@@ -970,6 +970,19 @@ struct Doctor: AsyncParsableCommand {
                 signature: "dispatch"
             ))
         }
+        // Needs a person, not a heal agent: severity info is skipped by enqueueHeals.
+        if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
+            let exhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
+            if !exhausted.isEmpty {
+                let lines = exhausted.map { "\($0.taskId) (\($0.count) since last success)" }
+                issues.append(DoctorIssue(
+                    system: "dispatch",
+                    severity: "info",
+                    summary: "retries exhausted: " + lines.joined(separator: "; ")
+                        + ". Raise maxRetries or run dispatch-retry. Do not hunt for credentials.",
+                    signature: "retries-exhausted"))
+            }
+        }
         return issues
     }
 
