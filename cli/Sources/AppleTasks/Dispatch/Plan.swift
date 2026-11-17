@@ -329,6 +329,8 @@ extension Dispatch {
             // For file mode the path isn't known until the ledger row exists;
             // substitute a placeholder now and patch it after the claim.
             let argv = Self.renderArgv(template, prompt: prompt, via: promptVia, promptFile: "{promptFile}")
+            // What the ledger keeps (#27): never the rendered prompt itself.
+            let ledgerCommand = Self.ledgerCommand(template, via: promptVia, promptFile: "{promptFile}")
 
             if dryRun {
                 var action = retryAttempt.map { "would retry (attempt \($0))" } ?? "would dispatch"
@@ -348,7 +350,7 @@ extension Dispatch {
             // Fail closed when the ledger is unavailable — never run unledgered.
             let ledgerId: Int64
             switch AuditDB.shared.claimDispatch(
-                taskId: taskId, agent: agentTag, command: argv.joined(separator: " "), cwd: cwd) {
+                taskId: taskId, agent: agentTag, command: ledgerCommand, cwd: cwd) {
             case .held:
                 continue
             case .unavailable:
@@ -444,12 +446,19 @@ extension Dispatch {
             let logURL = runsDir.appendingPathComponent("\(ledgerId).log")
             AuditDB.shared.setDispatchPaths(id: ledgerId, runLogPath: logURL.path, worktree: worktreePath)
 
-            // Non-argv prompt delivery: persist the prompt beside the run log
-            // (it is the file for `file` mode; a debugging copy for `stdin`).
+            // Persist the prompt beside the run log at 0600: it is the file for
+            // `file` mode and a debugging copy for `stdin` and `argv` (#27: the
+            // ledger and run-log header no longer carry it). Only `file` and
+            // `stdin` fail the run when it cannot be written; for `argv` the
+            // copy is best-effort and the run proceeds.
             var finalArgv = argv
             var promptFile: String?
-            if promptVia != .argv {
-                let promptURL = runsDir.appendingPathComponent("\(ledgerId).prompt")
+            let promptURL = runsDir.appendingPathComponent("\(ledgerId).prompt")
+            if promptVia == .argv {
+                if (try? RunLogs.writePrivate(Data(prompt.utf8), to: promptURL)) != nil {
+                    promptFile = promptURL.path
+                }
+            } else {
                 do {
                     try RunLogs.writePrivate(Data(prompt.utf8), to: promptURL)
                 } catch {
@@ -469,6 +478,9 @@ extension Dispatch {
                                  worktree: worktreePath, branch: branchName,
                                  timeoutMinutes: agent.timeoutMinutes,
                                  envPolicy: AgentEnv.Policy.resolve(lane: agent, config: config),
+                                 displayCommand: Self.ledgerCommand(
+                                     template, via: promptVia,
+                                     promptFile: promptFile ?? "{promptFile}"),
                                  logPath: logURL.path,
                                  promptVia: promptVia,
                                  stdinPrompt: promptVia == .stdin ? prompt : nil,
@@ -531,6 +543,20 @@ extension Dispatch {
     private static func stripLanePrefix(_ note: String) -> String {
         guard let idx = note.firstIndex(of: ":") else { return note }
         return String(note[note.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Stands in for the rendered prompt wherever argv is recorded (ledger
+    /// `command` column, run-log header). The prompt itself is in
+    /// `runs/<ledgerId>.prompt`.
+    static let ledgerPromptMarker = "<prompt omitted>"
+
+    /// The argv template rendered with `ledgerPromptMarker` instead of the
+    /// prompt, joined for the ledger. For `stdin`/`file` this equals the
+    /// real argv (the prompt never appears there).
+    static func ledgerCommand(_ template: [String], via: AgentsConfig.PromptVia,
+                              promptFile: String) -> String {
+        renderArgv(template, prompt: ledgerPromptMarker, via: via, promptFile: promptFile)
+            .joined(separator: " ")
     }
 
     /// Substitute the prompt into an argv template according to `promptVia`.

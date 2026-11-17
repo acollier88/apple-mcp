@@ -101,6 +101,9 @@ struct Dispatch: AsyncParsableCommand {
         let timeoutMinutes: Int?
         /// envMode / envPassthrough / lane env, applied by `AgentEnv.build`.
         let envPolicy: AgentEnv.Policy
+        /// argv with the prompt replaced by `ledgerPromptMarker`, for the
+        /// run-log header (the ledger row stores the same shape).
+        let displayCommand: String
         let logPath: String
         /// How Phase B hands the prompt over (see AgentsConfig.Agent.promptVia).
         var promptVia: AgentsConfig.PromptVia = .argv

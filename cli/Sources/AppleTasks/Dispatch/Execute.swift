@@ -49,7 +49,7 @@ extension Dispatch {
         # task \(spec.taskId): \(spec.title)
         \(seat.logLine)
         \(envLine)
-        # \(spec.argv.joined(separator: " "))\n\n
+        # \(spec.displayCommand)\n\n
         """.utf8))
         defer { try? logHandle?.close() }
 
