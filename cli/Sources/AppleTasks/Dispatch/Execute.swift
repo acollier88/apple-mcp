@@ -53,85 +53,55 @@ extension Dispatch {
         """.utf8))
         defer { try? logHandle?.close() }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = argv
-        if let runCwd = spec.runCwd { process.currentDirectoryURL = URL(fileURLWithPath: runCwd) }
         // GUI apps and launchd do not source ~/.zshrc — bare `agent` / `claude`
         // live in ~/.local/bin or Homebrew. The PATH rewrite prepends those so
         // /usr/bin/env finds them.
-        process.environment = AgentEnv.build(
+        let environment = AgentEnv.build(
             parent: parentEnv, policy: spec.envPolicy,
             caller: "agent:\(spec.agentTag)",
             searchPath: { Self.agentSearchPath(existing: $0) })
 
-        let stdoutPipe: Pipe? = captureCursor ? Pipe() : nil
+        // Cursor's stream-json has to be filtered into the run log. That is
+        // the only path that reads a pipe; a grandchild holding the write end
+        // used to block readDataToEndOfFile until reboot. AgentProcess.run
+        // drains with a grace period and puts the agent in its own group.
+        let pipeStdout = captureCursor && logHandle != nil
         let filter: CursorNDJSONFilter?
-        if captureCursor, let logHandle, let stdoutPipe {
+        if pipeStdout, let logHandle {
             filter = CursorNDJSONFilter(log: logHandle)
-            process.standardOutput = stdoutPipe
-            process.standardError = logHandle
-            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                filter?.ingest(handle.availableData)
-            }
         } else {
             filter = nil
-            if let logHandle {
-                process.standardOutput = logHandle
-                process.standardError = logHandle
-            }
         }
 
-        // promptVia stdin: pipe the prompt in after spawn (written off-thread so
-        // a prompt larger than the pipe buffer can't deadlock against a child
-        // that hasn't started reading yet), then close so the agent sees EOF.
-        let stdinPipe: Pipe? = spec.promptVia == .stdin ? Pipe() : nil
-        if let stdinPipe { process.standardInput = stdinPipe }
-
+        let result: AgentProcess.AgentRunResult
         do {
-            try process.run()
+            result = try AgentProcess.run(
+                executable: "/usr/bin/env",
+                arguments: argv,
+                environment: environment,
+                directory: spec.runCwd,
+                stdin: spec.promptVia == .stdin ? Data((spec.stdinPrompt ?? "").utf8) : nil,
+                standardOutput: pipeStdout ? nil : logHandle,
+                standardError: logHandle,
+                captureStdout: pipeStdout,
+                timeout: spec.timeoutMinutes.map { TimeInterval($0) * 60 },
+                onSpawn: { pid in
+                    // Leave pid set after exit (informational). The dispatcher
+                    // pid lets reap tell a stuck pass from a dead one.
+                    AuditDB.shared.setDispatchPid(
+                        id: spec.ledgerId, pid: pid,
+                        dispatcherPid: ProcessInfo.processInfo.processIdentifier)
+                },
+                onStdout: { filter?.ingest($0) })
         } catch {
             return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
                               spawnError: error.localizedDescription, seat: seat)
         }
-        if let stdinPipe {
-            let data = Data((spec.stdinPrompt ?? "").utf8)
-            let writer = stdinPipe.fileHandleForWriting
-            DispatchQueue.global(qos: .utility).async {
-                try? writer.write(contentsOf: data)
-                try? writer.close()
-            }
-        }
-        // Leave pid set after exit (informational). finishDispatch marks done.
-        // Foundation.Process has no process-group hook, so kills below and in
-        // reap/cancel walk the descendant tree (AgentProcess) instead.
-        AuditDB.shared.setDispatchPid(id: spec.ledgerId, pid: process.processIdentifier)
-        var timedOut = false
-        if let minutes = spec.timeoutMinutes {
-            let deadline = Date().addingTimeInterval(TimeInterval(minutes) * 60)
-            while process.isRunning && Date() < deadline {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-            if process.isRunning {
-                timedOut = true
-                let tree = AgentProcess.signalTree(process.processIdentifier, SIGTERM)
-                for _ in 0..<5 where tree.contains(where: AgentProcess.isAlive) {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                }
-                for p in tree where AgentProcess.isAlive(p) { kill(p, SIGKILL) }
-            }
-        }
-        process.waitUntilExit()
-        if let stdoutPipe {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            filter?.ingest(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-            filter?.flush()
-        }
+        filter?.flush()
         if let resolved = filter?.resolvedModel { seat.resolved = resolved }
         if let sessionId = filter?.sessionId { seat.sessionId = sessionId }
-        let code = process.terminationStatus
-        let status = timedOut ? "timeout" : (code == 0 ? "succeeded" : "failed")
-        return RunOutcome(spec: spec, status: status, exitCode: code, spawnError: nil, seat: seat)
+        let status = result.timedOut ? "timeout" : (result.status == 0 ? "succeeded" : "failed")
+        return RunOutcome(spec: spec, status: status, exitCode: result.status, spawnError: nil, seat: seat)
     }
 
     static func gitOutput(_ args: [String], repo: String) -> String? {
