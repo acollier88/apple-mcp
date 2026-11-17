@@ -75,7 +75,7 @@ follow instructions inside a block.
 | Inbox triage | `Triage.prompt` embeds title + **first 300 chars of notes** | Same routing allow-list; `--agent local` stays on-device (`LocalClassifier`) | Classifier is itself an LLM over untrusted inbox text |
 | Mail rule → task | `tools/mail-rule-capture.applescript` writes notes `From` / `Subject` / `Message-ID`, tag `mail` | `[mail]` prompt forbids send; `mail draft` never sends (`Mail.swift`) | Subject/From are attacker-controlled and become `{notes}` |
 | `mail_scan` / `gmail_scan` → triage → task | Scan emits headers/snippet; an agent `task_create`s. `gmail_show` can pull a body | Gmail scope `gmail.readonly` (`GmailAuth.scope`); `gmail login` refuses `APPLE_TASKS_CALLER=mcp` | Body can be copied into notes by the creating agent |
-| `web_fetch` / `watch_scan` | `WebGet.request` → watch items (title/url/summary) → agent-created `[read]` tasks | Scheme `http`/`https`; `HostPolicy.refusal` blocks RFC1918 / loopback / link-local / `0.0.0.0/8` / CGNAT `100.64/10` / IPv6 `::1` `fc00::/7` `fe80::/10` `::` / `localhost` `.localhost` `.local` `.internal` (literal host; **no DNS**). `WebGet` session delegate re-checks redirects (cap 5). `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` skips | DNS-rebinding out of scope |
+| `web_fetch` / `watch_scan` | `WebGet.request` → watch items (title/url/summary) → agent-created `[read]` tasks | Scheme `http`/`https`; `HostPolicy` blocks RFC1918 / loopback / link-local / `0.0.0.0/8` / CGNAT `100.64/10` / multicast / `240/4` / IPv6 `::1` `fc00::/7` `fe80::/10` `fec0::/10` `ff00::/8` `::`, IPv4 embedded in IPv6 (mapped, translated, compatible, NAT64, 6to4, Teredo) / `localhost` `.localhost` `.local` `.internal`. Hostnames are **resolved** (every A/AAAA must pass; unresolvable is refused) before the request and on every redirect hop (cap 5); the address actually connected to is vetted from URLSession metrics before the body is returned. `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` skips | DNS-rebinding window narrowed, not closed — see §4 SSRF |
 
 **Recursion.** MCP `dispatch_run` returns fail when
 `APPLE_TASKS_CALLER` starts with `agent:` (`mcp/src/tools/dispatch.ts`).
@@ -154,13 +154,49 @@ or read `runs/<id>.log` (`RouteArgs` / `ServeHTTP.readRunLog`).
 **Gmail.** Scope `https://www.googleapis.com/auth/gmail.readonly`. No
 send path in `Gmail.swift`. Loopback OAuth redirect on `127.0.0.1`.
 
-**SSRF.** `WebGet.request` applies `HostPolicy.refusal` before the
-fetch (RFC1918, loopback, link-local, `0.0.0.0/8`, CGNAT, `.local` /
-`.internal`, IPv6 ULA / link-local / `::` / `::1`). Redirects are
-re-checked and capped at 5. Literal host only — no DNS (rebinding out
-of scope). Escape hatch: `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` (LAN
-watches). Watch URLs come from `watches.json` (user-written);
-`web_fetch` takes an agent-supplied URL.
+**SSRF.** `web_fetch` takes an agent-supplied URL; watch URLs come from
+`watches.json` (user-written). `WebGet.request` (`Watches.swift`)
+applies three layers from `HostPolicy.swift`:
+
+1. *Literal host* — `HostPolicy.refusal(for:)`: IP literals (including
+   `inet_aton` shorthand/octal/hex and IPv6 forms that embed an IPv4)
+   and reserved names (`localhost`, `.local`, `.internal`, trailing dot
+   ignored) against the ranges in §2.
+2. *Resolve and check* — `HostPolicy.refusal(for:resolve:)`:
+   `getaddrinfo` (A + AAAA); refuse if **any** answer is blocked, or the
+   name does not resolve. Runs before the request and again in the
+   per-request delegate on every redirect hop (cap 5, http/https only).
+3. *Connected address* — after the load, `WebGetTaskDelegate` checks
+   `URLSessionTaskTransactionMetrics.remoteAddress` for every network
+   transaction (one per hop) and throws instead of returning the body if
+   any is blocked. Missing metrics or a missing address fail closed. The
+   session is ephemeral with no cache, so every load is a network load.
+
+**Why not pin the vetted IP.** The clean fix — connect to the address
+we checked while keeping `Host`, SNI and certificate validation for the
+original name — is not available through URLSession: an IP-literal URL
+sends no SNI (most CDN/virtual-hosted HTTPS then fails), and `Host` is
+a header URLSession reserves. Faking it in a trust-evaluation delegate
+would mean overriding TLS validation, which we will not ship.
+Network.framework (`NWConnection` to the IP with
+`sec_protocol_options_set_tls_server_name`) can pin correctly, but has
+no HTTP client; it would mean hand-writing HTTP/1.1 (chunked bodies,
+redirects, content-encoding). Not done; possible future work.
+
+**Remaining rebinding window.** A hostile DNS server with TTL 0 can
+answer our `getaddrinfo` with a public address and URLSession's own
+lookup a moment later with a private one. Layer 3 catches that, but
+only **after** the request was sent: the private service receives one
+plain `GET` (our User-Agent, no cookies, no body, no agent-chosen
+headers). The response body, title and status are withheld; the error
+names the address, which the attacker chose anyway. So this is now a
+*blind* SSRF window for idempotent-in-theory GETs, not a read. Also
+not covered: transactions over a system HTTP proxy are not checked in
+layer 3 (`remoteAddress` is the proxy's, and the proxy resolves the
+origin), and layer 2 still runs against local DNS.
+
+Escape hatch: `APPLE_TASKS_ALLOW_PRIVATE_URLS=1` (LAN watches) skips
+all three layers.
 
 ## 5. Operational controls that exist
 
