@@ -147,6 +147,7 @@
   "retryBackoffMinutes": 30,
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
+  "pendingReviewWorktreeDays": 0,
   "notifyOn": "failure",
   "modelPrefs": {
     "auto": [

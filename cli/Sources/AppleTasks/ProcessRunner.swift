@@ -26,17 +26,20 @@ enum ProcessRunner {
     ///   - environment: full environment for the child; nil inherits ours.
     ///   - timeout: wall-clock budget from launch.
     ///   - killGrace: how long SIGTERM gets before SIGKILL.
+    ///   - directory: the child's working directory; nil inherits ours.
     /// - Throws: only when the executable cannot be launched. Non-zero exit
     ///   and timeouts are reported in the result.
     static func run(_ executable: URL, _ arguments: [String] = [],
                     stdin: Data? = nil,
                     environment: [String: String]? = nil,
                     timeout: TimeInterval,
-                    killGrace: TimeInterval = 2) throws -> ProcessResult {
+                    killGrace: TimeInterval = 2,
+                    directory: URL? = nil) throws -> ProcessResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         if let environment { process.environment = environment }
+        if let directory { process.currentDirectoryURL = directory }
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe

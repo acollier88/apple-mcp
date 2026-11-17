@@ -65,6 +65,9 @@ struct DigestOut: Codable {
     /// --suggest only (IDEAS #41): proposals from the on-device model.
     var suggestions: [SuggestionOut]?
     var suggestError: String?
+    /// True when this run sent the pending-review notification (banner + ntfy).
+    /// False when the same ledger ids and branches were already announced.
+    var pendingReviewNotified: Bool? = nil
 
     struct DispatchLine: Codable {
         let id: Int
@@ -80,7 +83,10 @@ struct Digest: AsyncParsableCommand {
         abstract: """
         Morning digest: agent activity since yesterday, dispatch outcomes, \
         tasks due today, today's calendar. Emits JSON; --note also writes it \
-        as a new Apple Note; --push also sends it to the configured ntfy topic.
+        as a new Apple Note; --push also sends it to the configured ntfy topic. \
+        Pending-review branches are listed with age. A notification fires when \
+        that set changes and stays quiet while the same ledger rows and \
+        branches are unchanged.
         """
     )
 
@@ -162,6 +168,8 @@ struct Digest: AsyncParsableCommand {
         if push {
             out.pushed = await Notifier.push(title: Self.noteTitle(), body: Self.pushSummary(out))
         }
+        out.pendingReviewNotified = await PendingReview.notifyIfChanged(
+            items: pendingReview, db: .shared)
         emit(out)
     }
 
@@ -181,8 +189,21 @@ struct Digest: AsyncParsableCommand {
             + "\(d.events.count) events"
         if !d.pendingReview.isEmpty {
             text += ", \(d.pendingReview.count) awaiting review"
+            if let oldest = oldestPendingAge(d.pendingReview) {
+                text += " (oldest \(oldest))"
+            }
         }
         return text
+    }
+
+    /// Age label of the earliest `finishedAt` among pending reviews.
+    static func oldestPendingAge(_ items: [PendingReviewItem]) -> String? {
+        let dated: [(Date, String)] = items.compactMap { item in
+            guard let finished = item.finishedAt,
+                  let date = ISO8601DateFormatter().date(from: finished) else { return nil }
+            return (date, item.age)
+        }
+        return dated.min(by: { $0.0 < $1.0 })?.1
     }
 
     static func html(_ d: DigestOut) -> String {
@@ -273,6 +294,6 @@ struct Digest: AsyncParsableCommand {
         let ahead = item.commitsAhead > 500
             ? "stale — base history rewritten"
             : "\(item.commitsAhead) commit\(item.commitsAhead == 1 ? "" : "s")"
-        return "#\(item.id) \(item.agent) — \(title) — \(ahead): \(item.commits.first ?? "")"
+        return "#\(item.id) \(item.agent) — \(title) — \(item.age) — \(ahead): \(item.commits.first ?? "")"
     }
 }
