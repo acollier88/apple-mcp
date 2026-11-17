@@ -203,7 +203,7 @@ export function registerDispatchTools(server: McpServer): void {
   });
 
   const runLogDescription =
-    "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). " +
+    "Read a dispatch run's captured agent output (~/Library/Application Support/apple-tasks/runs/<ledger_id>.log). " +
     "Header lines record provider/model (and Cursor Auto's resolved model). " +
     "Returns the last `tail` lines (reads at most the final 256 KB).";
   const runLogAnnotations = { title: "Read run log", readOnlyHint: true } as const;

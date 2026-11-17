@@ -23,7 +23,7 @@ extension Dispatch {
                                   exitCode: outcome.exitCode, branch: spec.branch,
                                   repo: spec.repo, logPath: spec.logPath,
                                   seat: outcome.seat, credentialFlags: credentialFlags)
-        AuditDB.shared.finishDispatch(id: spec.ledgerId,
+        let ledgerOK = AuditDB.shared.finishDispatch(id: spec.ledgerId,
                                       status: outcome.status == "succeeded" ? "succeeded" : outcome.status == "timeout" ? "timeout" : "failed",
                                       exitCode: outcome.exitCode ?? -1,
                                       summary: trailerText.components(separatedBy: "\n").first)
@@ -72,6 +72,9 @@ extension Dispatch {
         if let flagged = CredentialScan.summary(credentialFlags) {
             action += " [\(flagged)]"
         }
+        if !ledgerOK {
+            action += " [ledger update failed]"
+        }
         return DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
                               cwd: spec.runCwd, action: action,
                               exitCode: outcome.exitCode.map(Int.init),
@@ -89,12 +92,26 @@ extension Dispatch {
         return "open-untagged"
     }
 
-    /// Emit the pass report, or `[]` under `--quiet` when this pass only
-    /// repeated the same GC/skip noise as the previous one.
-    func emitReports(_ reports: [DispatchReport]) {
+    /// What one dispatch pass should write to stdout.
+    /// `--quiet` prints nothing for an empty pass, and nothing when the pass
+    /// only repeats the previous GC/skip/gate/schedule noise
+    /// (`dispatch.lastReportHash`). A suppressed pass does not refresh that
+    /// hash. Real failures, dispatches, and the first sighting of new noise
+    /// are printed. `skipped: ledger` is not noise.
+    enum ReportEmission: Equatable {
+        case silent
+        case emit(hash: String)
+    }
+
+    static func reportHash(_ reports: [DispatchReport]) -> String {
         let key = reports.map { $0.action + $0.taskId }.sorted().joined()
-        let hash = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        let noiseOnly = reports.allSatisfy { report in
+        return SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Empty, or only GC/skip/gate/schedule lines. `skipped: ledger` is a real
+    /// line (the ledger refused the claim) and is not noise.
+    static func isRepeatableNoise(_ reports: [DispatchReport]) -> Bool {
+        reports.allSatisfy { report in
             let action = report.action
             if action.hasPrefix("skipped: ledger") { return false }
             return action.hasPrefix("gc:")
@@ -102,12 +119,54 @@ extension Dispatch {
                 || action.hasPrefix("gated:")
                 || action.hasPrefix("scheduled:")
         }
-        if quiet, noiseOnly, AuditDB.shared.getState("dispatch.lastReportHash") == hash {
-            emit([DispatchReport]())
+    }
+
+    static func reportEmission(
+        reports: [DispatchReport],
+        quiet: Bool,
+        lastReportHash: String?
+    ) -> ReportEmission {
+        let hash = reportHash(reports)
+        // An empty quiet pass is idle even when the previous hash differs
+        // (the first idle cycle after real work). Repeat noise stays quiet
+        // only when it matches the last hash we actually printed.
+        if Self.suppressQuietStdout(quiet: quiet, reportCount: reports.count,
+                                    noiseOnly: isRepeatableNoise(reports),
+                                    lastHash: lastReportHash, hash: hash) {
+            return .silent
+        }
+        return .emit(hash: hash)
+    }
+
+    /// Emit the pass report. Under `--quiet`, an idle pass (empty, or only
+    /// the same GC/skip noise as last time) prints nothing — not `[]`. A dry
+    /// run never writes `dispatch.lastReportHash`.
+    func emitReports(_ reports: [DispatchReport]) {
+        if dryRun {
+            emit(reports)
             return
         }
-        AuditDB.shared.setState("dispatch.lastReportHash", hash)
-        emit(reports)
+        switch Self.reportEmission(
+            reports: reports,
+            quiet: quiet,
+            lastReportHash: AuditDB.shared.getState("dispatch.lastReportHash")
+        ) {
+        case .silent:
+            return
+        case .emit(let hash):
+            AuditDB.shared.setState("dispatch.lastReportHash", hash)
+            emit(reports)
+        }
+    }
+
+    /// True when `--quiet` should write no stdout. Empty passes are idle even
+    /// when the stored hash differs. Repeat noise stays quiet only when it
+    /// matches the last hash we actually printed.
+    static func suppressQuietStdout(quiet: Bool, reportCount: Int, noiseOnly: Bool,
+                                     lastHash: String?, hash: String) -> Bool {
+        guard quiet else { return false }
+        if reportCount == 0 { return true }
+        return noiseOnly && lastHash == hash
     }
 
     /// One-line run outcome for the ledger, plus (for succeeded worktree
@@ -132,24 +191,45 @@ extension Dispatch {
     /// Append the run trailer to the task notes, re-fetching first because
     /// the agent may have edited the task meanwhile. Best-effort.
     static func appendNotesTrailer(store: Store, taskId: String, trailer: String) async {
-        guard let current = try? await store.reminder(id: taskId) else { return }
+        let current: EKReminder
+        do {
+            current = try await store.reminder(id: taskId)
+        } catch {
+            Self.passLog("notes trailer skipped for \(taskId): \(error.localizedDescription)")
+            return
+        }
         let existing = current.notes.map { $0.isEmpty ? "" : $0 + "\n\n" } ?? ""
         current.notes = existing + trailer
-        try? store.save(current)
+        do {
+            try store.save(current)
+        } catch {
+            Self.passLog("notes trailer save failed for \(taskId): \(error.localizedDescription)")
+        }
     }
 
     /// Swap this Mac's [dispatched] claim for its [failed] tag, re-fetching
     /// first because the agent may have edited it meanwhile. Another Mac's
     /// claim tags are never touched (IDEAS #13).
     func markFailed(store: Store, taskId: String) async {
-        guard let current = try? await store.reminder(id: taskId) else { return }
+        let current: EKReminder
+        do {
+            current = try await store.reminder(id: taskId)
+        } catch {
+            Self.passLog("mark failed skipped for \(taskId): \(error.localizedDescription)")
+            return
+        }
         var (tags, title) = Tags.parse(current.title ?? "")
         tags.removeAll { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
         if !tags.contains(where: { ClaimTags.isFailed($0) && ClaimTags.isOwn($0) }) {
             tags.append(ClaimTags.failed)
         }
         current.title = Tags.compose(tags: tags, title: title)
-        try? store.save(current)
+        do {
+            try store.save(current)
+        } catch {
+            Self.passLog("failed-tag save failed for \(taskId): \(error.localizedDescription)")
+            return
+        }
         // Native side follows the title: drop this Mac's #dispatched chip,
         // paint #failed once.
         _ = NativeTags.remove(tags: [ClaimTags.dispatched, "dispatched"], externalId: current.calendarItemExternalIdentifier)
@@ -165,7 +245,12 @@ extension Dispatch {
         let hadClaim = tags.contains { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
         tags.removeAll { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }
         current.title = Tags.compose(tags: tags, title: title)
-        try? store.save(current)
+        do {
+            try store.save(current)
+        } catch {
+            Self.passLog("shed claim save failed for \(taskId): \(error.localizedDescription)")
+            return false
+        }
         _ = NativeTags.remove(tags: [ClaimTags.dispatched, "dispatched"],
                               externalId: current.calendarItemExternalIdentifier)
         return hadClaim

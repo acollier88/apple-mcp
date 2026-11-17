@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z, type ZodRawShape, type ZodTypeAny } from "zod";
@@ -18,7 +18,7 @@ const BUILD_BIN = path.resolve(
 /** Installed copy when present, otherwise the SwiftPM build product. */
 export function resolveBin(
   env: NodeJS.ProcessEnv = process.env,
-  exists: (candidate: string) => boolean = fsSync.existsSync,
+  exists: (candidate: string) => boolean = existsSync,
 ): string {
   if (env.APPLE_TASKS_BIN) return env.APPLE_TASKS_BIN;
   const installed = path.join(os.homedir(), ".local/bin/apple-tasks");
@@ -28,9 +28,14 @@ export function resolveBin(
 
 export const BIN = resolveBin();
 
-/** `~/.config/apple-tasks` — the CLI's state dir; overridable for tests. */
+/** `~/.config/apple-tasks` — config, ledger, secrets; overridable for tests. */
 export const CONFIG_DIR =
   process.env.APPLE_TASKS_CONFIG_DIR ?? path.join(os.homedir(), ".config/apple-tasks");
+
+/** Worktrees, scratch, and run logs. A sandbox can deny CONFIG_DIR. */
+export const SUPPORT_DIR =
+  process.env.APPLE_TASKS_SUPPORT_DIR ??
+  path.join(os.homedir(), "Library", "Application Support", "apple-tasks");
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const STDIN_TIMEOUT_MS = 60_000;
@@ -39,7 +44,9 @@ export const STDIN_TIMEOUT_MS = 60_000;
 export const RUN_LOG_READ_CAP = 256 * 1024;
 
 export function runLogPath(ledgerId: number | string): string {
-  return path.join(CONFIG_DIR, "runs", `${ledgerId}.log`);
+  const modern = path.join(SUPPORT_DIR, "runs", `${ledgerId}.log`);
+  const legacy = path.join(CONFIG_DIR, "runs", `${ledgerId}.log`);
+  return existsSync(modern) ? modern : legacy;
 }
 
 /** Last `tail` lines of a run log, reading at most RUN_LOG_READ_CAP bytes. */

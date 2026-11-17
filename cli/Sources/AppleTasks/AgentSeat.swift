@@ -77,14 +77,16 @@ enum AgentSeat {
 /// resolved Auto model from the system/init event.
 final class CursorNDJSONFilter: @unchecked Sendable {
     private let lock = NSLock()
+    private let writeLock: NSLock
     private let log: FileHandle
     private var buf = Data()
     private(set) var resolvedModel: String?
     private(set) var sessionId: String?
     private var wroteResolved = false
 
-    init(log: FileHandle) {
+    init(log: FileHandle, writeLock: NSLock? = nil) {
         self.log = log
+        self.writeLock = writeLock ?? NSLock()
     }
 
     func ingest(_ data: Data) {
@@ -176,8 +178,9 @@ final class CursorNDJSONFilter: @unchecked Sendable {
     }
 
     private func write(_ text: String) {
-        if let data = text.data(using: .utf8) {
-            log.write(data)
-        }
+        guard let data = text.data(using: .utf8), !data.isEmpty else { return }
+        writeLock.lock()
+        log.write(data)
+        writeLock.unlock()
     }
 }

@@ -14,9 +14,11 @@ reports the source. Roadmap #16 (post-P7 `/security-review`) is still open.
 API keys in `llm.json` / `agents.json` `env` / `launchd.env`; ntfy topic
 and `approvalsReplyTopic` (`notify.json`); Gmail `credentials.json` +
 `token.json`; Find My `findmy/account.json`; `serve.json` token; the
-ledger `apple-tasks.db` (`Audit.swift`); git worktrees under
-`~/.config/apple-tasks/worktrees/`; run logs and `.prompt` files under
-`runs/`.
+ledger `apple-tasks.db` (`Audit.swift`); git worktrees, scratch dirs, and
+run logs / `.prompt` files under
+`~/Library/Application Support/apple-tasks/` (`worktrees/`, `scratch/`,
+`runs/`). Config and secrets stay in `~/.config/apple-tasks/` so a sandbox
+can deny that directory without denying the workspace.
 
 **Principals.** The user; launchd (`tools/launchd/run-with-env.sh`); the
 dispatcher (`Dispatch.plan` / `Dispatch.execute`); dispatched agents;
@@ -120,11 +122,11 @@ below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`) before that.
 | Launchd extras | `launchd.env` | `644` | `run-with-env.sh` `set -a` / `source` | stays; `doctor.secrets` flags each `export NAME=value` as `launchd.env:NAME`. Agents inherit these unless the lane's `envMode` drops them | Wrapper comments cite `CURSOR_API_KEY`, `ANTHROPIC_API_KEY`. This Mac's file is comments only |
 | Find My session | `findmy/account.json` | `600` (`chmod` in `findmy-sidecar.py`) | sidecar `load_account` | not in P7 list | §2.7 asset; `ani_libs.bin` is `644` |
 | Ledger / audit | `apple-tasks.db` (+ WAL/SHM) | `600` from #30: `AuditDB.init` creates it `0600` (SQLite copies that to `-wal`/`-shm`) and tightens existing files on open | `AuditDB` | — | Caller, command (prompt replaced by `<prompt omitted>` for rows written since #27; older rows may still hold argv prompts), approvals |
-| Run / prompt logs | `runs/<id>.log`, `.prompt` | `600` (`RunLogs.create` / `writePrivate` + `setAttributes`) | `Dispatch.execute`, `plan` | — | Agent stdout may echo secrets |
+| Run / prompt logs | `~/Library/Application Support/apple-tasks/runs/<id>.log`, `.prompt` | `600` (`RunLogs.create` / `writePrivate` + `setAttributes`) | `Dispatch.execute`, `plan` | — | Agent stdout may echo secrets. Not beside the ledger, so a sandbox can deny `~/.config/apple-tasks/` |
 
 Config dir: `AuditDB.init` (opened by nearly every command) creates it
 `700` and tightens an existing `755` on open (best effort, never fatal).
-`runs/` is created `700` (`RunLogs.ensureDirectory`). Older `runs/*` and
+`runs/` is created `700` under Application Support (`RunLogs.ensureDirectory`). Older `runs/*` and
 `logs/*` files are only fixed by `doctor --fix-modes`. Extra file on this Mac:
 `hermes-api-server.key` (`600`) — not referenced by this repo.
 
@@ -243,7 +245,7 @@ Before making the repo public or sharing the MCP config:
 3. Delete local `agents.json.bak-*` (this Mac has `agents.json.bak-p3`)
    before any copy/screenshot. Same for `~/.config/apple-tasks/` — never
    commit it (README already says so).
-4. Treat `~/.config/apple-tasks/runs/` and `logs/` as secret-bearing
+4. Treat `~/Library/Application Support/apple-tasks/runs/` and `~/.config/apple-tasks/logs/` as secret-bearing
    (agent stdout; launchd captures CLI JSON). New run logs are `600`;
    existing ones and `logs/` may be `644` — run `apple-tasks doctor
    --fix-modes` once and check `fixedModes`.

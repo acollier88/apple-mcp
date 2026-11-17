@@ -185,8 +185,7 @@ public final class ServeHTTP: @unchecked Sendable {
     }
 
     private func readRunLog(id: String, tailBytes: Int) -> HTTPResponse {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/apple-tasks/runs/\(id).log")
+        let url = Self.runLogURL(id: id)
         do {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
@@ -199,6 +198,24 @@ public final class ServeHTTP: @unchecked Sendable {
         } catch {
             return .error(404, "run log not found", code: "not_found")
         }
+    }
+
+    /// Run logs live under Application Support. Fall back to the config dir
+    /// for a log that has not been migrated yet.
+    static func runLogURL(id: String) -> URL {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser
+        func root(_ key: String, _ fallback: String) -> URL {
+            if let raw = ProcessInfo.processInfo.environment[key], !raw.isEmpty {
+                return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
+            }
+            return home.appendingPathComponent(fallback, isDirectory: true)
+        }
+        let modern = root("APPLE_TASKS_SUPPORT_DIR", "Library/Application Support/apple-tasks")
+            .appendingPathComponent("runs/\(id).log")
+        if fm.fileExists(atPath: modern.path) { return modern }
+        return root("APPLE_TASKS_CONFIG_DIR", ".config/apple-tasks")
+            .appendingPathComponent("runs/\(id).log")
     }
 
     private func authorized(_ req: HTTPRequest) -> Bool {
