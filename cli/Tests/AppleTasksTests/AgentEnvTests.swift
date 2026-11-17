@@ -93,6 +93,22 @@ final class AgentEnvTests: XCTestCase {
         XCTAssertEqual(AgentEnv.Policy.resolve(lane: nil, config: nil).mode, .inherit)
     }
 
+    func testExampleConfigDecodesWithRecommendedEnv() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("examples/agents.json")
+        let config = try JSONDecoder().decode(AgentsConfig.self, from: Data(contentsOf: url))
+        XCTAssertEqual(config.envMode, .scrubSecrets)
+        XCTAssertEqual(config.agents["cursor"]?.envPassthrough, ["CURSOR_API_KEY"])
+        XCTAssertEqual(config.agents["claude"]?.envPassthrough, ["ANTHROPIC_API_KEY"])
+        for (tag, lane) in config.agents {
+            if let template = lane.promptTemplate {
+                XCTAssertTrue(template.contains(PromptTemplate.begin("TASK NOTES")), tag)
+            }
+        }
+    }
+
     func testUnknownEnvModeRejected() {
         let json = #"{"agents": {"a": {"command": ["x"], "envMode": "sandbox"}}}"#
         XCTAssertThrowsError(try JSONDecoder().decode(AgentsConfig.self, from: Data(json.utf8)))

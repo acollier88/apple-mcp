@@ -31,29 +31,46 @@ user's Reminders access (same TCC as the CLI). No sockets, no
 sections, and attachments; it cannot phone home by itself.
 
 **Central assumption.** `Dispatch.execute` spawns `/usr/bin/env` with
-`ProcessInfo.processInfo.environment` plus lane `env`
-(`Execute.swift`), `PATH` rewritten by `Dispatch.agentSearchPath`, and
-`APPLE_TASKS_CALLER=agent:<tag>`. `worktree: true` isolates the *git
-checkout* (`Plan.swift` `git worktree add`). It does **not** isolate
-env inheritance, `$HOME`, or Keychain. Example lanes disable the
-agent's own sandbox (`examples/agents.json`: cursor `--sandbox
-disabled`).
+`AgentEnv.build` over `ProcessInfo.processInfo.environment`
+(`AgentEnv.swift`): filtered by `envMode` (lane, else top-level, else
+`inherit`) and `envPassthrough`, then lane `env`,
+`APPLE_TASKS_CALLER=agent:<tag>`, and `PATH` rewritten by
+`Dispatch.agentSearchPath`. `Triage.runAgent` (triage and suggest seats)
+uses the same filter without the caller/PATH steps. `inherit` is the
+default, so a config that sets nothing still hands agents the whole
+dispatcher env, `launchd.env` included. `scrubSecrets` drops variables by
+**name** pattern only; `allowlist` keeps a small base set. Neither stops
+an agent reading files: `worktree: true` isolates the *git checkout*
+(`Plan.swift` `git worktree add`), not `$HOME` or Keychain. Example lanes
+disable the agent's own sandbox (`examples/agents.json`: cursor
+`--sandbox disabled`).
 
 ## 2. Prompt-injection surface
 
 `Dispatch.plan` renders `agent.promptTemplate` (default
 `AgentsConfig.defaultPromptTemplate`) with `{id}`, `{list}`, `{title}`,
-`{notes}`, `{claimTag}`. Delivery is `promptVia`: `argv` (default —
-visible in `ps` and stored in the ledger `command` column via
-`claimDispatch`), `stdin` (piped after spawn), or `file`
-(`runs/<id>.prompt`). See `Dispatch.renderArgv`.
+`{notes}`, `{claimTag}` in one pass (`PromptTemplate.render`; values are
+never re-scanned). The default template puts title and notes inside
+`<<<BEGIN/END UNTRUSTED TASK TITLE|NOTES>>>` blocks, says their contents
+are data, and forbids reading credential/keychain/token/SSH/dotenv files.
+`PromptTemplate.neutralise` breaks `<<<` / `>>>` runs in title, notes,
+list, attachment paths and the research URL, so task text cannot close a
+block early. Custom templates without the markers render as before.
+Delivery is `promptVia`: `argv` (default — visible in `ps`), `stdin`
+(piped after spawn), or `file`. Every mode writes `runs/<id>.prompt`
+(`600`); the ledger `command` column and run-log header carry
+`Dispatch.ledgerCommand` (prompt replaced by `<prompt omitted>`). See
+`Dispatch.renderArgv`.
+
+Delimiters are framing for the model, not enforcement: a model can still
+follow instructions inside a block.
 
 | Source | Lands in | Mitigations today | Gaps |
 |---|---|---|---|
-| Siri / watch title | `{title}` in `plan` | Lane tag must match `agents.json` or `[auto]` (`Plan.swift`); `requireAutoTag` default true | Title is unsanitized attacker text |
-| Task notes | `{notes}` (full, or `(none)`) | `promptVia` `stdin`/`file` keeps it off argv (`Config.swift` `PromptVia`) | Default is still `argv`; no quoting/delimiters |
-| Attachments | Extra prompt lines: `kind` + `fileURL` or `url` (`NativeTags.attachments`, first 10) | Paths only, not file bytes | Agent with FDA can read those paths |
-| Reminder URL | `{url}` is **not** in the default template. `[research]` appends `URL to research:` (`Plan.swift`) | Research prompt says "do not code" | Other tasks' URL is fingerprint-only (`TaskFingerprint.of`) |
+| Siri / watch title | `{title}` in `plan` | Lane tag must match `agents.json` or `[auto]` (`Plan.swift`); `requireAutoTag` default true; untrusted block in the default template; marker runs neutralised; single-pass render | Model may still obey it; custom templates without markers get no framing |
+| Task notes | `{notes}` (full, or `(none)`) | Same block/neutralise/single-pass; `promptVia` `stdin`/`file` keeps it off argv; never stored in the ledger | Default `promptVia` is still `argv` (visible in `ps` for the run's lifetime) |
+| Attachments | Extra prompt lines: `kind` + `fileURL` or `url` (`NativeTags.attachments`, first 10), inside an `UNTRUSTED ATTACHMENTS` block | Paths only, not file bytes; neutralised | Agent with FDA can read those paths |
+| Reminder URL | `{url}` is **not** in the default template. `[research]` appends `URL to research:` (`Plan.swift`), neutralised; the raw title is no longer repeated outside the block | Research prompt says "do not code" and to treat fetched text as data | Other tasks' URL is fingerprint-only (`TaskFingerprint.of`) |
 | Note-triage | `Triage.notesPrompt` embeds note `name`+`body`; applied tasks get notes `from note: <name>` | Classifier lanes excluded from routing (`classifierTags`); `Tags.validate` on tags; list must be a plan list | `Triage.swift` always argv-substitutes `{prompt}` — ignores `promptVia` |
 | Inbox triage | `Triage.prompt` embeds title + **first 300 chars of notes** | Same routing allow-list; `--agent local` stays on-device (`LocalClassifier`) | Classifier is itself an LLM over untrusted inbox text |
 | Mail rule → task | `tools/mail-rule-capture.applescript` writes notes `From` / `Subject` / `Message-ID`, tag `mail` | `[mail]` prompt forbids send; `mail draft` never sends (`Mail.swift`) | Subject/From are attacker-controlled and become `{notes}` |
@@ -66,8 +83,9 @@ CLI `Dispatch.run` uses `Dispatch.recursionRefusal` — live dispatch
 throws; `--dry-run` and `--reap-only` stay allowed.
 
 **Not isolated.** Inherited env (including `launchd.env` via
-`run-with-env.sh` `set -a`); the whole home directory; login Keychain;
-TCC of the dispatcher / MCP host. `maxConcurrent` and per-lane
+`run-with-env.sh` `set -a`) unless a lane sets `envMode`, and even then
+only by name; the whole home directory; login Keychain; TCC of the
+dispatcher / MCP host. `maxConcurrent` and per-lane
 `maxConcurrent` cap parallelism, not authority. `autoPoolExcluded`
 (`triage`, `local`, `doctor`, `heal`) only affects `[auto]` routing.
 
@@ -88,9 +106,9 @@ below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`).
 | Gmail `client_secret` | `gmail/credentials.json` | **not chmod'd in code** | `GmailAuth.loadClient` / `Client.resolvedClientSecret` | env `APPLE_TASKS_GMAIL_CLIENT_SECRET` → keychain `gmail.clientSecret` → file | Dir absent on this Mac; matches review §2.7 |
 | Gmail refresh blob | `gmail/token.json` | `600` on `GmailAuth.save` | `GmailAuth.loadToken` / `save` (rotation writes Keychain when `gmail.token` already exists) | keychain `gmail.token` → file; `GmailAuth.tokenSource` | `secret migrate --apply` deletes the file |
 | Lane `env` values | `agents.json` | `644` | `Dispatch.execute` overlay | stay in file; `doctor` flags `agents.json:env`; MCP redacts display | Wholesale API keys |
-| Launchd extras | `launchd.env` | `644` | `run-with-env.sh` `set -a` / `source` | stays; `doctor.secrets` flags each `export NAME=value` as `launchd.env:NAME` | Wrapper comments cite `CURSOR_API_KEY`, `ANTHROPIC_API_KEY`. This Mac's file is comments only |
+| Launchd extras | `launchd.env` | `644` | `run-with-env.sh` `set -a` / `source` | stays; `doctor.secrets` flags each `export NAME=value` as `launchd.env:NAME`. Agents inherit these unless the lane's `envMode` drops them | Wrapper comments cite `CURSOR_API_KEY`, `ANTHROPIC_API_KEY`. This Mac's file is comments only |
 | Find My session | `findmy/account.json` | `600` (`chmod` in `findmy-sidecar.py`) | sidecar `load_account` | not in P7 list | §2.7 asset; `ani_libs.bin` is `644` |
-| Ledger / audit | `apple-tasks.db` (+ WAL) | `644` | `AuditDB` | — | Caller, command (may include argv prompt), approvals |
+| Ledger / audit | `apple-tasks.db` (+ WAL) | `644` | `AuditDB` | — | Caller, command (prompt replaced by `<prompt omitted>` for rows written since #27; older rows may still hold argv prompts), approvals |
 | Run / prompt logs | `runs/<id>.log`, `.prompt` | `600` (`RunLogs.create` / `writePrivate` + `setAttributes`) | `Dispatch.execute`, `plan` | — | Agent stdout may echo secrets |
 
 Config dir itself is `755`, not `700`. `runs/` is created `700`
@@ -151,8 +169,10 @@ watches). Watch URLs come from `watches.json` (user-written);
 | Approvals | `approval_request` / `approval_check` / `approval_list`. **No MCP tool answers** (`mcp/src/tools/approvals.ts`). First answer wins; `approve answer` is CLI/human | Agents can still shell `apple-tasks approve answer`. Knowing the reply topic is enough to answer remotely. Prompt templates *ask* for approval; nothing in the CLI enforces it |
 | `claimGuard` | `"modified"` (default since 2026-09-16): any `[dispatched…]` blocks, plus skip if fingerprint matches last `open-claimed` success (`Dispatch.unchangedSinceSuccess`). `"running"`: tag check only | Does not constrain a live agent |
 | `dispatch-cancel` | SIGTERM/KILL tree (`AgentProcess`), row `cancelled`, shed own claim, no `[failed]` (`DispatchCancel`) | Human / MCP / HTTP; not automatic |
-| Run logs | stdout/stderr (Cursor NDJSON filtered) + argv header | New files `600` in a `700` `runs/` (`RunLogs`); older files stay `644` until re-chmod'd; served over MCP and HTTP; may contain secrets |
-| Audit DB | Every mutation + `APPLE_TASKS_CALLER` (`AuditDB.caller`) | `644`; `argv` prompt can land in `command` |
+| Run logs | stdout/stderr (Cursor NDJSON filtered) + header (argv with `<prompt omitted>`, env mode and dropped variable names) | New files `600` in a `700` `runs/` (`RunLogs`); older files stay `644` until re-chmod'd; served over MCP and HTTP; may contain secrets |
+| Agent env filter | `envMode` `inherit` (default) / `scrubSecrets` / `allowlist` + `envPassthrough` (`AgentEnv`) | Opt-in; name-based; does not cover files, Keychain or TCC |
+| Credential-path flag | Phase C `CredentialScan.scanLog` over the run log (≤ 1 MiB head + tail, header skipped): `.ssh/`, `gh/hosts.yml`, `.aws/credentials`, `.netrc`, `Keychains/`, `security find-*-password`, `launchd.env`, gmail/findmy secret files, `.env` → `cred-paths-in-log=` in trailer, ledger summary, notification, report | Flags only, after the fact; sees only what the agent printed; mentions are not proof of reads |
+| Audit DB | Every mutation + `APPLE_TASKS_CALLER` (`AuditDB.caller`) | `644`; dispatch `command` no longer carries the prompt (older rows may) |
 | `doctor.deployment` | launchd binary vs last `cli/` commit, dirty tree (`Doctor.deploymentStatus`) | Drift only; not a secret audit |
 | `doctor.secrets` | per-secret `source` / file mode (`Doctor.secretsStatus`); info issue `secrets-plaintext` (does not enqueue heals); `--fix-modes` | Does not move values — `secret migrate --apply` does |
 | Lane caps / gates | `maxConcurrent`, `conditions` (location, power, load, quiet hours, idle, blocking apps) | Availability, not sandboxing |

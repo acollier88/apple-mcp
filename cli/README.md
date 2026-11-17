@@ -260,9 +260,11 @@ available the task stays queued — it is not `[failed]`. Config at
       "worktree": true,
       "timeoutMinutes": 60,
       "maxConcurrent": 1,
+      "envPassthrough": ["ANTHROPIC_API_KEY"],
       "conditions": { "location": "home", "power": "ac", "maxLoad": 8 }
     }
   },
+  "envMode": "scrubSecrets",
   "places": { "home": { "lat": 30.46, "lon": -97.63, "radiusM": 200 } },
   "triage": { "agent": "triage", "inbox": "Reminders" },
   "jev": { "apiKeyEnv": "TYPESAFE_API_KEY", "applyConfidence": 0.7, "reviewConfidence": 0.45 },
@@ -423,12 +425,86 @@ the design):
   sees as the Choice criteria for that lane. Without it the lane option is
   just the tag, and Jev rarely clears `applyConfidence`.
 - **Prompt delivery** (`"promptVia"` per agent: `argv` default | `stdin` |
-  `file`) — `argv` substitutes `{prompt}` inline (visible in `ps`, subject to
-  ARG_MAX, copied into the ledger's command column). `stdin` pipes the
+  `file`) — `argv` substitutes `{prompt}` inline (visible in `ps` to other
+  processes of this user, subject to ARG_MAX). `stdin` pipes the
   prompt and drops `{prompt}` from argv (`claude -p`, `codex exec -`).
   `file` writes it to `~/.config/apple-tasks/runs/<ledger-id>.prompt` and
-  substitutes `{promptFile}`. Both non-argv modes keep that `.prompt` copy
-  next to the run log.
+  substitutes `{promptFile}`. Every mode keeps that `.prompt` copy (`600`)
+  next to the run log (best-effort for `argv`). The ledger's `command`
+  column and the run-log header store the argv with the prompt replaced by
+  `<prompt omitted>`. The example config uses `stdin` only for `claude`;
+  the `agent` (Cursor), `agy` and `hermes` lanes stay on `argv` because
+  this repo has no confirmation that those CLIs read a prompt from stdin.
+- **Agent environment** (`"envMode"` per agent, or top-level as the default
+  for every lane; `"envPassthrough"` per agent) — what a spawned agent
+  inherits from the dispatcher's environment (which, under launchd,
+  includes everything in `launchd.env`):
+  - `inherit` (default when unset; the behaviour before this option
+    existed) — everything.
+  - `scrubSecrets` — drops every variable whose **name** contains `key`,
+    `token`, `secret`, `password`, `passwd` or `credential`
+    (case-insensitive), unless the lane lists it in `envPassthrough`.
+    Values are not inspected, so a secret under an innocuous name
+    survives.
+  - `allowlist` — only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`,
+    `LC_*`, `TMPDIR`, `TERM`, `APPLE_TASKS_CONFIG_DIR`,
+    `APPLE_TASKS_PRIVATE_BIN`, plus `envPassthrough`. Note this also drops
+    `SSH_AUTH_SOCK` (git over SSH), `XDG_*` and proxy variables; name the
+    ones a lane needs.
+
+  Lane `env` values, `APPLE_TASKS_CALLER=agent:<tag>` and the PATH rewrite
+  are applied on top in every mode. A BYOM lane's `llm.apiKeyEnv` is passed
+  through automatically. The same filter applies to triage/suggest
+  classifier lanes (`Triage.runAgent`). The run-log header records the mode
+  and the **names** it dropped (`# env: scrubSecrets (dropped 2: …)`).
+  [`examples/agents.json`](../examples/agents.json) sets top-level
+  `"envMode": "scrubSecrets"` and passes `CURSOR_API_KEY` to the `agent`
+  lanes (cursor, doctor, heal) and `ANTHROPIC_API_KEY` to `claude` — the
+  names `run-with-env.sh` and this README cite. The `agy` (antigravity,
+  triage) and `hermes` lanes carry an empty `"envPassthrough": []`: this
+  repo has no evidence they need a dispatcher env variable (Hermes reads
+  its own `~/.hermes/.env`). If one of them authenticates through an env
+  variable on your Mac, add that name there; likewise `GH_TOKEN` /
+  `GITHUB_TOKEN` for `[pr]` lanes if `gh` is authenticated by env rather
+  than by `gh auth login`. Filtering reduces what an agent sees in its own
+  environment; it is not a sandbox — the agent still has your home
+  directory, login Keychain and the dispatcher's TCC grants.
+- **Prompt rendering** — `promptTemplate` placeholders (`{id}`, `{list}`,
+  `{title}`, `{notes}`, `{claimTag}`) are substituted in a single pass, so
+  text like `{notes}` inside a task title stays literal. The default
+  template wraps title and notes in untrusted-data blocks:
+
+  ```text
+  <<<BEGIN UNTRUSTED TASK TITLE>>>
+  {title}
+  <<<END UNTRUSTED TASK TITLE>>>
+  <<<BEGIN UNTRUSTED TASK NOTES>>>
+  {notes}
+  <<<END UNTRUSTED TASK NOTES>>>
+  ```
+
+  preceded by a line saying their contents are data, not instructions, and
+  followed by a rule not to read credential, keychain, token, SSH key or
+  dotenv files and to use the already-authenticated CLIs instead. Any
+  `<<<` / `>>>` run in the title, notes, list name, attachment paths or
+  research URL is broken up (`<< <`, `> > >`) whatever template you use,
+  so task text cannot forge a closing marker. Custom templates keep
+  working as before; to get the same framing, copy the marker lines above
+  (the example `hermes`, `doctor` and `heal` templates do). This is
+  framing for the model, not enforcement: a model can still follow
+  injected text.
+- **Credential-path flag** — after each run, Phase C scans the run log
+  (skipping the dispatcher's `#` header; at most 1 MiB from each end of a
+  large log) for `.ssh/`, `gh/hosts.yml`, `.aws/credentials`, `.netrc`,
+  `Keychains/`, `security find-*-password` / `dump-keychain`,
+  `launchd.env`, apple-tasks' `gmail/token.json`, `gmail/credentials.json`,
+  `findmy/account.json`, and `.env` path components. Hits are appended to
+  the trailer's first line as `cred-paths-in-log=<labels>` (so they reach
+  the ledger `summary`, the task notes, the banner and the failure push)
+  and to the report `action`. It never changes the run status. It only
+  sees what the agent printed: a read that is not echoed is invisible, and
+  a mention is not proof of a read (lanes like `heal` legitimately touch
+  `~/.hermes/.env`).
 - **Timeouts** (`"timeoutMinutes"` per agent) — overrunning agents get
   SIGTERM (SIGKILL after 5s) and the run is marked `timeout`. Signals go to
   the whole descendant tree (found via `pgrep -P`), so the node/shell
