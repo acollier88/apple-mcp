@@ -370,6 +370,12 @@ extension Dispatch {
                 ledgerId = id
             }
 
+            // Anchor the occurrence so a second agent `complete` in this run
+            // cannot roll a recurring series forward again (#42).
+            if reminder.hasRecurrenceRules, let due = Dates.formatDue(reminder.dueDateComponents) {
+                AuditDB.shared.setOccurrenceDue(id: ledgerId, due: due)
+            }
+
             // Mark dispatched (visible everywhere via tag + native mirror);
             // a retry sheds its [failed] tag here. Written after the claim so
             // a crash between the two can't strand the tag with no ledger row.

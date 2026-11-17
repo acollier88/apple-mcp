@@ -88,7 +88,7 @@ final class AuditDB {
     }
 
     /// Schema version the code expects. Bump when adding a migration case.
-    static let schemaVersion: Int32 = 3
+    static let schemaVersion: Int32 = 4
 
     var schemaVersion: Int32 { Int32(scalarInt("PRAGMA user_version") ?? 0) }
 
@@ -125,6 +125,10 @@ final class AuditDB {
                 // Dispatcher process id, so reap can tell "the agent exited and
                 // this pass never recorded it" from "the dispatcher is gone".
                 addColumnIfMissing(table: "dispatches", column: "dispatcher_pid", type: "INTEGER")
+            case 3:
+                // Due date captured at claim so an agent can roll a recurring
+                // series only once for this ledger row (#42).
+                addColumnIfMissing(table: "dispatches", column: "occurrence_due", type: "TEXT")
             default:
                 return
             }
@@ -400,6 +404,33 @@ final class AuditDB {
         guard sqlite3_step(stmt) == SQLITE_DONE else { return .unavailable }
         guard sqlite3_changes(db) > 0 else { return .held }
         return .claimed(sqlite3_last_insert_rowid(db))
+    }
+
+    func runningDispatch(taskId: String) -> DispatchRow? {
+        selectDispatches(where: "task_id = ? AND status = 'running'", binds: [taskId], limit: 1).first
+    }
+
+    @discardableResult
+    func setOccurrenceDue(id: Int64, due: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE dispatches SET occurrence_due = ? WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, due, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    func occurrenceDue(id: Int64) -> String? {
+        guard db != nil else { return nil }
+        var stmt: OpaquePointer?
+        let sql = "SELECT occurrence_due FROM dispatches WHERE id = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, id)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
     }
 
     @discardableResult
