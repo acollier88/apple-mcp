@@ -84,6 +84,21 @@ final class AuditDB {
             answered_via TEXT
         )
         """)
+        // Proposals (#48) are not a schema-version bump: CREATE IF NOT EXISTS
+        // lands on old databases without colliding with other migrations.
+        exec("""
+        CREATE TABLE IF NOT EXISTS proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT NOT NULL UNIQUE,
+            detector TEXT NOT NULL,
+            title TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            evidence_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """)
         migrate()
     }
 
@@ -602,5 +617,86 @@ final class AuditDB {
                 status: col(7) ?? "", answeredVia: col(8)))
         }
         return rows
+    }
+
+    struct ProposalRow: Codable, Equatable {
+        let id: Int
+        let fingerprint: String
+        let detector: String
+        let title: String
+        let evidence: String
+        let evidenceHash: String
+        let status: String
+        let createdAt: String
+        let updatedAt: String
+    }
+
+    func proposal(fingerprint: String) -> ProposalRow? {
+        proposals(fingerprint: fingerprint, status: nil, limit: 1).first
+    }
+
+    func proposals(fingerprint: String? = nil, status: String? = nil, limit: Int = 50) -> [ProposalRow] {
+        guard db != nil else { return [] }
+        var sql = """
+        SELECT id, fingerprint, detector, title, evidence, evidence_hash, status, created_at, updated_at \
+        FROM proposals WHERE 1=1
+        """
+        var binds: [String] = []
+        if let fingerprint { sql += " AND fingerprint = ?"; binds.append(fingerprint) }
+        if let status { sql += " AND status = ?"; binds.append(status) }
+        sql += " ORDER BY id DESC LIMIT \(limit)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        for (index, bind) in binds.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), bind, -1, SQLITE_TRANSIENT)
+        }
+        var rows: [ProposalRow] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            func col(_ i: Int32) -> String? {
+                sqlite3_column_text(stmt, i).map { String(cString: $0) }
+            }
+            rows.append(ProposalRow(
+                id: Int(sqlite3_column_int64(stmt, 0)),
+                fingerprint: col(1) ?? "", detector: col(2) ?? "", title: col(3) ?? "",
+                evidence: col(4) ?? "", evidenceHash: col(5) ?? "", status: col(6) ?? "",
+                createdAt: col(7) ?? "", updatedAt: col(8) ?? ""))
+        }
+        return rows
+    }
+
+    /// Insert, or refresh a dismissed/accepted row when the evidence changed.
+    @discardableResult
+    func saveProposal(fingerprint: String, detector: String, title: String,
+                      evidence: String, evidenceHash: String, status: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = """
+        INSERT INTO proposals (fingerprint, detector, title, evidence, evidence_hash, status, created_at, updated_at) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+        ON CONFLICT(fingerprint) DO UPDATE SET \
+          detector = excluded.detector, title = excluded.title, evidence = excluded.evidence, \
+          evidence_hash = excluded.evidence_hash, status = excluded.status, updated_at = excluded.updated_at
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        let now = Self.now()
+        for (index, value) in [fingerprint, detector, title, evidence, evidenceHash, status, now, now].enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
+        }
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    @discardableResult
+    func setProposalStatus(fingerprint: String, status: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE proposals SET status = ?, updated_at = ? WHERE fingerprint = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, status, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, Self.now(), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, fingerprint, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) == 1
     }
 }
