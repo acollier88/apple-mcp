@@ -834,6 +834,17 @@ struct Doctor: AsyncParsableCommand {
                 summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
                 signature: "secrets-plaintext"))
         }
+        let beats = Watchdog.directory()
+        for notice in Watchdog.notices(
+            dispatcher: Watchdog.read(role: "dispatcher", from: beats),
+            watchdog: Watchdog.read(role: "watchdog", from: beats),
+            now: Date(),
+            deadRunning: 0) {
+            issues.append(DoctorIssue(
+                system: "watchdog", severity: "info",
+                summary: Watchdog.summary(notice),
+                signature: "watchdog"))
+        }
         var heals: HealReport?
         if enqueueHeals {
             heals = await Self.enqueueHeals(issues: issues, listName: listName)

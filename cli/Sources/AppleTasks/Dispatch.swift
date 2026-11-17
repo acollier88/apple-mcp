@@ -142,6 +142,9 @@ struct Dispatch: AsyncParsableCommand {
             throw AppleTasksError.invalidInput(message)
         }
         let config = try AgentsConfig.load()
+        let passStart = Date()
+        Watchdog.markDispatcher(start: passStart, finish: nil)
+        defer { Watchdog.markDispatcher(start: passStart, finish: Date()) }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
                 "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))
