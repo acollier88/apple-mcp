@@ -102,8 +102,11 @@ dispatcher / MCP host. `maxConcurrent` and per-lane
 Resolution **today** is per-consumer: **env → keychain → plaintext →
 missing**. `Secrets.resolve` (`Secrets.swift`) is the shared helper;
 `doctor.secrets` (`Doctor.secretsStatus`) reports `source` and file modes.
-`--fix-modes` chmods group/world-readable known files to `600`. Modes
-below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`).
+`--fix-modes` chmods group/world-readable known secret files to `600`,
+and (`ConfigPermissions.fixModes`) the config dir, `logs/`, `runs/` to
+`700` and the ledger DB/WAL/SHM, `logs/*`, `runs/*`, `agents.json` and
+`agents.json.bak-*` to `600`, listing each change in `fixedModes`. Modes
+below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`) before that.
 
 | Secret | File | Mode today | Consumer | Source now | Notes |
 |---|---|---|---|---|---|
@@ -116,11 +119,13 @@ below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`).
 | Lane `env` values | `agents.json` | `644` | `Dispatch.execute` overlay | stay in file; `doctor` flags `agents.json:env`; MCP redacts display | Wholesale API keys |
 | Launchd extras | `launchd.env` | `644` | `run-with-env.sh` `set -a` / `source` | stays; `doctor.secrets` flags each `export NAME=value` as `launchd.env:NAME`. Agents inherit these unless the lane's `envMode` drops them | Wrapper comments cite `CURSOR_API_KEY`, `ANTHROPIC_API_KEY`. This Mac's file is comments only |
 | Find My session | `findmy/account.json` | `600` (`chmod` in `findmy-sidecar.py`) | sidecar `load_account` | not in P7 list | §2.7 asset; `ani_libs.bin` is `644` |
-| Ledger / audit | `apple-tasks.db` (+ WAL) | `644` | `AuditDB` | — | Caller, command (prompt replaced by `<prompt omitted>` for rows written since #27; older rows may still hold argv prompts), approvals |
+| Ledger / audit | `apple-tasks.db` (+ WAL/SHM) | `600` from #30: `AuditDB.init` creates it `0600` (SQLite copies that to `-wal`/`-shm`) and tightens existing files on open | `AuditDB` | — | Caller, command (prompt replaced by `<prompt omitted>` for rows written since #27; older rows may still hold argv prompts), approvals |
 | Run / prompt logs | `runs/<id>.log`, `.prompt` | `600` (`RunLogs.create` / `writePrivate` + `setAttributes`) | `Dispatch.execute`, `plan` | — | Agent stdout may echo secrets |
 
-Config dir itself is `755`, not `700`. `runs/` is created `700`
-(`RunLogs.ensureDirectory` in `Plan.swift`). Extra file on this Mac:
+Config dir: `AuditDB.init` (opened by nearly every command) creates it
+`700` and tightens an existing `755` on open (best effort, never fatal).
+`runs/` is created `700` (`RunLogs.ensureDirectory`). Older `runs/*` and
+`logs/*` files are only fixed by `doctor --fix-modes`. Extra file on this Mac:
 `hermes-api-server.key` (`600`) — not referenced by this repo.
 
 **MCP display mitigation.** `redactAgentsConfig` in `mcp/src/resources.ts`
@@ -217,7 +222,7 @@ all three layers.
 | Run logs | stdout/stderr (Cursor NDJSON filtered) + header (argv with `<prompt omitted>`, env mode and dropped variable names) | New files `600` in a `700` `runs/` (`RunLogs`); older files stay `644` until re-chmod'd; served over MCP and HTTP; may contain secrets |
 | Agent env filter | `envMode` `inherit` (default) / `scrubSecrets` / `allowlist` + `envPassthrough` (`AgentEnv`) | Opt-in; name-based; does not cover files, Keychain or TCC |
 | Credential-path flag | Phase C `CredentialScan.scanLog` over the run log (≤ 1 MiB head + tail, header skipped): `.ssh/`, `gh/hosts.yml`, `.aws/credentials`, `.netrc`, `Keychains/`, `security find-*-password`, `launchd.env`, gmail/findmy secret files, `.env` → `cred-paths-in-log=` in trailer, ledger summary, notification, report | Flags only, after the fact; sees only what the agent printed; mentions are not proof of reads |
-| Audit DB | Every mutation + `APPLE_TASKS_CALLER` (`AuditDB.caller`) | `644`; dispatch `command` no longer carries the prompt (older rows may) |
+| Audit DB | Every mutation + `APPLE_TASKS_CALLER` (`AuditDB.caller`) | `600` in a `700` dir; dispatch `command` no longer carries the prompt (older rows may) |
 | `doctor.deployment` | launchd binary vs last `cli/` commit, dirty tree (`Doctor.deploymentStatus`) | Drift only; not a secret audit |
 | `doctor.secrets` | per-secret `source` / file mode (`Doctor.secretsStatus`); info issue `secrets-plaintext` (does not enqueue heals); `--fix-modes` | Does not move values — `secret migrate --apply` does |
 | Lane caps / gates | `maxConcurrent`, `conditions` (location, power, load, quiet hours, idle, blocking apps) | Availability, not sandboxing |
@@ -240,8 +245,8 @@ Before making the repo public or sharing the MCP config:
    commit it (README already says so).
 4. Treat `~/.config/apple-tasks/runs/` and `logs/` as secret-bearing
    (agent stdout; launchd captures CLI JSON). New run logs are `600`;
-   existing ones and `logs/` are `644` — `chmod 700 ~/.config/apple-tasks/runs
-   && chmod 600 ~/.config/apple-tasks/runs/* ~/.config/apple-tasks/logs/*` once.
+   existing ones and `logs/` may be `644` — run `apple-tasks doctor
+   --fix-modes` once and check `fixedModes`.
 5. Re-read docs screenshots and `docs/review-*.md` for pasted topics/keys.
 6. Confirm ntfy topics meet the 24-char rule; rotate if they were
    short or derived from a username.

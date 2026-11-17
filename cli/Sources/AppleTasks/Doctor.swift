@@ -34,6 +34,9 @@ struct DoctorOut: Codable {
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
+    /// `--fix-modes` only: every chmod it made beyond the secret files
+    /// (config dir, ledger DB/WAL/SHM, logs/, runs/*, agents.json[.bak-*]).
+    let fixedModes: [ConfigPermissions.ModeChange]?
 
     struct DispatchPauseInfo: Codable {
         let paused: Bool
@@ -98,7 +101,7 @@ struct Doctor: AsyncParsableCommand {
     @Flag(name: .customLong("enqueue-heals"), help: "Create one [heal][auto] task per unhealthy system (deduped). Launchd dispatch picks them up — this command does not spawn agents.")
     var enqueueHeals = false
 
-    @Flag(name: .customLong("fix-modes"), help: "chmod 600 known secret files that are group/world readable.")
+    @Flag(name: .customLong("fix-modes"), help: "Tighten modes: config dir, logs/, runs/ to 700; secret files, ledger DB/WAL/SHM, logs/*, runs/*, agents.json(.bak-*) to 600. Reports changes in fixedModes.")
     var fixModes = false
 
     @Option(name: .customLong("list"), help: "Reminders list for heal tasks (default: Code Tasks).")
@@ -751,6 +754,8 @@ struct Doctor: AsyncParsableCommand {
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".config/apple-tasks", isDirectory: true)
         }()
+        // Before secretsStatus so agents.json shows up in fixedModes.
+        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir) : nil
         let secrets = Self.secretsStatus(
             configDir: configDir,
             store: Secrets.store,
@@ -814,7 +819,8 @@ struct Doctor: AsyncParsableCommand {
             dispatch: dispatchInfo,
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
-            heals: heals
+            heals: heals,
+            fixedModes: fixedModes
         ))
     }
 
