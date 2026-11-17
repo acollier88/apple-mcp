@@ -83,15 +83,19 @@ enum ConfigPermissions {
     /// Directory, ledger DB + sidecars, `logs/` and `runs/` (dirs 0700,
     /// regular files directly inside 0600), `agents.json` and
     /// `agents.json.bak-*` (lane `env` can hold API keys).
-    static func fixModes(configDir: URL) -> [ModeChange] {
+    static func fixModes(configDir: URL, supportDir: URL? = nil) -> [ModeChange] {
         var changes: [ModeChange] = []
         let fm = FileManager.default
         if let change = tighten(configDir, to: privateDirectoryMode, directory: true) { changes.append(change) }
 
         changes += tightenDatabase(configDir.appendingPathComponent("apple-tasks.db"))
 
-        for sub in ["logs", "runs"] {
-            let dir = configDir.appendingPathComponent(sub, isDirectory: true)
+        var directories: [URL] = ["logs", "runs"].map { configDir.appendingPathComponent($0, isDirectory: true) }
+        if let supportDir {
+            if let change = tighten(supportDir, to: privateDirectoryMode, directory: true) { changes.append(change) }
+            directories.append(supportDir.appendingPathComponent("runs", isDirectory: true))
+        }
+        for dir in directories {
             if let change = tighten(dir, to: privateDirectoryMode, directory: true) { changes.append(change) }
             guard mode(of: dir, directory: true) != nil else { continue }
             let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []

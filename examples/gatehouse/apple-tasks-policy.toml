@@ -1,0 +1,47 @@
+# Gatehouse policy fragment for apple-tasks. Not installed by apple-tasks.
+# Merge these [[rules]] into the host policy (~/Library/Application Support/gatehouse/policy.toml
+# on macOS, or $GATEHOUSE_CONFIG_DIR/policy.toml). Rules are first match wins.
+# Tiers match gatehouse: "allow" | "ask" | "ask_strong" | "deny".
+#
+# Write-back subcommands are allowed when they carry the task id from the
+# dispatch request (`update <id>`, `complete <id>`; notes/notify/approve
+# request/check are the other write-backs). `secret`, `approve answer`,
+# `dispatch`, `dispatch-retry`, and `serve` are denied. Everything else asks.
+#
+# `__approve_strong` is the argv `approve request` submits via `gate ask` so
+# the human decision is ask_strong (passkey) when this fragment is installed.
+# A sandboxed agent cannot self-approve: that argv is not in the allow list.
+
+default_tier = "ask"
+
+[[rules]]
+name = "deny apple-tasks secret, approve answer, dispatch, serve"
+tier = "deny"
+argv0 = ["apple-tasks"]
+args_glob = [
+  "secret*",
+  "approve answer*",
+  "dispatch",
+  "dispatch *",
+  "dispatch-retry*",
+  "serve*",
+]
+
+[[rules]]
+name = "allow apple-tasks write-back for the task id in the request"
+tier = "allow"
+argv0 = ["apple-tasks"]
+args_glob = [
+  "update *",
+  "complete *",
+  "notes create*",
+  "notify*",
+  "approve request*",
+  "approve check*",
+]
+
+[[rules]]
+name = "apple-tasks human approval is ask_strong"
+tier = "ask_strong"
+argv0 = ["apple-tasks"]
+args_glob = ["__approve_strong *"]
