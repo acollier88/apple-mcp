@@ -62,7 +62,9 @@ extension Dispatch {
             for row in AuditDB.shared.worktreeRows() {
                 guard let wt = row.worktree, let repo = row.cwd, !repo.isEmpty else { continue }
                 guard FileManager.default.fileExists(atPath: wt) else {
-                    AuditDB.shared.clearWorktree(id: Int64(row.id))
+                    if !AuditDB.shared.clearWorktree(id: Int64(row.id)) {
+                        Self.passLog("gc: worktree path missing and ledger clear failed for #\(row.id)")
+                    }
                     continue
                 }
                 let branch = "agent/\(row.agent)-\(row.id)"
@@ -70,9 +72,19 @@ extension Dispatch {
                 switch row.status {
                 case "succeeded":
                     if Self.runGit(["merge-base", "--is-ancestor", branch, "HEAD"], repo: repo) == 0 {
-                        _ = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
-                        _ = Self.runGit(["branch", "-d", branch], repo: repo)
-                        AuditDB.shared.clearWorktree(id: Int64(row.id))
+                        let removed = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
+                        guard removed == 0 else {
+                            action = "gc: worktree remove exited \(removed) for \(branch) — left in place"
+                            break
+                        }
+                        let deleted = Self.runGit(["branch", "-d", branch], repo: repo)
+                        if deleted != 0 {
+                            Self.passLog("git branch -d \(branch) exited \(deleted)")
+                        }
+                        if !AuditDB.shared.clearWorktree(id: Int64(row.id)) {
+                            action = "gc: worktree removed but ledger clear failed for #\(row.id)"
+                            break
+                        }
                         AuditDB.shared.markReviewed(id: Int64(row.id))
                         action = "gc: branch \(branch) merged, worktree removed"
                     } else {
@@ -83,9 +95,21 @@ extension Dispatch {
                           let date = iso.date(from: finished), date < keepCutoff else { continue }
                     let empty = Self.gitOutput(["rev-list", "--count", branch, "--not", "HEAD"],
                                                repo: repo) == "0"
-                    _ = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
-                    if empty { _ = Self.runGit(["branch", "-D", branch], repo: repo) }
-                    AuditDB.shared.clearWorktree(id: Int64(row.id))
+                    let removed = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
+                    guard removed == 0 else {
+                        action = "gc: worktree remove exited \(removed) — left in place"
+                        break
+                    }
+                    if empty {
+                        let deleted = Self.runGit(["branch", "-D", branch], repo: repo)
+                        if deleted != 0 {
+                            Self.passLog("git branch -D \(branch) exited \(deleted)")
+                        }
+                    }
+                    if !AuditDB.shared.clearWorktree(id: Int64(row.id)) {
+                        action = "gc: worktree removed but ledger clear failed for #\(row.id)"
+                        break
+                    }
                     action = "gc: removed \(row.status) worktree (>\(keepDays)d), "
                         + (empty ? "empty branch deleted" : "branch \(branch) kept")
                 default:
@@ -115,7 +139,20 @@ extension Dispatch {
                         guard let finished = row.finishedAt,
                               let date = iso.date(from: finished), date < keepCutoff else { continue }
                     }
-                    try? FileManager.default.removeItem(at: dir)
+                    do {
+                        try FileManager.default.removeItem(at: dir)
+                    } catch {
+                        let message = "scratch remove \(dir.path) failed: \(error.localizedDescription)"
+                        Self.passLog(message)
+                        reports.append(DispatchReport(
+                            taskId: row?.taskId ?? String(id),
+                            title: row.map { "(ledger #\($0.id))" } ?? "(scratch #\(id))",
+                            agent: row?.agent ?? "-",
+                            cwd: dir.path,
+                            action: "gc: \(message)",
+                            exitCode: nil, runLog: row?.runLogPath, worktree: nil))
+                        continue
+                    }
                     reports.append(DispatchReport(
                         taskId: row?.taskId ?? String(id),
                         title: row.map { "(ledger #\($0.id))" } ?? "(scratch #\(id))",

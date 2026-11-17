@@ -363,41 +363,15 @@ extension Dispatch {
                 ledgerId = id
             }
 
-            // Mark dispatched (visible everywhere via tag + native mirror);
-            // a retry sheds its [failed] tag here. Written after the claim so
-            // a crash between the two can't strand the tag with no ledger row.
-            var tags = parsed.tags.filter { !ClaimTags.isFailed($0) }
-            // Stamp the chosen lane so retries and the human-visible title
-            // pin the provider that actually ran (leftmost matching tag wins).
-            if fromAutoPool, !tags.contains(where: { $0.lowercased() == agentTag }) {
-                tags.insert(agentTag, at: 0)
-            }
-            tags.append(ClaimTags.dispatched)
-            reminder.title = Tags.compose(tags: tags, title: parsed.title)
-            do {
-                try store.save(reminder)
-            } catch {
-                AuditDB.shared.finishDispatch(id: ledgerId, status: "aborted", exitCode: -1)
-                AuditDB.shared.record(command: "dispatch", taskId: taskId,
-                                      list: reminder.calendar?.title,
-                                      detail: "\(agentTag): \(parsed.title)",
-                                      result: "error",
-                                      error: "claim tag save failed: \(error)")
-                reports.append(DispatchReport(
-                    taskId: taskId, title: parsed.title, agent: agentTag, cwd: cwd,
-                    action: "aborted: could not save claim tag: \(error.localizedDescription)",
-                    exitCode: -1, runLog: nil, worktree: nil))
-                continue
-            }
-            let shedFailed = parsed.tags.filter { ClaimTags.isFailed($0) }
-            if !shedFailed.isEmpty {
-                _ = NativeTags.remove(tags: shedFailed, externalId: reminder.calendarItemExternalIdentifier)
-            }
-            _ = NativeTags.mirror(tags: [ClaimTags.dispatched], externalId: reminder.calendarItemExternalIdentifier)
             AuditDB.shared.record(command: retryAttempt == nil ? "dispatch" : "dispatch-retry",
                                   taskId: taskId, list: reminder.calendar?.title,
                                   detail: "\(agentTag): \(parsed.title)"
                                       + (retryAttempt.map { " (attempt \($0))" } ?? ""))
+
+            // The [dispatched] tag is applied when the agent process starts,
+            // not here. Planning claims the ledger row (so a second pass
+            // cannot take it) but a task still waiting on maxConcurrent
+            // must not look like it is running (#44).
 
             // Worktree isolation: agent output is a branch, never edits to the
             // main checkout. Refuse to run unisolated if creation fails.
@@ -484,7 +458,8 @@ extension Dispatch {
                                  logPath: logURL.path,
                                  promptVia: promptVia,
                                  stdinPrompt: promptVia == .stdin ? prompt : nil,
-                                 promptFile: promptFile))
+                                 promptFile: promptFile,
+                                 stampLane: fromAutoPool))
             specsPerAgent[agentTag, default: 0] += 1
         }
 

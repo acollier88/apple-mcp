@@ -336,10 +336,16 @@ final class AuditDB {
     func clearWorktree(id: Int64) -> Bool {
         guard db != nil else { return false }
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET worktree = NULL WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET worktree = NULL WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else {
+            noteSQLiteFailure("clearWorktree prepare #\(id)")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, id)
-        sqlite3_step(stmt)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            noteSQLiteFailure("clearWorktree #\(id)")
+            return false
+        }
         return true
     }
 
@@ -398,7 +404,10 @@ final class AuditDB {
         guard db != nil else { return false }
         var stmt: OpaquePointer?
         let sql = "UPDATE dispatches SET run_log_path = ?, worktree = ? WHERE id = ?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            noteSQLiteFailure("setDispatchPaths prepare #\(id)")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
         for (index, value) in [runLogPath, worktree].enumerated() {
             if let value {
@@ -408,7 +417,10 @@ final class AuditDB {
             }
         }
         sqlite3_bind_int64(stmt, 3, id)
-        sqlite3_step(stmt)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            noteSQLiteFailure("setDispatchPaths #\(id)")
+            return false
+        }
         return true
     }
 
@@ -421,11 +433,17 @@ final class AuditDB {
         guard !stale.isEmpty else { return [] }
         var stmt: OpaquePointer?
         let sql = "UPDATE dispatches SET finished_at = ?, status = 'timeout' WHERE status = 'running' AND started_at < ?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            noteSQLiteFailure("reapStale prepare")
+            return []
+        }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, cutoff, -1, SQLITE_TRANSIENT)
-        sqlite3_step(stmt)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            noteSQLiteFailure("reapStale before \(cutoff)")
+            return []
+        }
         return stale
     }
 
@@ -448,7 +466,10 @@ final class AuditDB {
         guard db != nil else { return false }
         var stmt: OpaquePointer?
         let sql = "UPDATE dispatches SET finished_at = ?, status = ?, exit_code = ?, summary = ? WHERE id = ?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            noteSQLiteFailure("finishDispatch prepare #\(id)")
+            return false
+        }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, Self.now(), -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 2, status, -1, SQLITE_TRANSIENT)
@@ -459,8 +480,17 @@ final class AuditDB {
             sqlite3_bind_null(stmt, 4)
         }
         sqlite3_bind_int64(stmt, 5, id)
-        sqlite3_step(stmt)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            noteSQLiteFailure("finishDispatch #\(id)")
+            return false
+        }
         return true
+    }
+
+    private func noteSQLiteFailure(_ what: String) {
+        let err = db.map { String(cString: sqlite3_errmsg($0)) } ?? "database closed"
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        FileHandle.standardError.write(Data("\(stamp) apple-tasks: \(what): \(err)\n".utf8))
     }
 
     func dispatchRow(id: Int64) -> DispatchRow? {

@@ -17,8 +17,9 @@ struct Dispatch: AsyncParsableCommand {
         --dry-run the pass stops after reap/GC and appends that report. \
         --quiet (launchd) emits the paused report only when until/reason \
         changed since the last pass (dispatch.pauseLastReported); an \
-        unchanged pause plus repeat GC/skip noise collapses to [] so \
-        logs do not fill with 'paused' lines.
+        unchanged pause, an empty pass, or repeat GC/skip noise prints \
+        nothing, so logs do not fill with 'paused' lines or []. \
+        Pass start and end are timestamped on stderr either way.
         """
     )
 
@@ -42,8 +43,8 @@ struct Dispatch: AsyncParsableCommand {
     var noGC = false
 
     @Flag(name: .customLong("quiet"), help: """
-        Emit [] when this pass produced only repeat GC/skip reports identical \
-        to the previous pass (for launchd logs). A paused report is included \
+        Print nothing when this pass is empty or only repeats the previous \
+        pass's GC/skip noise (for launchd logs). A paused report is included \
         only when the pause until/reason changed since the last pass.
         """)
     var quiet = false
@@ -111,6 +112,9 @@ struct Dispatch: AsyncParsableCommand {
         var stdinPrompt: String? = nil
         /// Set for `.stdin` and `.file`: `runs/<ledgerId>.prompt`.
         var promptFile: String? = nil
+        /// Auto-pool chose this lane; stamp it onto the title when the
+        /// agent actually starts so retries pin the provider that ran.
+        var stampLane: Bool = false
     }
 
     struct RunOutcome: Sendable {
@@ -142,6 +146,8 @@ struct Dispatch: AsyncParsableCommand {
             throw AppleTasksError.invalidInput(message)
         }
         let config = try AgentsConfig.load()
+        Self.passLog("dispatch pass start quiet=\(quiet) dryRun=\(dryRun)")
+        defer { Self.passLog("dispatch pass end") }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
                 "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))
@@ -152,7 +158,12 @@ struct Dispatch: AsyncParsableCommand {
         try await store.requestAccess()
 
         var reports: [DispatchReport] = []
-        reports += await reapAndCollect(config: config, store: store)
+        // A dry run plans only. Reaping and GC write the ledger, tags, and
+        // worktrees; doing that before the flag is checked made --dry-run
+        // mutate the machine (#44).
+        if !dryRun {
+            reports += await reapAndCollect(config: config, store: store)
+        }
         if reapOnly {
             emitReports(reports)
             return
@@ -191,6 +202,16 @@ struct Dispatch: AsyncParsableCommand {
             return
         }
         reports.append(pause.report)
-        AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+        if !dryRun {
+            AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+        }
+    }
+
+    /// Timestamped line on stderr. launchd keeps that file separate from the
+    /// JSON stdout log, and stdout is only written when the pass finishes,
+    /// so a hung pass would otherwise leave no trace (#44).
+    static func passLog(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        FileHandle.standardError.write(Data("\(stamp) \(message)\n".utf8))
     }
 }

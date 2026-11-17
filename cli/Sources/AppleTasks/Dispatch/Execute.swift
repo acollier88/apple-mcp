@@ -12,17 +12,60 @@ extension Dispatch {
             var pending = specs.makeIterator()
             var inFlight = 0
             while inFlight < cap, let spec = pending.next() {
-                group.addTask { await Self.execute(spec) }
-                inFlight += 1
+                if let failure = await beginClaim(spec, store: store) {
+                    reports.append(failure)
+                } else {
+                    group.addTask { await Self.execute(spec) }
+                    inFlight += 1
+                }
             }
             while let outcome = await group.next() {
-                if let spec = pending.next() {
-                    group.addTask { await Self.execute(spec) }
+                while let spec = pending.next() {
+                    if let failure = await beginClaim(spec, store: store) {
+                        reports.append(failure)
+                    } else {
+                        group.addTask { await Self.execute(spec) }
+                        break
+                    }
                 }
                 reports.append(await writeBack(outcome, store: store, config: config))
             }
         }
         return reports
+    }
+
+    /// Stamp `[dispatched]` at the moment this spec is about to run. Nil
+    /// means the tag is on the reminder. A report means the save failed:
+    /// the ledger row is closed so it does not stay `running`, and the
+    /// agent is not started.
+    private func beginClaim(_ spec: RunSpec, store: Store) async -> DispatchReport? {
+        do {
+            let current = try await store.reminder(id: spec.taskId)
+            var (tags, title) = Tags.parse(current.title ?? "")
+            let shedFailed = tags.filter { ClaimTags.isFailed($0) && ClaimTags.isOwn($0) }
+            tags.removeAll { ClaimTags.isFailed($0) && ClaimTags.isOwn($0) }
+            if spec.stampLane, !tags.contains(where: { $0.lowercased() == spec.agentTag }) {
+                tags.insert(spec.agentTag, at: 0)
+            }
+            if !tags.contains(where: { ClaimTags.isDispatched($0) && ClaimTags.isOwn($0) }) {
+                tags.append(ClaimTags.dispatched)
+            }
+            current.title = Tags.compose(tags: tags, title: title)
+            try store.save(current)
+            if !shedFailed.isEmpty {
+                _ = NativeTags.remove(tags: shedFailed, externalId: current.calendarItemExternalIdentifier)
+            }
+            _ = NativeTags.mirror(tags: [ClaimTags.dispatched], externalId: current.calendarItemExternalIdentifier)
+            return nil
+        } catch {
+            let message = "claim tag save failed: \(error.localizedDescription)"
+            Self.passLog("\(message) ledger #\(spec.ledgerId)")
+            _ = AuditDB.shared.finishDispatch(id: spec.ledgerId, status: "aborted", exitCode: -1, summary: message)
+            return DispatchReport(
+                taskId: spec.taskId, title: spec.title, agent: spec.agentTag, cwd: spec.runCwd,
+                action: "aborted: \(message)",
+                exitCode: -1, runLog: spec.logPath, worktree: spec.worktree)
+        }
     }
 
     /// Runs one agent process to completion. No EventKit — safe to run
@@ -155,7 +198,7 @@ extension Dispatch {
         process.arguments = ["-C", repo] + args
         // Keep git chatter out of the command's JSON stdout.
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        process.standardError = FileHandle.standardError
         do {
             try process.run()
             process.waitUntilExit()
