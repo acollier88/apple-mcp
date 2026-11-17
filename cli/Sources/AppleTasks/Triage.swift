@@ -169,7 +169,8 @@ struct Triage: AsyncParsableCommand {
             let prompt = Self.prompt(items: items, agents: routingAgents,
                                      workdirs: workdirs, planLists: planLists)
             let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
-            let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5, env: agent.env)
+            let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5,
+                                        envPolicy: .resolve(lane: agent, config: config))
             classifications = try Self.parseJSONArray(raw)
         }
         let byId = Dictionary(classifications.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -253,7 +254,8 @@ struct Triage: AsyncParsableCommand {
                     let prompt = Self.notesPrompt(notes: noteItems, agents: routingAgents,
                                                   workdirs: workdirs, planLists: planLists)
                     let argv = template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }
-                    let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5, env: agent.env)
+                    let raw = try Self.runAgent(argv, timeoutMinutes: agent.timeoutMinutes ?? 5,
+                                        envPolicy: .resolve(lane: agent, config: config))
                     decisions = try Self.parseJSONArray(raw)
                 }
                 collected = try Self.applyNoteDecisions(decisions, store: store, apply: apply,
@@ -388,16 +390,17 @@ struct Triage: AsyncParsableCommand {
         """
     }
 
+    /// Spawn a classifier / suggest lane and return its stdout. The env is
+    /// `AgentEnv.build` over this process's env (lane `envMode`,
+    /// `envPassthrough`, `env`). Unlike dispatch, no `APPLE_TASKS_CALLER`
+    /// or PATH rewrite is applied here (unchanged from before #27).
     static func runAgent(_ argv: [String], timeoutMinutes: Int,
-                         env extraEnv: [String: String]? = nil) throws -> String {
+                         envPolicy: AgentEnv.Policy = AgentEnv.Policy()) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
-        if let extraEnv, !extraEnv.isEmpty {
-            var env = ProcessInfo.processInfo.environment
-            for (name, value) in extraEnv { env[name] = value }
-            process.environment = env
-        }
+        process.environment = AgentEnv.build(parent: ProcessInfo.processInfo.environment,
+                                             policy: envPolicy)
         let out = Pipe()
         process.standardOutput = out
         process.standardError = FileHandle.nullDevice

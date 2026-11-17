@@ -26,6 +26,25 @@ final class PromptViaTests: XCTestCase {
         XCTAssertEqual(argv, ["codex", "exec", "--prompt-file", "/runs/7.prompt"])
     }
 
+    func testLedgerCommandOmitsPromptForArgv() {
+        let command = Dispatch.ledgerCommand(template, via: .argv, promptFile: "{promptFile}")
+        XCTAssertEqual(command, "agent -p \(Dispatch.ledgerPromptMarker) --model auto")
+        XCTAssertFalse(command.contains("Do the thing"))
+    }
+
+    func testLedgerCommandEmbeddedPromptAlsoMarked() {
+        let command = Dispatch.ledgerCommand(["sh", "-c", "run '{prompt}'"], via: .argv, promptFile: "/x")
+        XCTAssertEqual(command, "sh -c run '\(Dispatch.ledgerPromptMarker)'")
+    }
+
+    func testLedgerCommandMatchesArgvForStdinAndFile() {
+        XCTAssertEqual(Dispatch.ledgerCommand(template, via: .stdin, promptFile: "/x"),
+                       Dispatch.renderArgv(template, prompt: prompt, via: .stdin, promptFile: "/x").joined(separator: " "))
+        let fileTemplate = ["codex", "exec", "--prompt-file", "{promptFile}"]
+        XCTAssertEqual(Dispatch.ledgerCommand(fileTemplate, via: .file, promptFile: "/runs/7.prompt"),
+                       "codex exec --prompt-file /runs/7.prompt")
+    }
+
     func testPromptViaDecodesWithDefaultNil() throws {
         let json = #"{"agents":{"a":{"command":["x","{prompt}"]},"b":{"command":["y"],"promptVia":"stdin"}}}"#
         let config = try JSONDecoder().decode(AgentsConfig.self, from: Data(json.utf8))

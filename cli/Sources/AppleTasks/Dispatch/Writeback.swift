@@ -15,10 +15,14 @@ extension Dispatch {
                                   exitCode: outcome.exitCode.map(Int.init),
                                   runLog: spec.logPath, worktree: spec.worktree)
         }
+        // #27: flag (never fail) runs whose log mentions credential paths.
+        // The fragment lands in the trailer's first line, so it reaches the
+        // ledger summary, task notes, banner and failure push.
+        let credentialFlags = CredentialScan.scanLog(at: spec.logPath)
         let trailerText = Self.trailer(ledgerId: spec.ledgerId, status: outcome.status,
                                   exitCode: outcome.exitCode, branch: spec.branch,
                                   repo: spec.repo, logPath: spec.logPath,
-                                  seat: outcome.seat)
+                                  seat: outcome.seat, credentialFlags: credentialFlags)
         AuditDB.shared.finishDispatch(id: spec.ledgerId,
                                       status: outcome.status == "succeeded" ? "succeeded" : outcome.status == "timeout" ? "timeout" : "failed",
                                       exitCode: outcome.exitCode ?? -1,
@@ -64,6 +68,9 @@ extension Dispatch {
         if outcome.status == "succeeded", verification == "open-claimed" {
             action = "succeeded (open, claim shed)"
         }
+        if let flagged = CredentialScan.summary(credentialFlags) {
+            action += " [\(flagged)]"
+        }
         return DispatchReport(taskId: spec.taskId, title: spec.title, agent: spec.agentTag,
                               cwd: spec.runCwd, action: action,
                               exitCode: outcome.exitCode.map(Int.init),
@@ -106,9 +113,10 @@ extension Dispatch {
     /// runs) up to 3 commit oneliners showing what the branch produced.
     static func trailer(ledgerId: Int64, status: String, exitCode: Int32?,
                         branch: String?, repo: String?, logPath: String?,
-                        seat: AgentSeat.Info?) -> String {
+                        seat: AgentSeat.Info?, credentialFlags: [String] = []) -> String {
         var line = "[dispatch #\(ledgerId)] \(status)"
         if let exitCode { line += " exit=\(exitCode)" }
+        if let flagged = CredentialScan.summary(credentialFlags) { line += " \(flagged)" }
         if let seat { line += " \(seat.summary)" }
         if let branch { line += " branch=\(branch)" }
         if let logPath { line += " log=\(logPath)" }
