@@ -55,17 +55,28 @@ extension Dispatch {
         // Worktree GC: reclaim worktrees of finished runs. Merged succeeded
         // branches (and their worktrees) go immediately; failed/timeout/
         // cancelled worktrees are kept keepFailedWorktreeDays for debugging;
-        // unmerged succeeded branches are deliverables and are only surfaced.
+        // unmerged succeeded branches are deliverables. Their checkout can
+        // be removed after pendingReviewWorktreeDays (default off); the
+        // branch is kept and the row stays pending review.
         if !noGC {
             let keepDays = config.keepFailedWorktreeDays ?? 7
+            let reviewDays = config.pendingReviewWorktreeDays ?? 0
             let keepCutoff = Date().addingTimeInterval(-TimeInterval(keepDays) * 86400)
             for row in AuditDB.shared.worktreeRows() {
                 guard let wt = row.worktree, let repo = row.cwd, !repo.isEmpty else { continue }
+                let branch = "agent/\(row.agent)-\(row.id)"
                 guard FileManager.default.fileExists(atPath: wt) else {
+                    // Age-out deletes the checkout and leaves this column so
+                    // the branch stays on the pending-review list.
+                    let branchExists = Self.runGit(
+                        ["rev-parse", "--verify", "--quiet", branch], repo: repo) == 0
+                    if Self.retainPendingWorktreeRecord(
+                        status: row.status, reviewedAt: row.reviewedAt, branchExists: branchExists) {
+                        continue
+                    }
                     AuditDB.shared.clearWorktree(id: Int64(row.id))
                     continue
                 }
-                let branch = "agent/\(row.agent)-\(row.id)"
                 var action: String?
                 switch row.status {
                 case "succeeded":
@@ -75,6 +86,17 @@ extension Dispatch {
                         AuditDB.shared.clearWorktree(id: Int64(row.id))
                         AuditDB.shared.markReviewed(id: Int64(row.id))
                         action = "gc: branch \(branch) merged, worktree removed"
+                    } else if row.reviewedAt != nil {
+                        // Accepted by opening a PR: drop the checkout, keep the branch.
+                        _ = Self.runGit(["worktree", "remove", "--force", wt], repo: repo)
+                        if !FileManager.default.fileExists(atPath: wt) {
+                            AuditDB.shared.clearWorktree(id: Int64(row.id))
+                            action = "gc: removed reviewed worktree, branch \(branch) kept"
+                        }
+                    } else if let aged = Self.ageOutPendingReviewWorktree(
+                        worktree: wt, branch: branch, repo: repo,
+                        finishedAt: row.finishedAt, keepDays: reviewDays) {
+                        action = aged
                     } else {
                         action = "gc: kept, unmerged branch \(branch) pending"
                     }
@@ -127,5 +149,35 @@ extension Dispatch {
             }
         }
         return reports
+    }
+
+    /// Keep the `worktree` column after the checkout directory is gone when
+    /// the branch is still an unreviewed deliverable. Clearing it would drop
+    /// the row from `pendingReviewRows` (that query requires the column).
+    static func retainPendingWorktreeRecord(
+        status: String, reviewedAt: String?, branchExists: Bool
+    ) -> Bool {
+        status == "succeeded" && reviewedAt == nil && branchExists
+    }
+
+    /// Remove a pending-review checkout once it is older than `keepDays`.
+    /// `keepDays` < 1 (the default) does nothing. Never deletes the branch.
+    /// Returns the GC action when the directory is gone, otherwise nil.
+    static func ageOutPendingReviewWorktree(
+        worktree: String,
+        branch: String,
+        repo: String,
+        finishedAt: String?,
+        keepDays: Int,
+        now: Date = Date()
+    ) -> String? {
+        guard keepDays > 0 else { return nil }
+        guard FileManager.default.fileExists(atPath: worktree) else { return nil }
+        guard let finishedAt,
+              let date = ISO8601DateFormatter().date(from: finishedAt),
+              date < now.addingTimeInterval(-TimeInterval(keepDays) * 86400) else { return nil }
+        _ = runGit(["worktree", "remove", "--force", worktree], repo: repo)
+        guard !FileManager.default.fileExists(atPath: worktree) else { return nil }
+        return "gc: removed pending-review worktree (>\(keepDays)d), branch \(branch) kept"
     }
 }

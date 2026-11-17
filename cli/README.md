@@ -295,11 +295,16 @@ available the task stays queued — it is not `[failed]`. Config at
   "retryBackoffMinutes": 30,
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
+  "pendingReviewWorktreeDays": 0,
   "notifyOn": "failure",
   "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] },
   "autoBudget": "skipRed"
 }
 ```
+
+`pendingReviewWorktreeDays` defaults to off (`0` or omitted). Set it to a
+positive number of days (14 is a reasonable start) to have GC delete only
+the worktree directory of an unmerged succeeded run and keep the git branch.
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Optional `repoDescriptions` (same keys) is the text Jev sees
@@ -451,9 +456,12 @@ the design):
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
-  only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
-  for finished (or orphan) ledger rows older than the same cutoff are
-  removed too. `--no-gc` skips the pass.
+  only if empty). `pendingReviewWorktreeDays` (default off: omit the key or
+  set `0`) opts in to removing an unmerged succeeded *checkout* after that
+  many days with `git worktree remove`. The branch is never deleted by
+  age-out, and the row stays pending review. Scratch dirs under
+  `~/.config/apple-tasks/scratch/<id>` for finished (or orphan) ledger rows
+  older than `keepFailedWorktreeDays` are removed too. `--no-gc` skips the pass.
 - **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
   macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to
@@ -588,9 +596,19 @@ the design):
   spent the task stays `[failed]` for a human or triage agent.
 - **Pending review** — `apple-tasks dispatches --status pending-review`
   (or `--pending-review`) lists succeeded worktree runs whose agent branch
-  is still unmerged. Merged or deleted branches are marked reviewed and
-  drop off the list. `apple-tasks dispatch-discard <ledgerId>` force-removes
-  the worktree, deletes the branch, and marks the row reviewed.
+  is still unmerged, including how long each has been waiting. Merged or
+  deleted branches are marked reviewed and drop off the list.
+  `apple-tasks dispatch-discard <ledgerId>` force-removes the worktree,
+  deletes the branch, and marks the row reviewed.
+  `apple-tasks dispatch-accept <ledgerId>` fast-forward merges the branch
+  when the checkout is clean and the branch is a fast-forward of HEAD;
+  otherwise it pushes the branch and opens a GitHub pull request with `gh`
+  (the branch is kept). `--dry-run` reports merge vs pull-request and does
+  not merge, push, or call `gh`. The morning digest lists these with age.
+  A banner (and ntfy, when a topic is configured) fires when the set of
+  ledger id + branch + commits changes — the same items stay quiet on later
+  dispatch passes and later digests. The digest's own `--push` summary still
+  includes the count and the oldest age.
 
 > **Subscription note (Claude Pro/Max):** the dispatcher invokes the official
 > `claude` CLI, which Anthropic permits for scripted/headless use under a
@@ -790,7 +808,10 @@ with the source path as provenance. `doctor` reports the drop-folder path.
 
 `apple-tasks digest` is a deterministic aggregation (no model, safe to run
 unattended): agent activity since yesterday (audit log), dispatch outcomes,
-tasks due today (with #19 URL linkbacks to PRs), and today's calendar.
+tasks due today (with #19 URL linkbacks to PRs), today's calendar, and
+branches awaiting review with their age. When that pending-review set
+changes, digest (and each dispatch pass) sends one notification and then
+stays quiet until a row, branch, or commit changes.
 
 ```bash
 apple-tasks digest                # JSON to stdout

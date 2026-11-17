@@ -154,6 +154,12 @@ struct Dispatch: AsyncParsableCommand {
 
         var reports: [DispatchReport] = []
         reports += await reapAndCollect(config: config, store: store)
+        // Nudge once per distinct pending-review set. Dry-run stays quiet;
+        // a paused or reap-only pass still notifies (the backlog is not a
+        // new claim). Repeats stay quiet until a row, branch, or commit changes.
+        if !dryRun {
+            await PendingReview.notifyIfChanged(items: PendingReview.items(), db: .shared)
+        }
         if reapOnly {
             emitReports(reports)
             return
