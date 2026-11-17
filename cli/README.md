@@ -370,11 +370,12 @@ LAUNCH_AGENTS=/tmp/x/LaunchAgents CONFIG_DIR=/tmp/x/config LAUNCHCTL=true`.
 
 `install-agent` writes a LaunchAgent that runs `apple-tasks dispatch --quiet`
 with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
-`hermes` usually live). `--quiet` emits `[]` when a pass produced only the
-same GC/skip/gate/schedule noise as the previous one, so launchd's stdout
-log does not grow on idle cycles. `dispatch-pause` stops new claims but
+`hermes` usually live). `--quiet` prints nothing when a pass is empty or
+only repeats the previous pass's GC/skip/gate/schedule noise, so launchd's
+stdout log does not grow on idle cycles. Real failures and dispatch lines
+are still printed. `dispatch-pause` stops new claims but
 reaping continues; `--quiet` prints the paused line once per until/reason
-change, then collapses it the same way. Optional secrets go in
+change, then stays silent the same way. Optional secrets go in
 `~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
 `export CURSOR_API_KEY=…`); prefer the [Secrets](#secrets) Keychain path
 so `doctor` does not flag plaintext. The wrapper rotates
@@ -578,7 +579,7 @@ the design):
   The next launchd pass still reaps and GCs, then stops before claiming
   (`--dry-run` still plans and prefixes a paused report). `--quiet` prints
   the paused line only when until/reason changed; otherwise idle cycles
-  stay `[]`. `dispatch-resume` clears the pause; `dispatch-status` reports
+  print nothing. `dispatch-resume` clears the pause; `dispatch-status` reports
   it. `digest` is unaffected. Doctor shows `dispatch.paused` and an info
   issue while paused.
 - **Retries** (`maxRetries` / `retryBackoffMinutes`, default off) — `[failed]`

@@ -17,8 +17,8 @@ struct Dispatch: AsyncParsableCommand {
         --dry-run the pass stops after reap/GC and appends that report. \
         --quiet (launchd) emits the paused report only when until/reason \
         changed since the last pass (dispatch.pauseLastReported); an \
-        unchanged pause plus repeat GC/skip noise collapses to [] so \
-        logs do not fill with 'paused' lines.
+        unchanged pause plus an empty pass or repeat GC/skip noise prints \
+        nothing, so logs do not fill with 'paused' lines or [].
         """
     )
 
@@ -42,8 +42,9 @@ struct Dispatch: AsyncParsableCommand {
     var noGC = false
 
     @Flag(name: .customLong("quiet"), help: """
-        Emit [] when this pass produced only repeat GC/skip reports identical \
-        to the previous pass (for launchd logs). A paused report is included \
+        Print nothing when this pass is empty or only repeats the previous \
+        pass's GC/skip/gate/schedule noise (for launchd logs). Real failures \
+        and dispatch lines are always printed. A paused report is included \
         only when the pause until/reason changed since the last pass.
         """)
     var quiet = false
