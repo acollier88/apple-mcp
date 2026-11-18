@@ -38,3 +38,18 @@ or your login keychain session after an interactive `agent login`.
 
 Prefer apple-tasks `"worktree": true` over Cursor's own `-w` flag so the
 dispatch ledger / GC stay authoritative.
+
+## Optional gatehouse lane
+
+`agents.json` lanes stay unsandboxed until a lane sets `sandbox`. The optional
+example is `agents.gatehouse.json` (not copied by the snippet above). It shows:
+
+```json
+"sandbox": { "mode": "gatehouse", "net": "outbound", "preset": "cursor" }
+```
+
+That lane's command omits Cursor's `--sandbox` flag; the dispatcher also strips
+a nested `--sandbox` if one is still present. Merge
+`gatehouse/apple-tasks-policy.toml` into the host gatehouse policy yourself —
+apple-tasks does not install it. Worktrees, scratch dirs, and run logs live in
+`~/Library/Application Support/apple-tasks/`, not in `~/.config/apple-tasks/`.

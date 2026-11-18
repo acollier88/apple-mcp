@@ -94,15 +94,18 @@ final class ConfigPermissionsTests: XCTestCase {
         try mkdir(runs, mode: 0o755)
         try write(runs.appendingPathComponent("7.log"), mode: 0o644)
         try write(runs.appendingPathComponent("7.prompt"), mode: 0o600)   // already tight
+        try mkdir(runs.appendingPathComponent("nested"), mode: 0o755)
+        try write(runs.appendingPathComponent("nested/deep.log"), mode: 0o644)
         try write(configDir.appendingPathComponent("agents.json"), mode: 0o644)
         try write(configDir.appendingPathComponent("agents.json.bak-p3"), mode: 0o644)
-        try write(configDir.appendingPathComponent("watches.json"), mode: 0o644)  // not in scope
+        try write(configDir.appendingPathComponent("watches.json"), mode: 0o644)
 
         let changes = ConfigPermissions.fixModes(configDir: configDir)
         let changed = Set(changes.map { URL(fileURLWithPath: $0.path).lastPathComponent })
         XCTAssertEqual(changed, [
             "apple-tasks", "apple-tasks.db", "apple-tasks.db-wal", "apple-tasks.db-shm",
-            "logs", "dispatch.log", "runs", "7.log", "agents.json", "agents.json.bak-p3",
+            "logs", "dispatch.log", "runs", "7.log", "nested", "deep.log",
+            "agents.json", "agents.json.bak-p3", "watches.json",
         ])
         XCTAssertTrue(changes.contains(.init(path: configDir.path, from: "755", to: "700")))
 
@@ -112,7 +115,9 @@ final class ConfigPermissionsTests: XCTestCase {
         XCTAssertEqual(try mode(db), 0o600)
         XCTAssertEqual(try mode(runs.appendingPathComponent("7.log")), 0o600)
         XCTAssertEqual(try mode(configDir.appendingPathComponent("agents.json.bak-p3")), 0o600)
-        XCTAssertEqual(try mode(configDir.appendingPathComponent("watches.json")), 0o644)
+        XCTAssertEqual(try mode(configDir.appendingPathComponent("watches.json")), 0o600)
+        XCTAssertEqual(try mode(runs.appendingPathComponent("nested")), 0o700)
+        XCTAssertEqual(try mode(runs.appendingPathComponent("nested/deep.log")), 0o600)
 
         XCTAssertEqual(ConfigPermissions.fixModes(configDir: configDir), [], "second pass is a no-op")
     }

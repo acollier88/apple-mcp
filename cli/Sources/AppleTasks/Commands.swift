@@ -14,11 +14,12 @@ struct AppleTasks: AsyncParsableCommand {
             RemirrorTags.self,
             Events.self, Calendars.self,
             Notes.self, Mail.self, ContactsCommand.self, Doctor.self,
-            Dispatch.self, DispatchCancel.self, DispatchDiscard.self, DispatchRetry.self,
+            Dispatch.self, DispatchCancel.self, DispatchDiscard.self, DispatchAccept.self, DispatchRetry.self,
             DispatchPause.self, DispatchResume.self, DispatchStatus.self,
             Dispatches.self, Log.self,
             Whereami.self, NotifyCommand.self, Triage.self, Digest.self, Suggest.self,
             FindingsCommand.self,
+            Research.self,
             Screenshots.self, Files.self, Audio.self, ReadingList.self,
             Watch.self, Web.self, Approve.self, ClipboardCommand.self, SyncGitHub.self,
             Gmail.self, LlmCommand.self, SecretCommand.self,
@@ -602,6 +603,26 @@ struct Complete: AsyncParsableCommand {
         let store = Store()
         try await store.requestAccess()
         let reminder = try await store.reminder(id: id)
+        let caller = AuditDB.caller
+        let recurring = reminder.hasRecurrenceRules
+        let running = AuditDB.shared.runningDispatch(taskId: id)
+        let alreadyRolled = running.map {
+            AuditDB.shared.getState(AgentRecurringComplete.rolledKey($0.id)) != nil
+        } ?? false
+        if AgentRecurringComplete.decision(
+            caller: caller,
+            hasRecurrence: recurring,
+            alreadyRolled: alreadyRolled
+        ) == .ignore {
+            var out = TaskOut(reminder)
+            out.recurred = false
+            AuditDB.shared.record(
+                command: "complete", taskId: out.id, list: out.list,
+                detail: "noop: recurring complete already rolled ledger #\(running?.id ?? 0)",
+                result: "noop")
+            emit(out)
+            return
+        }
         reminder.isCompleted = true
         try store.save(reminder)
 
@@ -631,6 +652,10 @@ struct Complete: AsyncParsableCommand {
             out.recurred = true
         } else {
             out = TaskOut(reminder)
+        }
+        if let running, recurring, caller.hasPrefix("agent:") {
+            let due = AuditDB.shared.occurrenceDue(id: Int64(running.id)) ?? "rolled"
+            _ = AuditDB.shared.setState(AgentRecurringComplete.rolledKey(running.id), due)
         }
         AuditDB.shared.record(command: "complete", taskId: out.id, list: out.list, detail: out.rawTitle)
         emit(out)

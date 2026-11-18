@@ -3220,7 +3220,7 @@
   },
   {
     "name": "run_log",
-    "description": "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). Header lines record provider/model (and Cursor Auto's resolved model). Returns the last `tail` lines (reads at most the final 256 KB).",
+    "description": "Read a dispatch run's captured agent output (~/Library/Application Support/apple-tasks/runs/<ledger_id>.log). Header lines record provider/model (and Cursor Auto's resolved model). Returns the last `tail` lines (reads at most the final 256 KB).",
     "inputSchema": {
       "type": "object",
       "properties": {

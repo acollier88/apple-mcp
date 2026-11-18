@@ -51,7 +51,9 @@ enum AgentEnv {
 
     /// Name fragments that mark a variable as secret-looking (case-insensitive).
     /// Same family as the MCP display redaction in `mcp/src/resources.ts`.
-    static let secretNameFragments = ["key", "token", "secret", "password", "passwd", "credential"]
+    static let secretNameFragments = [
+        "key", "token", "secret", "password", "passwd", "credential", "ntfy",
+    ]
 
     static func isSecretName(_ name: String) -> Bool {
         let lower = name.lowercased()
@@ -89,5 +91,49 @@ enum AgentEnv {
     static func droppedNames(parent: [String: String], policy: Policy) -> [String] {
         let kept = build(parent: parent, policy: Policy(mode: policy.mode, passthrough: policy.passthrough))
         return parent.keys.filter { kept[$0] == nil }.sorted()
+    }
+
+    struct Exposure: Equatable {
+        var signature: String
+        var summary: String
+    }
+
+    /// Doctor warnings (#50): an `inherit` lane hands the agent every
+    /// secret-looking name in `launchd.env` and in that lane's `env`, and a
+    /// passthrough name that is not in the dispatcher environment never arrives.
+    static func exposureFindings(config: AgentsConfig, launchdNames: [String],
+                                 parentNames: Set<String>) -> [Exposure] {
+        var out: [Exposure] = []
+        let lanes = config.agents.sorted { $0.key < $1.key }
+        let inheriting = lanes.filter {
+            Policy.resolve(lane: $0.value, config: config).mode == .inherit
+        }
+        if !inheriting.isEmpty {
+            let secretLaunchd = launchdNames.filter(isSecretName).sorted()
+            if !secretLaunchd.isEmpty {
+                let who = inheriting.map(\.key).joined(separator: ", ")
+                out.append(Exposure(
+                    signature: "env-inherit-launchd",
+                    summary: "launchd.env exports \(secretLaunchd.joined(separator: ", ")) and \(who) inherit the environment"))
+            }
+        }
+        for (tag, agent) in inheriting {
+            let secretOverlay = (agent.env ?? [:]).keys.filter(isSecretName).sorted()
+            if !secretOverlay.isEmpty {
+                out.append(Exposure(
+                    signature: "env-inherit-lane:\(tag)",
+                    summary: "lane \(tag) envMode is inherit and its env sets \(secretOverlay.joined(separator: ", "))"))
+            }
+        }
+        for (tag, agent) in lanes {
+            let missing = Policy.resolve(lane: agent, config: config).passthrough
+                .filter { !parentNames.contains($0) }
+            for name in missing {
+                out.append(Exposure(
+                    signature: "env-passthrough-missing:\(tag):\(name)",
+                    summary: "lane \(tag) envPassthrough \(name) is not set in the dispatcher environment"))
+            }
+        }
+        return out
     }
 }
