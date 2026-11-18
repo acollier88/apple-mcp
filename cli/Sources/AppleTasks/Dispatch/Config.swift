@@ -188,6 +188,9 @@ struct AgentsConfig: Codable {
         /// Always skipped, even if listed in `enabled`.
         var disabled: [String]? = nil
         var thresholds: DetectorThresholds? = nil
+        /// Detector id → agent lane. An accepted proposal is tagged `[auto]`
+        /// only when its detector is listed here (#53).
+        var lanes: [String: String]? = nil
     }
 
     struct DetectorThresholds: Codable {

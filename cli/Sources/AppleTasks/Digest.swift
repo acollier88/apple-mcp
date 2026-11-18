@@ -62,6 +62,8 @@ struct DigestOut: Codable {
     let events: [EventOut]
     var noteCreated: String?
     var pushed: Bool?
+    /// Open proposable findings, muted detectors excluded (#53).
+    var proposals: [ProposalsInbox.Item]?
     /// --suggest only (IDEAS #41): proposals from the on-device model.
     var suggestions: [SuggestionOut]?
     var suggestError: String?
@@ -144,7 +146,8 @@ struct Digest: AsyncParsableCommand {
                             dispatches: dispatches, pendingReview: pendingReview,
                             auditActions: audit.count, auditByCommand: byCommand,
                             dueToday: dueToday, events: events,
-                            noteCreated: nil, pushed: nil)
+                            noteCreated: nil, pushed: nil,
+                            proposals: ProposalsInbox.list().proposals)
         if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
             out.retriesExhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
                 .map { "\($0.taskId) (\($0.count) since last success)" }
@@ -157,7 +160,13 @@ struct Digest: AsyncParsableCommand {
                 try await store.requestEventAccess()
                 let (lines, _) = try await Suggest.gather(store: store, days: 7, staleWeeks: 4,
                                                           includeContacts: true)
-                out.suggestions = try await SuggestClassifier.propose(context: lines, max: 8)
+                let suggestions = try await SuggestClassifier.propose(context: lines, max: 8)
+                out.suggestions = suggestions
+                let settings = (try? AgentsConfig.load())?.doctor?.detectors
+                if Findings.enabled(ProposalsInbox.modelSnapshot, settings) {
+                    ProposalsInbox.rememberSuggestions(
+                        suggestions, lane: settings?.lanes?[ProposalsInbox.modelSnapshot])
+                }
             } catch {
                 out.suggestError = (error as? AppleTasksError)?.description ?? error.localizedDescription
             }
@@ -201,6 +210,9 @@ struct Digest: AsyncParsableCommand {
         }
         if !d.retriesExhausted.isEmpty {
             text += ", \(d.retriesExhausted.count) retries exhausted"
+        }
+        if let proposals = d.proposals, !proposals.isEmpty {
+            text += ", \(proposals.count) proposals"
         }
         return text
     }
@@ -277,6 +289,14 @@ struct Digest: AsyncParsableCommand {
                 let when = e.allDay ? "all day" : String((e.start ?? "").dropFirst(11).prefix(5))
                 return "<li>\(HTML.escape(when)) — \(HTML.escape(e.title))"
                     + (e.location.map { " @ \(HTML.escape($0))" } ?? "") + "</li>"
+            }.joined() + "</ul>")
+        }
+
+        if let proposals = d.proposals, !proposals.isEmpty {
+            parts.append("<h2>Proposals (\(proposals.count))</h2>")
+            parts.append("<ul>" + proposals.map { item in
+                "<li><b>#\(item.id)</b> \(HTML.escape(item.detector)): \(HTML.escape(item.summary))"
+                    + " — \(HTML.escape(item.evidence))</li>"
             }.joined() + "</ul>")
         }
 

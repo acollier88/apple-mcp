@@ -5,7 +5,7 @@ import Foundation
 /// tasks. They never launch an agent: a research agent would need the
 /// sandbox from #39, which is not available here. A proposal has no [auto]
 /// tag, so dispatch will not pick it up.
-enum Proposals {
+enum ResearchDetectors {
     struct Run: Equatable {
         var id: Int
         var agent: String

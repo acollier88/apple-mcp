@@ -1014,6 +1014,7 @@ struct Doctor: AsyncParsableCommand {
                 signature: "secrets-plaintext"))
         }
         issues.append(contentsOf: preflight.issues)
+        issues.append(contentsOf: ProposalsInbox.mutedIssues())
         // One issue per signature: the first source wins.
         var seenSignatures = Set<String>()
         issues = issues.filter { seenSignatures.insert($0.signature).inserted }

@@ -4,88 +4,93 @@ import XCTest
 final class ResearchTests: XCTestCase {
     func testGateRequiresGreenQuietAndAFreeSlot() {
         XCTAssertEqual(
-            Proposals.gate(budget: nil, quiet: "inside", running: 0, maxConcurrent: 2),
+            ResearchDetectors.gate(budget: nil, quiet: "inside", running: 0, maxConcurrent: 2),
             "budget snapshot missing or not green")
         XCTAssertEqual(
-            Proposals.gate(budget: "yellow", quiet: "inside", running: 0, maxConcurrent: 2),
+            ResearchDetectors.gate(budget: "yellow", quiet: "inside", running: 0, maxConcurrent: 2),
             "budget is yellow")
         XCTAssertEqual(
-            Proposals.gate(budget: "green", quiet: "unconfigured", running: 0, maxConcurrent: 2),
+            ResearchDetectors.gate(budget: "green", quiet: "unconfigured", running: 0, maxConcurrent: 2),
             "quiet hours are not configured")
         XCTAssertEqual(
-            Proposals.gate(budget: "green", quiet: "outside", running: 0, maxConcurrent: 2),
+            ResearchDetectors.gate(budget: "green", quiet: "outside", running: 0, maxConcurrent: 2),
             "outside quiet hours")
         XCTAssertEqual(
-            Proposals.gate(budget: "green", quiet: "inside", running: 2, maxConcurrent: 2),
+            ResearchDetectors.gate(budget: "green", quiet: "inside", running: 2, maxConcurrent: 2),
             "no spare concurrency (2/2)")
-        XCTAssertNil(Proposals.gate(budget: "green", quiet: "inside", running: 1, maxConcurrent: 2))
+        XCTAssertNil(ResearchDetectors.gate(budget: "green", quiet: "inside", running: 1, maxConcurrent: 2))
     }
 
     func testSpareBudgetAndQuietWindow() throws {
         let green = try budget(#"{"cursor":{"combine":"any","lanes":[{"id":"a","name":"a","percentUsed":10,"tier":"green","remainingPercent":90}]}}"#)
-        XCTAssertEqual(Proposals.spareBudget(green), "green")
+        XCTAssertEqual(ResearchDetectors.spareBudget(green), "green")
         let mixed = try budget(#"{"cursor":{"combine":"any","lanes":[{"id":"a","name":"a","percentUsed":10,"tier":"green","remainingPercent":90}]},"claude":{"combine":"all","lanes":[{"id":"b","name":"b","percentUsed":95,"tier":"red","remainingPercent":5}]}}"#)
-        XCTAssertEqual(Proposals.spareBudget(mixed), "red")
-        XCTAssertNil(Proposals.spareBudget(nil))
+        XCTAssertEqual(ResearchDetectors.spareBudget(mixed), "red")
+        XCTAssertNil(ResearchDetectors.spareBudget(nil))
 
         let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
-        XCTAssertEqual(Proposals.quietState(TimeWindow(notBetween: ["00:00", "23:59"]), now: noon), "inside")
-        XCTAssertEqual(Proposals.quietState(TimeWindow(notBetween: ["00:00", "00:01"]), now: noon), "outside")
-        XCTAssertEqual(Proposals.quietState(nil, now: noon), "unconfigured")
+        XCTAssertEqual(ResearchDetectors.quietState(TimeWindow(notBetween: ["00:00", "23:59"]), now: noon), "inside")
+        XCTAssertEqual(ResearchDetectors.quietState(TimeWindow(notBetween: ["00:00", "00:01"]), now: noon), "outside")
+        XCTAssertEqual(ResearchDetectors.quietState(nil, now: noon), "unconfigured")
     }
 
     func testLaneStreakBreaksOnSuccessAndSilenceNeedsOpenWork() {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let runs = [
-            Proposals.Run(id: 5, agent: "cursor", status: "failed"),
-            Proposals.Run(id: 4, agent: "cursor", status: "timeout"),
-            Proposals.Run(id: 3, agent: "cursor", status: "failed"),
-            Proposals.Run(id: 2, agent: "cursor", status: "succeeded"),
-            Proposals.Run(id: 1, agent: "claude", status: "failed"),
+            ResearchDetectors.Run(id: 5, agent: "cursor", status: "failed"),
+            ResearchDetectors.Run(id: 4, agent: "cursor", status: "timeout"),
+            ResearchDetectors.Run(id: 3, agent: "cursor", status: "failed"),
+            ResearchDetectors.Run(id: 2, agent: "cursor", status: "succeeded"),
+            ResearchDetectors.Run(id: 1, agent: "claude", status: "failed"),
         ]
-        let streak = Proposals.candidates(
+        let streak = ResearchDetectors.candidates(
             runs: runs, openAutoCount: 0, lastDispatchAt: now, now: now)
         XCTAssertEqual(streak.map(\.fingerprint), ["lane-streak:cursor"])
         XCTAssertFalse(streak[0].evidence.contains("succeeded"))
 
-        let silent = Proposals.candidates(
+        let silent = ResearchDetectors.candidates(
             runs: [], openAutoCount: 2,
             lastDispatchAt: now.addingTimeInterval(-8 * 86400), now: now)
         XCTAssertEqual(silent.map(\.fingerprint), ["dispatcher-silent"])
-        XCTAssertTrue(Proposals.candidates(
+        XCTAssertTrue(ResearchDetectors.candidates(
             runs: [], openAutoCount: 0, lastDispatchAt: nil, now: now).isEmpty)
     }
 
     func testDismissedProposalStaysQuietUntilTheEvidenceChanges() {
-        let proposal = Proposals.Proposal(
+        let proposal = ResearchDetectors.Proposal(
             fingerprint: "lane-streak:cursor", detector: "lane-streak",
             title: "Proposal", evidence: "#5 failed")
-        XCTAssertEqual(Proposals.decide(proposal, stored: nil), .record)
+        XCTAssertEqual(ResearchDetectors.decide(proposal, stored: nil), .record)
         XCTAssertEqual(
-            Proposals.decide(proposal, stored: .init(evidenceHash: proposal.evidenceHash, status: "proposed")),
+            ResearchDetectors.decide(proposal, stored: .init(evidenceHash: proposal.evidenceHash, status: "proposed")),
             .skip)
         XCTAssertEqual(
-            Proposals.decide(proposal, stored: .init(evidenceHash: proposal.evidenceHash, status: "dismissed")),
+            ResearchDetectors.decide(proposal, stored: .init(evidenceHash: proposal.evidenceHash, status: "dismissed")),
             .skip)
         XCTAssertEqual(
-            Proposals.decide(proposal, stored: .init(evidenceHash: "other", status: "dismissed")),
+            ResearchDetectors.decide(proposal, stored: .init(evidenceHash: "other", status: "dismissed")),
             .reopen)
     }
 
-    func testProposalRoundTrip() {
+    func testResearchProposalsShareTheInbox() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("research-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let db = AuditDB(url: dir.appendingPathComponent("t.db"))
-        XCTAssertTrue(db.saveProposal(
-            fingerprint: "dispatcher-silent", detector: "dispatcher-silent",
-            title: "Proposal: silent", evidence: "no dispatch rows",
-            evidenceHash: "abc", status: "proposed"))
-        XCTAssertEqual(db.proposal(fingerprint: "dispatcher-silent")?.status, "proposed")
-        XCTAssertTrue(db.setProposalStatus(fingerprint: "dispatcher-silent", status: "dismissed"))
-        XCTAssertEqual(db.proposals(status: "dismissed").count, 1)
-        XCTAssertTrue(db.proposals(status: "proposed").isEmpty)
+        XCTAssertEqual(ProposalsInbox.remember(
+            detector: "dispatcher-silent", kind: "task", title: "Proposal: quiet 3",
+            evidence: "open auto tasks 3", lane: nil, fingerprint: "dispatcher-silent", db: db), "open")
+        let row = try XCTUnwrap(db.finding(fingerprint: "dispatcher-silent"))
+        XCTAssertEqual(row.findingClass, "proposable")
+        XCTAssertEqual(ProposalsInbox.list(db: db).proposals.map(\.fingerprint), ["dispatcher-silent"])
+        _ = try ProposalsInbox.dismiss(id: row.id, muteDetector: false, db: db)
+        // Same evidence after a dismissal stays quiet.
+        XCTAssertEqual(ProposalsInbox.remember(
+            detector: "dispatcher-silent", kind: "task", title: "Proposal: quiet 3",
+            evidence: "open auto tasks 3", lane: nil, fingerprint: "dispatcher-silent", db: db), "quiet")
+        // Doctor's close-out never touches proposals.
+        XCTAssertTrue(db.resolveFindings(notSeen: []).isEmpty)
     }
 
     private func budget(_ providers: String) throws -> BudgetBandwidth {
