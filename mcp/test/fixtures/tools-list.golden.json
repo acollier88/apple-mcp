@@ -2184,6 +2184,74 @@
     }
   },
   {
+    "name": "findings",
+    "description": "List detector findings recorded by apple-tasks doctor. A finding stays quiet until its evidence changes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string",
+          "description": "healable, proposable, or needs-human."
+        },
+        "state": {
+          "type": "string",
+          "description": "open, healed, accepted, dismissed, expired, or all. Default open."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "fingerprint": {
+                "type": "string"
+              },
+              "detector": {
+                "type": "string"
+              },
+              "system": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              },
+              "findingClass": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "fingerprint",
+              "detector",
+              "system",
+              "severity",
+              "findingClass",
+              "summary",
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
     "name": "findmy_devices",
     "description": "List Find My accessories configured for the FindMy.py sidecar (AirTags/OpenHaystack tags whose pairing files are in ~/.config/apple-tasks/findmy/accessories/). Requires one-time interactive setup: 'python3 tools/findmy/findmy-sidecar.py login'. Returns {error, hint} JSON when unconfigured.",
     "inputSchema": {

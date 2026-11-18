@@ -84,6 +84,24 @@ final class AuditDB {
             answered_via TEXT
         )
         """)
+        exec("""
+        CREATE TABLE IF NOT EXISTS findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT NOT NULL UNIQUE,
+            detector TEXT NOT NULL,
+            system TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            class TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            evidence_hash TEXT NOT NULL,
+            action TEXT,
+            state TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0
+        )
+        """)
         // Proposals (#48) are not a schema-version bump: CREATE IF NOT EXISTS
         // lands on old databases without colliding with other migrations.
         exec("""
@@ -789,6 +807,167 @@ final class AuditDB {
                 status: col(7) ?? "", answeredVia: col(8)))
         }
         return rows
+    }
+
+    struct FindingRow: Codable, Equatable {
+        let id: Int
+        let fingerprint: String
+        let detector: String
+        let system: String
+        let severity: String
+        let findingClass: String
+        let summary: String
+        let evidence: String
+        let evidenceHash: String
+        let action: String?
+        let state: String
+        let firstSeen: String
+        let lastSeen: String
+        let attempts: Int
+    }
+
+    func finding(fingerprint: String) -> FindingRow? {
+        findings(fingerprint: fingerprint, state: nil, findingClass: nil, limit: 1).first
+    }
+
+    func findings(fingerprint: String? = nil, state: String? = nil,
+                  findingClass: String? = nil, limit: Int = 50) -> [FindingRow] {
+        guard db != nil else { return [] }
+        var sql = """
+        SELECT id, fingerprint, detector, system, severity, class, summary, evidence, evidence_hash, \
+        action, state, first_seen, last_seen, attempts FROM findings WHERE 1=1
+        """
+        var binds: [String] = []
+        if let fingerprint { sql += " AND fingerprint = ?"; binds.append(fingerprint) }
+        if let state { sql += " AND state = ?"; binds.append(state) }
+        if let findingClass { sql += " AND class = ?"; binds.append(findingClass) }
+        sql += " ORDER BY id DESC LIMIT \(limit)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        for (index, bind) in binds.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), bind, -1, SQLITE_TRANSIENT)
+        }
+        var rows: [FindingRow] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            func col(_ i: Int32) -> String? {
+                sqlite3_column_text(stmt, i).map { String(cString: $0) }
+            }
+            rows.append(FindingRow(
+                id: Int(sqlite3_column_int64(stmt, 0)),
+                fingerprint: col(1) ?? "", detector: col(2) ?? "", system: col(3) ?? "",
+                severity: col(4) ?? "", findingClass: col(5) ?? "", summary: col(6) ?? "",
+                evidence: col(7) ?? "", evidenceHash: col(8) ?? "", action: col(9),
+                state: col(10) ?? "", firstSeen: col(11) ?? "", lastSeen: col(12) ?? "",
+                attempts: Int(sqlite3_column_int(stmt, 13))))
+        }
+        return rows
+    }
+
+    /// Insert a new open finding, or refresh it when the evidence changed.
+    /// Close open findings that this doctor run did not detect: the
+    /// detector came back clean, which is the only thing that counts as
+    /// healed (#52/#55). Returns the fingerprints it closed.
+    @discardableResult
+    func resolveFindings(notSeen seen: Set<String>) -> [String] {
+        let open = findings(state: "open", findingClass: nil, limit: 1000).map(\.fingerprint)
+        let gone = open.filter { !seen.contains($0) }
+        for fingerprint in gone { _ = setFindingState(fingerprint: fingerprint, state: "healed") }
+        return gone
+    }
+
+    /// Same evidence on an open/dismissed row only bumps last_seen; a closed
+    /// (healed/expired) row that is detected again reopens.
+    @discardableResult
+    func observeFinding(fingerprint: String, detector: String, system: String, severity: String,
+                        findingClass: String, summary: String, evidence: String, evidenceHash: String,
+                        action: String?) -> String {
+        let now = Self.now()
+        if let existing = finding(fingerprint: fingerprint) {
+            // A finding that was closed (healed, expired) and is detected
+            // again is a recurrence: reopen it so the sinks may act.
+            if existing.state != "open" && existing.state != "dismissed" {
+                _ = refreshFinding(fingerprint: fingerprint, summary: summary, evidence: evidence,
+                                   evidenceHash: evidenceHash, action: action, now: now)
+                _ = setFindingState(fingerprint: fingerprint, state: "open")
+                return "refresh"
+            }
+            if existing.evidenceHash == evidenceHash {
+                _ = touchFinding(fingerprint: fingerprint, now: now)
+                return "quiet"
+            }
+            _ = refreshFinding(fingerprint: fingerprint, summary: summary, evidence: evidence,
+                               evidenceHash: evidenceHash, action: action, now: now)
+            return "refresh"
+        }
+        guard db != nil else { return "unavailable" }
+        var stmt: OpaquePointer?
+        let sql = """
+        INSERT INTO findings (fingerprint, detector, system, severity, class, summary, evidence, \
+        evidence_hash, action, state, first_seen, last_seen, attempts) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 0)
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return "unavailable" }
+        defer { sqlite3_finalize(stmt) }
+        let values = [fingerprint, detector, system, severity, findingClass, summary, evidence, evidenceHash]
+        for (index, value) in values.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
+        }
+        if let action {
+            sqlite3_bind_text(stmt, 9, action, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 9)
+        }
+        sqlite3_bind_text(stmt, 10, now, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 11, now, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE ? "open" : "unavailable"
+    }
+
+    @discardableResult
+    func setFindingState(fingerprint: String, state: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE findings SET state = ?, last_seen = ? WHERE fingerprint = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, state, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, Self.now(), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, fingerprint, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) == 1
+    }
+
+    private func touchFinding(fingerprint: String, now: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = "UPDATE findings SET last_seen = ? WHERE fingerprint = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, now, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, fingerprint, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    private func refreshFinding(fingerprint: String, summary: String, evidence: String,
+                                evidenceHash: String, action: String?, now: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        let sql = """
+        UPDATE findings SET summary = ?, evidence = ?, evidence_hash = ?, action = ?, \
+        state = 'open', last_seen = ?, attempts = attempts + 1 WHERE fingerprint = ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, summary, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, evidence, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, evidenceHash, -1, SQLITE_TRANSIENT)
+        if let action {
+            sqlite3_bind_text(stmt, 4, action, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 4)
+        }
+        sqlite3_bind_text(stmt, 5, now, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 6, fingerprint, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     struct ProposalRow: Codable, Equatable {

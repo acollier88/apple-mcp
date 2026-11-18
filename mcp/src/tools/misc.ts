@@ -509,4 +509,41 @@ export function registerMiscTools(server: McpServer): void {
       }
     }
   );
+
+  const findingsDescription =
+    "List detector findings recorded by apple-tasks doctor. A finding stays quiet until its evidence changes.";
+  const findingsAnnotations = { title: "Findings", readOnlyHint: true, idempotentHint: true } as const;
+  trackTool("findings", findingsDescription, findingsAnnotations);
+  server.registerTool(
+    "findings",
+    {
+      description: findingsDescription,
+      inputSchema: {
+        class: z.string().optional().describe("healable, proposable, or needs-human."),
+        state: z.string().optional().describe("open, healed, accepted, dismissed, expired, or all. Default open."),
+      },
+      outputSchema: {
+        findings: z.array(z.object({
+          fingerprint: z.string(),
+          detector: z.string(),
+          system: z.string(),
+          severity: z.string(),
+          findingClass: z.string(),
+          summary: z.string(),
+          state: z.string(),
+        })).optional(),
+      },
+      annotations: findingsAnnotations,
+    },
+    async ({ class: findingClass, state }) => {
+      try {
+        const args = ["findings"];
+        if (findingClass) args.push(...opt("--class", findingClass));
+        if (state) args.push(...opt("--state", state));
+        return okJson(await cli(args));
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
 }

@@ -1,3 +1,4 @@
+import CryptoKit
 import ArgumentParser
 import EventKit
 import Foundation
@@ -956,8 +957,22 @@ struct Doctor: AsyncParsableCommand {
             hermesGateway: hermesGateway,
             hermesCron: hermesCron,
             hermesHaLink: hermesHaLink,
-            homeAssistant: homeAssistant
+            homeAssistant: homeAssistant,
+            settings: (try? AgentsConfig.load())?.doctor?.detectors
         )
+        let registry = Self.registryFindings(
+            hermes: hermes, hermesGateway: hermesGateway, hermesCron: hermesCron,
+            hermesHaLink: hermesHaLink, homeAssistant: homeAssistant,
+            settings: (try? AgentsConfig.load())?.doctor?.detectors)
+        var findingDecisions: [String: String] = [:]
+        for finding in registry {
+            findingDecisions[finding.fingerprint] = AuditDB.shared.observeFinding(
+                fingerprint: finding.fingerprint, detector: finding.detector,
+                system: finding.system, severity: finding.severity,
+                findingClass: finding.kind.rawValue, summary: finding.summary,
+                evidence: finding.evidence, evidenceHash: finding.evidenceHash,
+                action: finding.action)
+        }
         if let pause, let issue = Self.pauseIssue(pause) {
             issues.append(issue)
         }
@@ -965,6 +980,20 @@ struct Doctor: AsyncParsableCommand {
         let preflight = await Self.preflightIssues()
         let findings = await DiagnosticsLive.findings(config: loadedConfig, laneAuth: preflight.authByLane)
         issues.append(contentsOf: findings.map(\.issue))
+        // One findings table (#52): detector findings are recorded beside the
+        // Home Assistant / Hermes ones, with the same quiet-until-evidence-
+        // changes rule, and anything no longer detected is closed.
+        for finding in findings {
+            let detector = finding.signature.split(separator: ":").first.map(String.init) ?? finding.signature
+            let hash = SHA256.hash(data: Data(finding.evidence.utf8)).map { String(format: "%02x", $0) }.joined()
+            findingDecisions[finding.signature] = AuditDB.shared.observeFinding(
+                fingerprint: finding.signature, detector: detector,
+                system: finding.system, severity: finding.severity,
+                findingClass: finding.kind.rawValue, summary: finding.summary,
+                evidence: finding.evidence, evidenceHash: hash,
+                action: finding.suggestedAction)
+        }
+        AuditDB.shared.resolveFindings(notSeen: Set(findingDecisions.keys))
         if let loaded = loadedConfig {
             let launchdNames = Self.launchdEnvExports(
                 at: configDir.appendingPathComponent("launchd.env")).map(\.name)
@@ -998,7 +1027,9 @@ struct Doctor: AsyncParsableCommand {
         _ = AuditDB.shared.setState("doctor.needsHuman", LanePreflight.signatureRecord(preflight.classified))
         var heals: HealReport?
         if enqueueHeals {
-            heals = await Self.enqueueHeals(issues: issues, listName: listName, config: loadedConfig)
+            heals = await Self.enqueueHeals(
+                issues: issues, listName: listName, config: loadedConfig,
+                decisions: findingDecisions, findings: registry)
         }
         emit(DoctorOut(
             binary: Executable.url.path,
@@ -1056,48 +1087,13 @@ struct Doctor: AsyncParsableCommand {
         hermesGateway: String,
         hermesCron: String,
         hermesHaLink: String,
-        homeAssistant: String
+        homeAssistant: String,
+        settings: AgentsConfig.DetectorSettings? = nil
     ) -> [DoctorIssue] {
-        var issues: [DoctorIssue] = []
-        let haDown = homeAssistant.localizedCaseInsensitiveContains("unreachable")
-            || homeAssistant.localizedCaseInsensitiveContains("HASS_TOKEN missing")
-            || homeAssistant.localizedCaseInsensitiveContains("HTTP 401")
-            || homeAssistant.localizedCaseInsensitiveContains("bad HASS_URL")
-            || homeAssistant.localizedCaseInsensitiveContains("probe failed")
-        if haDown {
-            issues.append(DoctorIssue(
-                system: "homeassistant",
-                severity: "red",
-                summary: homeAssistant,
-                signature: "homeassistant"
-            ))
-        }
-
-        var hermesBits: [String] = []
-        if hermes.localizedCaseInsensitiveContains("not installed")
-            || hermes.localizedCaseInsensitiveContains("binary not on PATH") {
-            hermesBits.append(hermes)
-        }
-        if hermesGateway.localizedCaseInsensitiveContains("not running") {
-            hermesBits.append("gateway: \(hermesGateway)")
-        }
-        if let cronIssue = Self.cronHealSummary(hermesCron) {
-            hermesBits.append(cronIssue)
-        }
-        if !haDown, hermesHaLink.localizedCaseInsensitiveContains("retrying")
-            || hermesHaLink.localizedCaseInsensitiveContains("failed")
-            || hermesHaLink.localizedCaseInsensitiveContains("error") {
-            hermesBits.append("haAdapter: \(hermesHaLink)")
-        }
-        if !hermesBits.isEmpty {
-            issues.append(DoctorIssue(
-                system: "hermes",
-                severity: "red",
-                summary: hermesBits.joined(separator: "; "),
-                signature: "hermes"
-            ))
-        }
-
+        var issues = registryFindings(
+            hermes: hermes, hermesGateway: hermesGateway, hermesCron: hermesCron,
+            hermesHaLink: hermesHaLink, homeAssistant: homeAssistant, settings: settings
+        ).map(\.issue)
         let failed = AuditDB.shared.dispatchRows(status: "failed", limit: 20)
         let cutoff = Date().addingTimeInterval(-24 * 3600)
         let iso = ISO8601DateFormatter()
@@ -1137,6 +1133,29 @@ struct Doctor: AsyncParsableCommand {
         return issues
     }
 
+    static func registryFindings(
+        hermes: String,
+        hermesGateway: String,
+        hermesCron: String,
+        hermesHaLink: String,
+        homeAssistant: String,
+        settings: AgentsConfig.DetectorSettings? = nil
+    ) -> [Findings.Finding] {
+        var found: [Findings.Finding] = []
+        if Findings.enabled(Findings.homeAssistantId, settings),
+           let ha = Findings.homeAssistant(status: homeAssistant) {
+            found.append(ha)
+        }
+        let haDown = Findings.homeAssistant(status: homeAssistant) != nil
+        if Findings.enabled(Findings.hermesId, settings),
+           let hermesFinding = Findings.hermes(
+            status: hermes, gateway: hermesGateway, cron: hermesCron,
+            haLink: hermesHaLink, haDown: haDown) {
+            found.append(hermesFinding)
+        }
+        return found
+    }
+
     static func pauseIssue(_ pause: Dispatch.PauseState) -> DoctorIssue? {
         var summary = "dispatcher paused until \(pause.untilISO)"
         if let reason = pause.reason { summary += " (\(reason))" }
@@ -1144,29 +1163,10 @@ struct Doctor: AsyncParsableCommand {
                            summary: summary, signature: "dispatch-pause")
     }
 
-    /// Copilot 403 on a job already pinned to ollama-launch is stale, not a heal.
-    private static func cronHealSummary(_ cron: String) -> String? {
-        guard cron.localizedCaseInsensitiveContains(": error")
-                || cron.localizedCaseInsensitiveContains("last_error") else {
-            return nil
-        }
-        let staleCopilot = cron.localizedCaseInsensitiveContains("provider=ollama-launch")
-            && (cron.localizedCaseInsensitiveContains("403")
-                || cron.localizedCaseInsensitiveContains("copilot"))
-        if staleCopilot { return nil }
-        // Credential blocks are needs-human issues (hermes-cron-blocked), not heals.
-        if cron.localizedCaseInsensitiveContains("blocked_config")
-            || cron.localizedCaseInsensitiveContains("credential") {
-            return nil
-        }
-        if cron.hasPrefix("no ") || cron.hasPrefix("unreadable") || cron.hasPrefix("0 jobs") {
-            return nil
-        }
-        return "cron: \(cron)"
-    }
-
     private static func enqueueHeals(issues: [DoctorIssue], listName: String,
-                                     config: AgentsConfig?) async -> HealReport {
+                                     config: AgentsConfig?,
+                                     decisions: [String: String] = [:],
+                                     findings: [Findings.Finding] = []) async -> HealReport {
         guard !issues.isEmpty else {
             return HealReport(list: listName, actions: [])
         }
@@ -1199,6 +1199,29 @@ struct Doctor: AsyncParsableCommand {
             // info/notice never become heal tasks (secrets-plaintext is info).
             if issue.severity == "info" || issue.severity == "notice" { continue }
             if issue.system == "secrets" { continue }
+            if decisions[issue.signature] == "quiet" {
+                actions.append(HealAction(
+                    system: issue.system, action: "unchanged", taskId: nil, title: nil,
+                    reason: "evidence unchanged"))
+                continue
+            }
+            if let finding = findings.first(where: { $0.fingerprint == issue.signature }) {
+                switch Findings.sink(for: finding.kind) {
+                case .needsHuman:
+                    let sent = await Notifier.push(title: "apple-tasks needs you", body: finding.action)
+                    actions.append(HealAction(
+                        system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                        reason: sent ? finding.action : "notification failed: \(finding.action)"))
+                    continue
+                case .proposed:
+                    actions.append(HealAction(
+                        system: issue.system, action: "proposed", taskId: nil, title: nil,
+                        reason: finding.action))
+                    continue
+                case .heal:
+                    break
+                }
+            }
             if issue.kind == Diagnostics.Kind.needsHuman.rawValue {
                 actions.append(HealAction(
                     system: issue.system, action: "needs-human", taskId: nil, title: nil,
