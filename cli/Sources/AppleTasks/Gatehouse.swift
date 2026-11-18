@@ -136,9 +136,10 @@ enum GatehouseClient {
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> GatehouseProbeFacts {
         var facts = GatehouseProbeFacts()
-        if let result = try? ProcessRunner.run(
-            URL(fileURLWithPath: "/usr/bin/env"),
-            ["gate", "status"],
+        if let gate = gateExecutable(home: home),
+           let result = try? ProcessRunner.run(
+            gate,
+            ["status"],
             environment: env,
             timeout: 3
         ) {
@@ -205,19 +206,40 @@ enum GatehouseClient {
         return roots.map { $0.appendingPathComponent("hooks.toml") }
     }
 
+    /// `gate` from fixed install locations, never from `PATH`: the caller of
+    /// `approve request` is usually the agent, which controls its own PATH
+    /// and could otherwise put a `gate` that always exits 0 in front.
+    static func gateExecutable(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> URL? {
+        let candidates = [
+            "/opt/homebrew/bin/gate",
+            "/usr/local/bin/gate",
+            home.appendingPathComponent(".cargo/bin/gate").path,
+            home.appendingPathComponent(".local/bin/gate").path,
+        ]
+        return candidates.first(where: isExecutable).map { URL(fileURLWithPath: $0) }
+    }
+
     /// Blocks until `gate ask` returns, or `timeout`. The argv is the one the
     /// shipped policy fragment marks `ask_strong`. A missing `gate` binary
-    /// yields nil (caller keeps today's ntfy path behavior for the row).
+    /// yields nil (the row stays pending). Run from the detached
+    /// `approve gate-wait` process, not from the agent's own call.
     static func askStrong(token: String, question: String, timeout: TimeInterval) -> String? {
+        guard let gate = gateExecutable() else { return nil }
         let result: ProcessResult
         do {
             result = try ProcessRunner.run(
-                URL(fileURLWithPath: "/usr/bin/env"),
-                ["gate", "ask", "--json", "--", "apple-tasks", "__approve_strong", token, question],
+                gate,
+                ["ask", "--json", "--", "apple-tasks", "__approve_strong", token, question],
                 timeout: max(timeout, 1))
         } catch {
             return nil
         }
         return interpretAsk(code: result.status, timedOut: result.timedOut)
     }
+
+    /// State key marking an approval whose only valid answer is gatehouse's.
+    static func channelKey(_ token: String) -> String { "approval.channel.\(token)" }
 }

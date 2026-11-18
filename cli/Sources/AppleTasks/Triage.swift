@@ -172,7 +172,7 @@ struct Triage: AsyncParsableCommand {
             let raw = try Self.runAgent(call.argv, timeoutMinutes: agent.timeoutMinutes ?? 5,
                                         envPolicy: .resolve(lane: agent, config: config),
                                         caller: "agent:\(agentTag.lowercased())",
-                                        stdin: call.stdin)
+                                        stdin: call.stdin, tempFile: call.tempFile)
             classifications = try Self.parseJSONArray(raw)
         }
         let byId = Dictionary(classifications.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -259,7 +259,7 @@ struct Triage: AsyncParsableCommand {
                     let raw = try Self.runAgent(call.argv, timeoutMinutes: agent.timeoutMinutes ?? 5,
                                         envPolicy: .resolve(lane: agent, config: config),
                                         caller: "agent:\(agentTag.lowercased())",
-                                        stdin: call.stdin)
+                                        stdin: call.stdin, tempFile: call.tempFile)
                     decisions = try Self.parseJSONArray(raw)
                 }
                 collected = try Self.applyNoteDecisions(decisions, store: store, apply: apply,
@@ -400,23 +400,26 @@ struct Triage: AsyncParsableCommand {
 
     /// How a classifier prompt is handed over. `stdin` drops `{prompt}` from
     /// argv. `file` writes a 0600 temp file and substitutes `{promptFile}`.
+    /// `tempFile` (file mode) holds Reminders/Notes text: `runAgent` deletes
+    /// it when the agent returns.
     static func invocation(template: [String], prompt: String,
-                           via: AgentsConfig.PromptVia) -> (argv: [String], stdin: Data?) {
+                           via: AgentsConfig.PromptVia) -> (argv: [String], stdin: Data?, tempFile: URL?) {
         switch via {
         case .stdin:
-            return (template.filter { $0 != "{prompt}" }, Data(prompt.utf8))
+            return (template.filter { $0 != "{prompt}" }, Data(prompt.utf8), nil)
         case .file:
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("triage-\(UUID().uuidString).prompt")
-            try? Data(prompt.utf8).write(to: url, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            // Created 0600 from the start, not chmod'ed after the write.
+            FileManager.default.createFile(atPath: url.path, contents: Data(prompt.utf8),
+                                           attributes: [.posixPermissions: 0o600])
             let argv = template.compactMap { part -> String? in
                 if part == "{prompt}" { return nil }
                 return part.replacingOccurrences(of: "{promptFile}", with: url.path)
             }
-            return (argv, nil)
+            return (argv, nil, url)
         case .argv:
-            return (template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }, nil)
+            return (template.map { $0.replacingOccurrences(of: "{prompt}", with: prompt) }, nil, nil)
         }
     }
 
@@ -426,7 +429,9 @@ struct Triage: AsyncParsableCommand {
     static func runAgent(_ argv: [String], timeoutMinutes: Int,
                          envPolicy: AgentEnv.Policy = AgentEnv.Policy(),
                          caller: String = "agent:triage",
-                         stdin: Data? = nil) throws -> String {
+                         stdin: Data? = nil,
+                         tempFile: URL? = nil) throws -> String {
+        defer { if let tempFile { try? FileManager.default.removeItem(at: tempFile) } }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
@@ -460,8 +465,11 @@ struct Triage: AsyncParsableCommand {
         try process.run()
         if let stdin, let stdinPipe {
             let writer = stdinPipe.fileHandleForWriting
+            // An agent that exits before reading all of stdin must not
+            // SIGPIPE this process; the throwing write reports EPIPE instead.
+            _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
             DispatchQueue.global(qos: .userInitiated).async {
-                writer.write(stdin)
+                try? writer.write(contentsOf: stdin)
                 try? writer.close()
             }
         }

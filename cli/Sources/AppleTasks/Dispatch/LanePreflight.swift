@@ -104,6 +104,9 @@ enum LanePreflight {
     static func interpretAgentStatus(hasAPIKey: Bool, timedOut: Bool, exitCode: Int32, output: String) -> AuthKind {
         if hasAPIKey { return .ready }
         if timedOut { return .unreachable("agent status timed out") }
+        // /usr/bin/env exits 127 when the binary is not on PATH. That is an
+        // install or PATH problem, not a login to ask the human for.
+        if exitCode == 127 { return .unreachable("agent not found on PATH") }
         let flat = output.replacingOccurrences(of: " ", with: "")
         if flat.contains("\"isAuthenticated\":true") { return .ready }
         if flat.contains("\"isAuthenticated\":false") {
@@ -116,6 +119,7 @@ enum LanePreflight {
     static func interpretClaudeAuth(hasAPIKey: Bool, timedOut: Bool, exitCode: Int32, output: String) -> AuthKind {
         if hasAPIKey { return .ready }
         if timedOut { return .unreachable("claude auth status timed out") }
+        if exitCode == 127 { return .unreachable("claude not found on PATH") }
         let lower = output.lowercased()
         if lower.contains("not logged") || lower.contains("login required") {
             return .needsHuman(command: "claude auth login")
@@ -167,7 +171,9 @@ enum LanePreflight {
     static func mcpUnavailableIssue(mentioned: Bool) -> Classified? {
         guard mentioned else { return nil }
         return Classified(
-            signature: "mcp-unavailable",
+            // Distinct from the detector's `mcp-unavailable` (server cannot
+            // start): here the server may be fine, the doctor lane fell back.
+            signature: "doctor-lane-mcp-fallback",
             summary: "doctor lane logged MCP unavailable and fell back to the CLI",
             needsHumanCommand: nil
         )
@@ -200,6 +206,39 @@ enum LanePreflight {
         }
         let token = String(mapped).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return token.isEmpty ? "job" : token
+    }
+}
+
+/// Per-pass readiness, probed lazily: uptime and DNS on the first question,
+/// each lane's login only when a candidate actually reaches that lane. An
+/// idle pass (no due tasks) runs no probes at all.
+final class LaneReadiness: @unchecked Sendable {
+    private let config: AgentsConfig
+    private let env: [String: String]
+    private var network: Bool?
+    private var auth: [String: LanePreflight.AuthKind] = [:]
+    let uptime: TimeInterval
+
+    init(config: AgentsConfig, env: [String: String],
+         uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        self.config = config
+        self.env = env
+        self.uptime = uptime
+    }
+
+    var networkUp: Bool {
+        if let network { return network }
+        let up = LaneProbe.dnsUp()
+        network = up
+        return up
+    }
+
+    func authKind(_ tag: String) async -> LanePreflight.AuthKind? {
+        if let cached = auth[tag] { return cached }
+        guard let agent = config.agents[tag] else { return nil }
+        let kind = await LaneProbe.authKind(tag: tag, agent: agent, env: env)
+        auth[tag] = kind
+        return kind
     }
 }
 
@@ -275,7 +314,11 @@ enum LaneProbe {
     /// be logged: `agent status` includes the account email.
     private static func runStatus(binary: String, arguments: [String]) -> StatusProbe {
         let url = URL(fileURLWithPath: "/usr/bin/env")
-        guard let run = try? ProcessRunner.run(url, [binary] + arguments, timeout: 8) else {
+        // Same PATH rewrite dispatch gives the agents, so a GUI or MCP
+        // caller without ~/.local/bin on PATH probes the same binary.
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = Dispatch.agentSearchPath(existing: env["PATH"])
+        guard let run = try? ProcessRunner.run(url, [binary] + arguments, environment: env, timeout: 8) else {
             return StatusProbe(timedOut: false, exit: 127, output: "")
         }
         let output = run.stdoutString + "\n" + run.stderrString
