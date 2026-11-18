@@ -61,6 +61,16 @@ extension Dispatch {
             let message = "claim tag save failed: \(error.localizedDescription)"
             Self.passLog("\(message) ledger #\(spec.ledgerId)")
             _ = AuditDB.shared.finishDispatch(id: spec.ledgerId, status: "aborted", exitCode: -1, summary: message)
+            // Planning already created the worktree and its branch; no agent
+            // ran, so both are empty. Remove them now rather than leave them.
+            if let wt = spec.worktree, let repo = spec.repo {
+                if Self.runGit(["worktree", "remove", "--force", wt], repo: repo) == 0 {
+                    if let branch = spec.branch {
+                        _ = Self.runGit(["branch", "-D", branch], repo: repo)
+                    }
+                    _ = AuditDB.shared.clearWorktree(id: spec.ledgerId)
+                }
+            }
             return DispatchReport(
                 taskId: spec.taskId, title: spec.title, agent: spec.agentTag, cwd: spec.runCwd,
                 action: "aborted: \(message)",
@@ -122,7 +132,10 @@ extension Dispatch {
 
         let result: AgentProcess.AgentRunResult
         do {
-            result = try AgentProcess.run(
+            // AgentProcess.run polls and sleeps until the agent exits (up to
+            // the lane timeout). Run it on its own thread so a long agent does
+            // not hold one of Swift concurrency's few cooperative threads.
+            result = try await Self.onDedicatedThread { try AgentProcess.run(
                 executable: "/usr/bin/env",
                 arguments: argv,
                 environment: environment,
@@ -145,7 +158,7 @@ extension Dispatch {
                         writeLog(chunk)
                     }
                 },
-                onStderr: { writeLog($0) })
+                onStderr: { writeLog($0) }) }
         } catch {
             return RunOutcome(spec: spec, status: "spawn failed", exitCode: nil,
                               spawnError: error.localizedDescription, seat: seat)
@@ -155,6 +168,19 @@ extension Dispatch {
         if let sessionId = filter?.sessionId { seat.sessionId = sessionId }
         let status = result.timedOut ? "timeout" : (result.status == 0 ? "succeeded" : "failed")
         return RunOutcome(spec: spec, status: status, exitCode: result.status, spawnError: nil, seat: seat)
+    }
+
+    /// Run blocking `work` on a fresh thread and resume when it returns.
+    static func onDedicatedThread<T>(_ work: @escaping () throws -> T) async throws -> T {
+        let box = ThreadWorkBox(work)
+        return try await withCheckedThrowingContinuation { continuation in
+            let thread = Thread {
+                do { continuation.resume(returning: try box.work()) }
+                catch { continuation.resume(throwing: error) }
+            }
+            thread.stackSize = 1 << 20
+            thread.start()
+        }
     }
 
     static func gitOutput(_ args: [String], repo: String) -> String? {
@@ -187,4 +213,10 @@ extension Dispatch {
             return -1
         }
     }
+}
+
+/// Carries a non-Sendable closure to the thread that runs it once.
+private final class ThreadWorkBox<T>: @unchecked Sendable {
+    let work: () throws -> T
+    init(_ work: @escaping () throws -> T) { self.work = work }
 }

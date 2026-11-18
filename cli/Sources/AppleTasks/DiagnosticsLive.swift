@@ -5,13 +5,30 @@ import Foundation
 /// short. Login checks are the non-billed status commands; their output is
 /// interpreted and dropped, never stored.
 enum DiagnosticsLive {
-    static func findings(config: AgentsConfig?, now: Date = Date()) async -> [Diagnostics.Finding] {
+    /// `laneAuth`: the lane probe doctor already ran (`LaneProbe.snapshot`).
+    /// When given, the lane-auth detector uses it instead of probing again,
+    /// and covers every configured lane rather than only cursor and claude.
+    static func findings(config: AgentsConfig?, laneAuth: [String: LanePreflight.AuthKind]? = nil,
+                         now: Date = Date()) async -> [Diagnostics.Finding] {
         let settings = config?.doctor?.detectors
-        let snapshot = await snapshot(config: config, settings: settings, now: now)
-        return Diagnostics.collect(snapshot: snapshot, settings: settings)
+        var snap = await snapshot(config: config, settings: settings, now: now,
+                                  probeLanes: laneAuth == nil)
+        if let laneAuth, Diagnostics.enabled(Diagnostics.ID.laneAuth, settings) {
+            snap.lanes = laneAuth.keys.sorted().map { lane in
+                let state: Diagnostics.LaneState
+                switch laneAuth[lane] {
+                case .ready?: state = .ready
+                case .needsHuman?: state = .needsHuman
+                case .unreachable?, nil: state = .unknown
+                }
+                return Diagnostics.LaneCheck(lane: lane, state: state)
+            }
+        }
+        return Diagnostics.collect(snapshot: snap, settings: settings)
     }
 
-    static func snapshot(config: AgentsConfig?, settings: AgentsConfig.DetectorSettings?, now: Date) async -> Diagnostics.Snapshot {
+    static func snapshot(config: AgentsConfig?, settings: AgentsConfig.DetectorSettings?, now: Date,
+                         probeLanes: Bool = true) async -> Diagnostics.Snapshot {
         var snap = Diagnostics.Snapshot(now: now)
         if Diagnostics.enabled(Diagnostics.ID.launchAgents, settings) {
             snap.launch = launchJob()
@@ -27,7 +44,7 @@ enum DiagnosticsLive {
         if Diagnostics.enabled(Diagnostics.ID.retriesExhausted, settings) {
             snap.retries = await retryTasks(maxRetries: config?.maxRetries ?? 0)
         }
-        if Diagnostics.enabled(Diagnostics.ID.laneAuth, settings) {
+        if probeLanes, Diagnostics.enabled(Diagnostics.ID.laneAuth, settings) {
             snap.lanes = laneChecks()
         }
         if Diagnostics.enabled(Diagnostics.ID.scheduledJobs, settings) {

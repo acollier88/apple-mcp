@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
-import { resolveBin } from "../src/lib";
+import { callerFor, resolveBin } from "../src/lib";
 
 test("APPLE_TASKS_BIN wins over the installed copy", () => {
   expect(resolveBin({ APPLE_TASKS_BIN: "/tmp/fake" }, () => true)).toBe("/tmp/fake");
@@ -14,4 +14,13 @@ test("an installed binary is the default", () => {
 
 test("the build product is the fallback", () => {
   expect(resolveBin({}, () => false)).toContain("cli/.build/release/apple-tasks");
+});
+
+test("a dispatched agent keeps its caller through MCP", () => {
+  expect(callerFor({ APPLE_TASKS_CALLER: "agent:cursor" })).toBe("agent:cursor");
+});
+
+test("other callers are mcp", () => {
+  expect(callerFor({})).toBe("mcp");
+  expect(callerFor({ APPLE_TASKS_CALLER: "launchd" })).toBe("mcp");
 });

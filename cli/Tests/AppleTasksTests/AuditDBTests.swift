@@ -77,6 +77,27 @@ final class AuditDBTests: XCTestCase {
         }
     }
 
+    func testRewritePathPrefixRepointsWorktreeAndRunLog() {
+        let db = openDB()
+        guard case .claimed(let id) = db.claimDispatch(taskId: "t", agent: "cursor", command: "echo", cwd: "/repo"),
+              case .claimed(let other) = db.claimDispatch(taskId: "u", agent: "cursor", command: "echo", cwd: "/repo")
+        else { return XCTFail("claim failed") }
+        db.setDispatchPaths(id: id, runLogPath: "/h/.config/apple-tasks/runs/\(id).log",
+                            worktree: "/h/.config/apple-tasks/worktrees/\(id)")
+        db.setDispatchPaths(id: other, runLogPath: "/elsewhere/runs/x.log", worktree: nil)
+
+        XCTAssertEqual(db.rewritePathPrefix(from: "/h/.config/apple-tasks/worktrees/",
+                                            to: "/h/Support/worktrees/"), 1)
+        XCTAssertEqual(db.rewritePathPrefix(from: "/h/.config/apple-tasks/runs/",
+                                            to: "/h/Support/runs/"), 1)
+        let row = db.dispatchRow(id: id)
+        XCTAssertEqual(row?.worktree, "/h/Support/worktrees/\(id)")
+        XCTAssertEqual(row?.runLogPath, "/h/Support/runs/\(id).log")
+        XCTAssertEqual(db.dispatchRow(id: other)?.runLogPath, "/elsewhere/runs/x.log")
+        // Idempotent.
+        XCTAssertEqual(db.rewritePathPrefix(from: "/h/.config/apple-tasks/runs/", to: "/h/Support/runs/"), 0)
+    }
+
     func testDirectoryPathIsUnavailable() throws {
         let dir = tempDir.appendingPathComponent("not-a-db", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -171,6 +192,37 @@ final class AuditDBTests: XCTestCase {
         XCTAssertTrue(db.finishDispatch(id: agentId, status: "timeout", exitCode: 1,
                                         summary: "timeout waiting on agent"))
         XCTAssertEqual(db.failedAttempts(taskId: "hung").count, 1)
+    }
+
+    private func failOnce(_ db: AuditDB, task: String, status: String = "failed") {
+        guard case .claimed(let id) = db.claimDispatch(taskId: task, agent: "cursor", command: "x", cwd: nil) else {
+            return XCTFail("claim failed for \(task)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: id, status: status, exitCode: 1))
+    }
+
+    func testHumanRetryResetsTheBudget() {
+        let db = openDB()
+        failOnce(db, task: "flaky")
+        failOnce(db, task: "flaky")
+        XCTAssertEqual(db.failedAttempts(taskId: "flaky").count, 2)
+        db.resetRetryBudget(taskId: "flaky")
+        XCTAssertEqual(db.failedAttempts(taskId: "flaky").count, 0)
+        XCTAssertTrue(db.retriesExhausted(maxRetries: 1).isEmpty)
+        failOnce(db, task: "flaky")
+        XCTAssertEqual(db.failedAttempts(taskId: "flaky").count, 1)
+    }
+
+    func testRetriesExhaustedIgnoresTasksWhoseLatestRunWasNotAFailure() {
+        let db = openDB()
+        failOnce(db, task: "gave-up")
+        failOnce(db, task: "gave-up")
+        failOnce(db, task: "cancelled-later")
+        failOnce(db, task: "cancelled-later")
+        failOnce(db, task: "cancelled-later", status: "cancelled")
+        XCTAssertEqual(db.retriesExhausted(maxRetries: 1).map(\.taskId), ["gave-up"])
+        // Old failures (outside the window) are not reported.
+        XCTAssertTrue(db.retriesExhausted(maxRetries: 1, withinDays: -1).isEmpty)
     }
 
     func testCancelledDoesNotCountAsFailedAttempt() {

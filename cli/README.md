@@ -482,7 +482,8 @@ the design):
   wrapped in `gate sandbox --workspace <worktree-or-scratch> --git-dir <repo>/.git`
   (`--git-dir` omitted when there is no repo) plus `--net`, `--preset`, and
   `--env KEY` for each `envPassthrough` name. Write-back commands in the prompt
-  are prefixed with `gate run --`. A nested harness `--sandbox` flag is stripped
+  are prefixed with `gate run --env APPLE_TASKS_CALLER --` so the broker-run
+  command keeps the agent's caller identity. A nested harness `--sandbox` flag is stripped
   from that wrapped argv. See `examples/agents.gatehouse.json` and
   `examples/gatehouse/apple-tasks-policy.toml`. `gate sandbox` itself is not
   shipped yet (gatehouse#7); without that binary a sandboxed lane fails at spawn

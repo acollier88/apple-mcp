@@ -222,7 +222,7 @@ enum SuggestClassifier {
         let raw = try Triage.runAgent(call.argv, timeoutMinutes: lane.timeoutMinutes ?? 5,
                                       envPolicy: .resolve(lane: lane, config: config),
                                       caller: "agent:\(agentTag.lowercased())",
-                                      stdin: call.stdin)
+                                      stdin: call.stdin, tempFile: call.tempFile)
         let items: [SuggestionOut] = try Triage.parseJSONArray(raw)
         return Array(items.prefix(maxItems))
     }
