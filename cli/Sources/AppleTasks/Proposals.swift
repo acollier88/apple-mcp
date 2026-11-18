@@ -84,9 +84,12 @@ enum ProposalsInbox {
     }
 
     @discardableResult
+    /// `fingerprint` overrides the title-derived one for detectors whose
+    /// title carries a changing count (research: "4 failed runs in a row").
     static func remember(detector: String, kind: String, title: String, evidence: String,
-                         lane: String?, db: AuditDB = .shared) -> String {
-        let fp = fingerprint(detector: detector, kind: kind, title: title)
+                         lane: String?, fingerprint explicit: String? = nil,
+                         db: AuditDB = .shared) -> String {
+        let fp = explicit ?? fingerprint(detector: detector, kind: kind, title: title)
         let body = "kind: \(kind)\n\(evidence)"
         return db.observeFinding(
             fingerprint: fp, detector: detector, system: "proposals", severity: "notice",
@@ -222,6 +225,10 @@ struct ProposalsAccept: AsyncParsableCommand {
     var list: String = "Code Tasks"
 
     func run() async throws {
+        // Accepting can create an [auto] task; deciding proposals is the human's call.
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "proposals accept", caller: CallerGuard.currentCaller),
+            command: "proposals accept", detail: nil)
         let store = Store()
         try await store.requestAccess()
         emit(try ProposalsInbox.accept(id: id, listName: list, store: store))
@@ -241,6 +248,10 @@ struct ProposalsDismiss: AsyncParsableCommand {
     var muteDetector = false
 
     func run() throws {
+        // Accepting can create an [auto] task; deciding proposals is the human's call.
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "proposals dismiss", caller: CallerGuard.currentCaller),
+            command: "proposals dismiss", detail: nil)
         emit(try ProposalsInbox.dismiss(id: id, muteDetector: muteDetector))
     }
 }
@@ -253,6 +264,10 @@ struct ProposalsUnmute: AsyncParsableCommand {
     @Argument var detector: String
 
     func run() throws {
+        // Accepting can create an [auto] task; deciding proposals is the human's call.
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "proposals unmute", caller: CallerGuard.currentCaller),
+            command: "proposals unmute", detail: nil)
         ProposalsInbox.unmute(detector)
         emit(ProposalsInbox.list())
     }

@@ -1,0 +1,26 @@
+{
+  "agents": {
+    "cursor": {
+      "description": "Optional example only — copy over agents.json to launch the cursor lane under gate sandbox. The default examples/agents.json lane stays unsandboxed.",
+      "command": [
+        "agent",
+        "-p",
+        "{prompt}",
+        "--force",
+        "--trust",
+        "--approve-mcps"
+      ],
+      "sandbox": {
+        "mode": "gatehouse",
+        "net": "outbound",
+        "preset": "cursor"
+      },
+      "worktree": true,
+      "timeoutMinutes": 60,
+      "maxConcurrent": 1,
+      "envPassthrough": [
+        "CURSOR_API_KEY"
+      ]
+    }
+  }
+}

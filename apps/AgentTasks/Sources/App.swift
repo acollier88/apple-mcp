@@ -16,6 +16,7 @@ struct AgentTasksApp: App {
     // app's lifetime -- without this the observer below never fires.
     private let eventStore = EKEventStore()
     @State private var eventKitDebounce: Task<Void, Never>?
+    @NSApplicationDelegateAdaptor(AgentTasksDelegate.self) private var appDelegate
 
     init() {
         // Headless helper mode: bare CLI executables can't get a Location
@@ -27,7 +28,7 @@ struct AgentTasksApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "console") {
             ContentView()
                 .task {
                     AgentTasksShortcuts.updateAppShortcutParameters()
@@ -49,6 +50,16 @@ struct AgentTasksApp: App {
                     }
                 }
         }
+
+        // Glanceable ops: running count, pause/resume, failures, reviews,
+        // and the apple-tasks approvals queue. Window style so the popover
+        // can hold buttons (a plain menu cannot).
+        MenuBarExtra {
+            MenuBarView()
+        } label: {
+            MenuBarLabel()
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 

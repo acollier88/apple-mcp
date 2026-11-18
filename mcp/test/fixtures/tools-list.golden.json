@@ -1600,6 +1600,37 @@
               "type": "null"
             }
           ]
+        },
+        "fixedModes": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Paths chmod'd by --fix-modes. Absent on a normal doctor run."
         }
       },
       "required": [
@@ -3363,7 +3394,7 @@
   },
   {
     "name": "run_log",
-    "description": "Read a dispatch run's captured agent output (~/.config/apple-tasks/runs/<ledger_id>.log). Header lines record provider/model (and Cursor Auto's resolved model). Returns the last `tail` lines (reads at most the final 256 KB).",
+    "description": "Read a dispatch run's captured agent output (~/Library/Application Support/apple-tasks/runs/<ledger_id>.log). Header lines record provider/model (and Cursor Auto's resolved model). Returns the last `tail` lines (reads at most the final 256 KB).",
     "inputSchema": {
       "type": "object",
       "properties": {

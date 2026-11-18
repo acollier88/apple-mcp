@@ -48,7 +48,7 @@ struct AuditEvent: Codable, Identifiable {
     }
 }
 
-struct DispatchLedgerRow: Codable, Identifiable {
+struct DispatchLedgerRow: Codable, Equatable, Identifiable {
     let id: Int
     let taskId: String
     let agent: String

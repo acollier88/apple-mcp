@@ -1,8 +1,10 @@
 #!/bin/bash
 # Hand-rolled .app build with App Intents metadata extraction (no Xcode project).
 set -euo pipefail
-cd "$(dirname "$0")"
-REPO_ROOT="$(cd ../.. && pwd)"
+# Physical path (#5): swiftc and appintentsmetadataprocessor compare source
+# paths literally, so a symlinked checkout must not stay logical.
+cd "$(cd "$(dirname "$0")" && pwd -P)"
+REPO_ROOT="$(cd ../.. && pwd -P)"
 
 # Use the Xcode 27 beta when present (Reminders domain schemas need its SDK).
 if [ -d /Applications/Xcode-beta.app ]; then

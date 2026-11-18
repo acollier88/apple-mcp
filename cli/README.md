@@ -220,7 +220,7 @@ Setup (one-time):
 
 ```bash
 python3 -m venv ~/.config/apple-tasks/findmy/venv
-~/.config/apple-tasks/findmy/venv/bin/pip install FindMy
+~/.config/apple-tasks/findmy/venv/bin/pip install -r ../tools/findmy/requirements.txt   # pinned FindMy.py
 ~/.config/apple-tasks/findmy/venv/bin/python3 ../tools/findmy/findmy-sidecar.py login   # Apple ID + 2FA
 # then drop AirTag pairing .plist / accessory .json files into
 # ~/.config/apple-tasks/findmy/accessories/ (see FindMy.py docs for export)
@@ -295,11 +295,16 @@ available the task stays queued — it is not `[failed]`. Config at
   "retryBackoffMinutes": 30,
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
+  "pendingReviewWorktreeDays": 0,
   "notifyOn": "failure",
   "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] },
   "autoBudget": "skipRed"
 }
 ```
+
+`pendingReviewWorktreeDays` defaults to off (`0` or omitted). Set it to a
+positive number of days (14 is a reasonable start) to have GC delete only
+the worktree directory of an unmerged succeeded run and keep the git branch.
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Optional `repoDescriptions` (same keys) is the text Jev sees
@@ -370,17 +375,18 @@ LAUNCH_AGENTS=/tmp/x/LaunchAgents CONFIG_DIR=/tmp/x/config LAUNCHCTL=true`.
 
 `install-agent` writes a LaunchAgent that runs `apple-tasks dispatch --quiet`
 with a PATH that includes `~/.local/bin` (where `agent` / `claude` / `agy` /
-`hermes` usually live). `--quiet` emits `[]` when a pass produced only the
-same GC/skip/gate/schedule noise as the previous one, so launchd's stdout
-log does not grow on idle cycles. `dispatch-pause` stops new claims but
+`hermes` usually live). `--quiet` prints nothing when a pass is empty or
+only repeats the previous pass's GC/skip/gate/schedule noise, so launchd's
+stdout log does not grow on idle cycles. Real failures and dispatch lines
+are still printed. `dispatch-pause` stops new claims but
 reaping continues; `--quiet` prints the paused line once per until/reason
-change, then collapses it the same way. Optional secrets go in
+change, then stays silent the same way. Optional secrets go in
 `~/.config/apple-tasks/launchd.env` (sourced before each run — e.g.
 `export CURSOR_API_KEY=…`); prefer the [Secrets](#secrets) Keychain path
 so `doctor` does not flag plaintext. The wrapper rotates
 `~/.config/apple-tasks/logs/*.log` to `*.1` when a file exceeds 5 MiB.
 Logs: `~/.config/apple-tasks/logs/dispatch.*.log`. Per-run agent logs
-(`~/.config/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
+(`~/Library/Application Support/apple-tasks/runs/<ledger>.log`) start with `# provider=` / `# model=`
 (from argv) and, for Cursor `agent`, a `# resolved model=` line from Auto.
 `doctor` reports
 `launchAgent` / `cursorAgent` / `hermes` / `hermesGateway` / `hermesCron` /
@@ -450,20 +456,38 @@ the design):
   branches are removed immediately, unmerged succeeded branches are kept and
   surfaced as pending deliverables, failed/timeout/cancelled worktrees are kept
   `keepFailedWorktreeDays` (default 7) then removed (their branch is deleted
-  only if empty). Scratch dirs under `~/.config/apple-tasks/scratch/<id>`
-  for finished (or orphan) ledger rows older than the same cutoff are
-  removed too. `--no-gc` skips the pass.
+  only if empty). `pendingReviewWorktreeDays` (default off: omit the key or
+  set `0`) opts in to removing an unmerged succeeded *checkout* after that
+  many days with `git worktree remove`. The branch is never deleted by
+  age-out, and the row stays pending review. Scratch dirs under
+  `~/Library/Application Support/apple-tasks/scratch/<id>` for finished (or
+  orphan) ledger rows older than `keepFailedWorktreeDays` are removed too.
+  `--no-gc` skips the pass.
 - **Notifications** (`notifyOn`: `"failure"` default, `"all"`, `"none"`) — a
   macOS notification with the task title and outcome fires as runs finish.
 - **Run logs** — each agent's stdout/stderr is captured to
-  `~/.config/apple-tasks/runs/<ledger-id>.log`; the ledger stores the path.
+  `~/Library/Application Support/apple-tasks/runs/<ledger-id>.log`; the ledger stores the path.
+  Worktrees and scratch dirs live in that same Application Support directory,
+  not next to `agents.json` or the ledger, so a sandbox can deny
+  `~/.config/apple-tasks/`.
 - **Worktree isolation** (`"worktree": true` per agent) — the dispatcher runs
   `git worktree add` in the task's workdir and the agent works on its own
   branch (`agent/<tag>-<ledger-id>`) under
-  `~/.config/apple-tasks/worktrees/<ledger-id>`. Output is a branch, never
+  `~/Library/Application Support/apple-tasks/worktrees/<ledger-id>`. Output is a branch, never
   edits to the main checkout — this is what makes `acceptEdits` reasonable
   unattended. If worktree creation fails the dispatch is aborted, not run
   unisolated.
+- **Gatehouse sandbox** (`"sandbox": {"mode": "gatehouse", "net": "outbound", "preset": "cursor"}`,
+  optional) — absent means today's direct spawn. When set, the lane argv is
+  wrapped in `gate sandbox --workspace <worktree-or-scratch> --git-dir <repo>/.git`
+  (`--git-dir` omitted when there is no repo) plus `--net`, `--preset`, and
+  `--env KEY` for each `envPassthrough` name. Write-back commands in the prompt
+  are prefixed with `gate run --env APPLE_TASKS_CALLER --` so the broker-run
+  command keeps the agent's caller identity. A nested harness `--sandbox` flag is stripped
+  from that wrapped argv. See `examples/agents.gatehouse.json` and
+  `examples/gatehouse/apple-tasks-policy.toml`. `gate sandbox` itself is not
+  shipped yet (gatehouse#7); without that binary a sandboxed lane fails at spawn
+  rather than running unsandboxed.
 - **Lane description** (`"description"` per agent, optional) — one line Jev
   sees as the Choice criteria for that lane. Without it the lane option is
   just the tag, and Jev rarely clears `applyConfidence`.
@@ -471,7 +495,7 @@ the design):
   `file`) — `argv` substitutes `{prompt}` inline (visible in `ps` to other
   processes of this user, subject to ARG_MAX). `stdin` pipes the
   prompt and drops `{prompt}` from argv (`claude -p`, `codex exec -`).
-  `file` writes it to `~/.config/apple-tasks/runs/<ledger-id>.prompt` and
+  `file` writes it to `~/Library/Application Support/apple-tasks/runs/<ledger-id>.prompt` and
   substitutes `{promptFile}`. Every mode keeps that `.prompt` copy (`600`)
   next to the run log (best-effort for `argv`). The ledger's `command`
   column and the run-log header store the argv with the prompt replaced by
@@ -578,7 +602,7 @@ the design):
   The next launchd pass still reaps and GCs, then stops before claiming
   (`--dry-run` still plans and prefixes a paused report). `--quiet` prints
   the paused line only when until/reason changed; otherwise idle cycles
-  stay `[]`. `dispatch-resume` clears the pause; `dispatch-status` reports
+  print nothing. `dispatch-resume` clears the pause; `dispatch-status` reports
   it. `digest` is unaffected. Doctor shows `dispatch.paused` and an info
   issue while paused.
 - **Retries** (`maxRetries` / `retryBackoffMinutes`, default off) — `[failed]`
@@ -587,9 +611,19 @@ the design):
   spent the task stays `[failed]` for a human or triage agent.
 - **Pending review** — `apple-tasks dispatches --status pending-review`
   (or `--pending-review`) lists succeeded worktree runs whose agent branch
-  is still unmerged. Merged or deleted branches are marked reviewed and
-  drop off the list. `apple-tasks dispatch-discard <ledgerId>` force-removes
-  the worktree, deletes the branch, and marks the row reviewed.
+  is still unmerged, including how long each has been waiting. Merged or
+  deleted branches are marked reviewed and drop off the list.
+  `apple-tasks dispatch-discard <ledgerId>` force-removes the worktree,
+  deletes the branch, and marks the row reviewed.
+  `apple-tasks dispatch-accept <ledgerId>` fast-forward merges the branch
+  when the checkout is clean and the branch is a fast-forward of HEAD;
+  otherwise it pushes the branch and opens a GitHub pull request with `gh`
+  (the branch is kept). `--dry-run` reports merge vs pull-request and does
+  not merge, push, or call `gh`. The morning digest lists these with age.
+  A banner (and ntfy, when a topic is configured) fires when the set of
+  ledger id + branch + commits changes — the same items stay quiet on later
+  dispatch passes and later digests. The digest's own `--push` summary still
+  includes the count and the oldest age.
 
 > **Subscription note (Claude Pro/Max):** the dispatcher invokes the official
 > `claude` CLI, which Anthropic permits for scripted/headless use under a
@@ -789,7 +823,10 @@ with the source path as provenance. `doctor` reports the drop-folder path.
 
 `apple-tasks digest` is a deterministic aggregation (no model, safe to run
 unattended): agent activity since yesterday (audit log), dispatch outcomes,
-tasks due today (with #19 URL linkbacks to PRs), and today's calendar.
+tasks due today (with #19 URL linkbacks to PRs), today's calendar, and
+branches awaiting review with their age. When that pending-review set
+changes, digest (and each dispatch pass) sends one notification and then
+stays quiet until a row, branch, or commit changes.
 
 ```bash
 apple-tasks digest                # JSON to stdout

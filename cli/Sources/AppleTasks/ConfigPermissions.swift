@@ -83,29 +83,50 @@ enum ConfigPermissions {
     /// Directory, ledger DB + sidecars, `logs/` and `runs/` (dirs 0700,
     /// regular files directly inside 0600), `agents.json` and
     /// `agents.json.bak-*` (lane `env` can hold API keys).
-    static func fixModes(configDir: URL) -> [ModeChange] {
+    static func fixModes(configDir: URL, supportDir: URL? = nil) -> [ModeChange] {
         var changes: [ModeChange] = []
         let fm = FileManager.default
         if let change = tighten(configDir, to: privateDirectoryMode, directory: true) { changes.append(change) }
 
         changes += tightenDatabase(configDir.appendingPathComponent("apple-tasks.db"))
 
-        for sub in ["logs", "runs"] {
-            let dir = configDir.appendingPathComponent(sub, isDirectory: true)
-            if let change = tighten(dir, to: privateDirectoryMode, directory: true) { changes.append(change) }
-            guard mode(of: dir, directory: true) != nil else { continue }
-            let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
-            for name in names.sorted() {
-                if let change = tighten(dir.appendingPathComponent(name), to: privateFileMode, directory: false) {
-                    changes.append(change)
-                }
-            }
+        var directories: [URL] = ["logs", "runs"].map { configDir.appendingPathComponent($0, isDirectory: true) }
+        if let supportDir {
+            if let change = tighten(supportDir, to: privateDirectoryMode, directory: true) { changes.append(change) }
+            directories.append(supportDir.appendingPathComponent("runs", isDirectory: true))
+        }
+        for dir in directories {
+            changes += tightenTree(dir)
         }
 
         let names = (try? fm.contentsOfDirectory(atPath: configDir.path)) ?? []
-        for name in names.sorted() where name == "agents.json" || name.hasPrefix("agents.json.bak") {
+        for name in names.sorted() where name == "agents.json" || name.hasPrefix("agents.json.bak") || name == "watches.json" {
             if let change = tighten(configDir.appendingPathComponent(name), to: privateFileMode, directory: false) {
                 changes.append(change)
+            }
+        }
+        return changes
+    }
+
+    /// `logs/` and `runs/` including nested directories. Symlinks are skipped.
+    private static func tightenTree(_ dir: URL) -> [ModeChange] {
+        var changes: [ModeChange] = []
+        if let change = tighten(dir, to: privateDirectoryMode, directory: true) { changes.append(change) }
+        guard mode(of: dir, directory: true) != nil else { return changes }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        for name in names.sorted() {
+            let child = dir.appendingPathComponent(name)
+            var st = stat()
+            guard lstat(child.path, &st) == 0 else { continue }
+            switch st.st_mode & S_IFMT {
+            case S_IFDIR:
+                changes += tightenTree(child)
+            case S_IFREG:
+                if let change = tighten(child, to: privateFileMode, directory: false) {
+                    changes.append(change)
+                }
+            default:
+                break
             }
         }
         return changes

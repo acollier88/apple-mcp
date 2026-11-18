@@ -490,6 +490,11 @@ export function registerMiscTools(server: McpServer): void {
           })
           .nullable()
           .optional(),
+        fixedModes: z
+          .array(z.object({ path: z.string(), from: z.string(), to: z.string() }))
+          .nullable()
+          .optional()
+          .describe("Paths chmod'd by --fix-modes. Absent on a normal doctor run."),
       },
       annotations: doctorAnnotations,
     },
