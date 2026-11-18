@@ -1,3 +1,4 @@
+import CryptoKit
 import ArgumentParser
 import EventKit
 import Foundation
@@ -979,6 +980,20 @@ struct Doctor: AsyncParsableCommand {
         let preflight = await Self.preflightIssues()
         let findings = await DiagnosticsLive.findings(config: loadedConfig, laneAuth: preflight.authByLane)
         issues.append(contentsOf: findings.map(\.issue))
+        // One findings table (#52): detector findings are recorded beside the
+        // Home Assistant / Hermes ones, with the same quiet-until-evidence-
+        // changes rule, and anything no longer detected is closed.
+        for finding in findings {
+            let detector = finding.signature.split(separator: ":").first.map(String.init) ?? finding.signature
+            let hash = SHA256.hash(data: Data(finding.evidence.utf8)).map { String(format: "%02x", $0) }.joined()
+            findingDecisions[finding.signature] = AuditDB.shared.observeFinding(
+                fingerprint: finding.signature, detector: detector,
+                system: finding.system, severity: finding.severity,
+                findingClass: finding.kind.rawValue, summary: finding.summary,
+                evidence: finding.evidence, evidenceHash: hash,
+                action: finding.suggestedAction)
+        }
+        AuditDB.shared.resolveFindings(notSeen: Set(findingDecisions.keys))
         if let loaded = loadedConfig {
             let launchdNames = Self.launchdEnvExports(
                 at: configDir.appendingPathComponent("launchd.env")).map(\.name)

@@ -865,13 +865,33 @@ final class AuditDB {
     }
 
     /// Insert a new open finding, or refresh it when the evidence changed.
-    /// Same evidence on an open/dismissed/accepted/healed row only bumps last_seen.
+    /// Close open findings that this doctor run did not detect: the
+    /// detector came back clean, which is the only thing that counts as
+    /// healed (#52/#55). Returns the fingerprints it closed.
+    @discardableResult
+    func resolveFindings(notSeen seen: Set<String>) -> [String] {
+        let open = findings(state: "open", findingClass: nil, limit: 1000).map(\.fingerprint)
+        let gone = open.filter { !seen.contains($0) }
+        for fingerprint in gone { _ = setFindingState(fingerprint: fingerprint, state: "healed") }
+        return gone
+    }
+
+    /// Same evidence on an open/dismissed row only bumps last_seen; a closed
+    /// (healed/expired) row that is detected again reopens.
     @discardableResult
     func observeFinding(fingerprint: String, detector: String, system: String, severity: String,
                         findingClass: String, summary: String, evidence: String, evidenceHash: String,
                         action: String?) -> String {
         let now = Self.now()
         if let existing = finding(fingerprint: fingerprint) {
+            // A finding that was closed (healed, expired) and is detected
+            // again is a recurrence: reopen it so the sinks may act.
+            if existing.state != "open" && existing.state != "dismissed" {
+                _ = refreshFinding(fingerprint: fingerprint, summary: summary, evidence: evidence,
+                                   evidenceHash: evidenceHash, action: action, now: now)
+                _ = setFindingState(fingerprint: fingerprint, state: "open")
+                return "refresh"
+            }
             if existing.evidenceHash == evidenceHash {
                 _ = touchFinding(fingerprint: fingerprint, now: now)
                 return "quiet"
