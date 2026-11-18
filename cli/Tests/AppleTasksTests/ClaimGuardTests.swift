@@ -57,6 +57,14 @@ final class ClaimGuardTests: XCTestCase {
         let junk = try JSONDecoder().decode(
             AgentsConfig.self, from: Data(#"{"agents":{},"claimGuard":"sometimes"}"#.utf8))
         XCTAssertEqual(junk.resolvedClaimGuard, "modified")
+        XCTAssertEqual(junk.resolvedMaxPassMinutes, AgentsConfig.defaultMaxPassMinutes)
+
+        let capped = try JSONDecoder().decode(
+            AgentsConfig.self, from: Data(#"{"agents":{},"maxPassMinutes":30}"#.utf8))
+        XCTAssertEqual(capped.resolvedMaxPassMinutes, 30)
+        let disabled = try JSONDecoder().decode(
+            AgentsConfig.self, from: Data(#"{"agents":{},"maxPassMinutes":0}"#.utf8))
+        XCTAssertEqual(disabled.resolvedMaxPassMinutes, AgentsConfig.defaultMaxPassMinutes)
     }
 
     private func row(id: Int, fingerprint: String?, verification: String? = "open-claimed") -> AuditDB.DispatchRow {
@@ -64,7 +72,7 @@ final class ClaimGuardTests: XCTestCase {
             id: id, taskId: "t", agent: "echo", command: "echo", cwd: nil,
             startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:00:01Z",
             status: "succeeded", exitCode: 0, runLogPath: nil, worktree: nil,
-            summary: nil, pid: nil, taskFingerprint: fingerprint,
+            summary: nil, pid: nil, dispatcherPid: nil, taskFingerprint: fingerprint,
             taskModifiedAt: nil, verification: verification, reviewedAt: nil)
     }
 }

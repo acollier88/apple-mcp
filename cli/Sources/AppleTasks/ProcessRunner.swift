@@ -26,17 +26,20 @@ enum ProcessRunner {
     ///   - environment: full environment for the child; nil inherits ours.
     ///   - timeout: wall-clock budget from launch.
     ///   - killGrace: how long SIGTERM gets before SIGKILL.
+    ///   - directory: the child's working directory; nil inherits ours.
     /// - Throws: only when the executable cannot be launched. Non-zero exit
     ///   and timeouts are reported in the result.
     static func run(_ executable: URL, _ arguments: [String] = [],
                     stdin: Data? = nil,
                     environment: [String: String]? = nil,
                     timeout: TimeInterval,
-                    killGrace: TimeInterval = 2) throws -> ProcessResult {
+                    killGrace: TimeInterval = 2,
+                    directory: URL? = nil) throws -> ProcessResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
         if let environment { process.environment = environment }
+        if let directory { process.currentDirectoryURL = directory }
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
@@ -68,17 +71,26 @@ enum ProcessRunner {
         var timedOut = false
         if exited.wait(timeout: .now() + timeout) == .timedOut {
             timedOut = true
-            process.terminate()
+            // The child and its descendants: a grandchild (osascript, node)
+            // would otherwise outlive the timeout and keep the pipes open.
+            let tree = AgentProcess.signalTree(process.processIdentifier, SIGTERM)
             if exited.wait(timeout: .now() + killGrace) == .timedOut {
                 kill(process.processIdentifier, SIGKILL)
                 exited.wait()
             }
+            for pid in tree where AgentProcess.isAlive(pid) { kill(pid, SIGKILL) }
         }
         process.waitUntilExit()
 
         // EOF normally arrives with exit. A grandchild that inherited the
         // pipe can hold it open; don't let its lifetime extend ours.
-        _ = drains.wait(timeout: .now() + 2)
+        if drains.wait(timeout: .now() + 2) == .timedOut {
+            // Closing our read ends wakes the blocked read(2) calls, so the
+            // drain threads end instead of waiting on the grandchild forever.
+            try? outPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForReading.close()
+            _ = drains.wait(timeout: .now() + 1)
+        }
 
         return ProcessResult(status: process.terminationStatus,
                              stdout: outBox.data, stderr: errBox.data,
@@ -105,6 +117,83 @@ enum ProcessRunner {
                 }
             }
         }
+    }
+}
+
+/// Copy a pipe into the caller until EOF, without letting a grandchild that
+/// inherited the write end hold the parent past `finish`'s timeout.
+///
+/// Reads poll instead of blocking in `read(2)`. After the child has exited,
+/// `finish` waits for EOF; on timeout it asks the readers to stop and waits
+/// for them to leave before the caller closes the run log.
+enum PipeDrain {
+    static let postExitTimeout: TimeInterval = 2
+
+    static func copy(_ handle: FileHandle, stop: PipeStop, group: DispatchGroup,
+                     onChunk: @escaping (Data) -> Void) {
+        let fd = handle.fileDescriptor
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            defer { group.leave() }
+            var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+            while !stop.stopped {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                let rc = withUnsafeMutablePointer(to: &pfd) { Darwin.poll($0, 1, 200) }
+                if stop.stopped { break }
+                if rc == 0 { continue }
+                if rc < 0 {
+                    if errno == EINTR { continue }
+                    break
+                }
+                let ready = pfd.revents
+                if ready & Int16(POLLIN) != 0 {
+                    let n = buffer.withUnsafeMutableBytes { raw -> Int in
+                        guard let base = raw.baseAddress else { return 0 }
+                        return Darwin.read(fd, base, raw.count)
+                    }
+                    if n > 0 {
+                        onChunk(Data(buffer[0..<n]))
+                        continue
+                    }
+                    if n < 0 && errno == EINTR { continue }
+                    break
+                }
+                if ready & Int16(POLLHUP) != 0 || ready & Int16(POLLERR) != 0 || ready & Int16(POLLNVAL) != 0 {
+                    break
+                }
+            }
+        }
+    }
+
+    /// True when every reader saw EOF before `timeout`. Otherwise the readers
+    /// are asked to stop and this returns once they have left.
+    @discardableResult
+    static func finish(_ group: DispatchGroup, stop: PipeStop, timeout: TimeInterval) -> Bool {
+        if group.wait(timeout: .now() + timeout) == .success {
+            return true
+        }
+        stop.stop()
+        _ = group.wait(timeout: .now() + 1)
+        return false
+    }
+}
+
+/// Shared flag for `PipeDrain` readers. Set after the child has exited and
+/// the post-exit wait has elapsed.
+final class PipeStop: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    var stopped: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
+
+    func stop() {
+        lock.lock()
+        flag = true
+        lock.unlock()
     }
 }
 

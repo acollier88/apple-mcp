@@ -490,6 +490,11 @@ export function registerMiscTools(server: McpServer): void {
           })
           .nullable()
           .optional(),
+        fixedModes: z
+          .array(z.object({ path: z.string(), from: z.string(), to: z.string() }))
+          .nullable()
+          .optional()
+          .describe("Paths chmod'd by --fix-modes. Absent on a normal doctor run."),
       },
       annotations: doctorAnnotations,
     },
@@ -499,6 +504,134 @@ export function registerMiscTools(server: McpServer): void {
         if (enqueue_heals) args.push("--enqueue-heals");
         if (list) args.push(...opt("--list", list));
         return okJson(await cli(args, { timeoutMs: enqueue_heals ? 60_000 : 30_000 }));
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
+
+  const findingsDescription =
+    "List detector findings recorded by apple-tasks doctor. A finding stays quiet until its evidence changes.";
+  const findingsAnnotations = { title: "Findings", readOnlyHint: true, idempotentHint: true } as const;
+  trackTool("findings", findingsDescription, findingsAnnotations);
+  server.registerTool(
+    "findings",
+    {
+      description: findingsDescription,
+      inputSchema: {
+        class: z.string().optional().describe("healable, proposable, or needs-human."),
+        state: z.string().optional().describe("open, healed, accepted, dismissed, expired, or all. Default open."),
+      },
+      outputSchema: {
+        findings: z.array(z.object({
+          fingerprint: z.string(),
+          detector: z.string(),
+          system: z.string(),
+          severity: z.string(),
+          findingClass: z.string(),
+          summary: z.string(),
+          state: z.string(),
+        })).optional(),
+      },
+      annotations: findingsAnnotations,
+    },
+    async ({ class: findingClass, state }) => {
+      try {
+        const args = ["findings"];
+        if (findingClass) args.push(...opt("--class", findingClass));
+        if (state) args.push(...opt("--state", state));
+        return okJson(await cli(args));
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
+
+  const proposalsListDescription =
+    "List open proposals. A dismissed proposal stays hidden until its evidence changes. Muted detectors are omitted.";
+  const proposalsListAnnotations = { title: "List proposals", readOnlyHint: true, idempotentHint: true } as const;
+  trackTool("proposals_list", proposalsListDescription, proposalsListAnnotations);
+  server.registerTool(
+    "proposals_list",
+    {
+      description: proposalsListDescription,
+      inputSchema: {},
+      outputSchema: {
+        proposals: z.array(z.object({
+          id: z.number(),
+          detector: z.string(),
+          summary: z.string(),
+          evidence: z.string(),
+        })).optional(),
+        muted: z.array(z.string()).optional(),
+      },
+      annotations: proposalsListAnnotations,
+    },
+    async () => {
+      try {
+        return okJson(await cli(["proposals", "list"]));
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
+
+  const proposalsAcceptDescription =
+    "Accept one proposal: create a Reminders task carrying its evidence. Tags it [auto] only when the detector names a lane.";
+  const proposalsAcceptAnnotations = { title: "Accept proposal", destructiveHint: false, idempotentHint: false } as const;
+  trackTool("proposals_accept", proposalsAcceptDescription, proposalsAcceptAnnotations);
+  server.registerTool(
+    "proposals_accept",
+    {
+      description: proposalsAcceptDescription,
+      inputSchema: {
+        id: z.number().describe("Finding id from proposals_list."),
+        list: z.string().optional().describe("Reminders list. Default Code Tasks."),
+      },
+      outputSchema: {
+        id: z.number().optional(),
+        taskId: z.string().optional(),
+        title: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        list: z.string().optional(),
+      },
+      annotations: proposalsAcceptAnnotations,
+    },
+    async ({ id, list }) => {
+      try {
+        const args = ["proposals", "accept", String(id)];
+        if (list) args.push(...opt("--list", list));
+        return okJson(await cli(args, { timeoutMs: 60_000 }));
+      } catch (err) {
+        return fail(err);
+      }
+    }
+  );
+
+  const proposalsDismissDescription =
+    "Dismiss one proposal. The same evidence will not be listed again. mute_detector hides the whole detector.";
+  const proposalsDismissAnnotations = { title: "Dismiss proposal", destructiveHint: false, idempotentHint: true } as const;
+  trackTool("proposals_dismiss", proposalsDismissDescription, proposalsDismissAnnotations);
+  server.registerTool(
+    "proposals_dismiss",
+    {
+      description: proposalsDismissDescription,
+      inputSchema: {
+        id: z.number().describe("Finding id from proposals_list."),
+        mute_detector: z.boolean().optional().describe("Also mute this detector."),
+      },
+      outputSchema: {
+        id: z.number().optional(),
+        state: z.string().optional(),
+        muted: z.boolean().optional(),
+      },
+      annotations: proposalsDismissAnnotations,
+    },
+    async ({ id, mute_detector }) => {
+      try {
+        const args = ["proposals", "dismiss", String(id)];
+        if (mute_detector) args.push("--mute-detector");
+        return okJson(await cli(args));
       } catch (err) {
         return fail(err);
       }

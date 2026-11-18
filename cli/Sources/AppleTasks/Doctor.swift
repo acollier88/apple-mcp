@@ -1,3 +1,4 @@
+import CryptoKit
 import ArgumentParser
 import EventKit
 import Foundation
@@ -34,6 +35,8 @@ struct DoctorOut: Codable {
     let automationNote: String
     let issues: [DoctorIssue]
     let heals: HealReport?
+    /// Gatehouse probe. Missing gatehouse fills this in; it does not fail doctor.
+    let gatehouse: GatehouseDoctorStatus
     /// `--fix-modes` only: every chmod it made beyond the secret files
     /// (config dir, ledger DB/WAL/SHM, logs/, runs/*, agents.json[.bak-*]).
     let fixedModes: [ConfigPermissions.ModeChange]?
@@ -82,11 +85,60 @@ struct SecretStatus: Codable {
     let note: String?
 }
 
-struct DoctorIssue: Codable {
+struct DoctorIssue {
     let system: String
     let severity: String
     let summary: String
     let signature: String
+    /// When set, a person has to run this command. Never enqueue a heal for it.
+    var needsHumanCommand: String? = nil
+    /// `healable` or `needs-human`. Nil keeps the pre-#47 enqueue behavior.
+    var kind: String? = nil
+    var evidence: String? = nil
+    var suggestedAction: String? = nil
+
+    init(system: String, severity: String, summary: String, signature: String,
+         needsHumanCommand: String? = nil,
+         kind: String? = nil, evidence: String? = nil, suggestedAction: String? = nil) {
+        self.system = system
+        self.severity = severity
+        self.summary = summary
+        self.signature = signature
+        self.needsHumanCommand = needsHumanCommand
+        self.kind = kind
+        self.evidence = evidence
+        self.suggestedAction = suggestedAction
+    }
+}
+
+extension DoctorIssue: Codable {
+    enum CodingKeys: String, CodingKey {
+        case system, severity, summary, signature, needsHumanCommand, kind, evidence, suggestedAction
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        system = try c.decode(String.self, forKey: .system)
+        severity = try c.decode(String.self, forKey: .severity)
+        summary = try c.decode(String.self, forKey: .summary)
+        signature = try c.decode(String.self, forKey: .signature)
+        needsHumanCommand = try c.decodeIfPresent(String.self, forKey: .needsHumanCommand)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        evidence = try c.decodeIfPresent(String.self, forKey: .evidence)
+        suggestedAction = try c.decodeIfPresent(String.self, forKey: .suggestedAction)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(system, forKey: .system)
+        try c.encode(severity, forKey: .severity)
+        try c.encode(summary, forKey: .summary)
+        try c.encode(signature, forKey: .signature)
+        try c.encodeIfPresent(needsHumanCommand, forKey: .needsHumanCommand)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(evidence, forKey: .evidence)
+        try c.encodeIfPresent(suggestedAction, forKey: .suggestedAction)
+    }
 }
 
 struct HealReport: Codable {
@@ -413,28 +465,108 @@ struct Doctor: AsyncParsableCommand {
         return out
     }
 
+    private struct PreflightReport {
+        var issues: [DoctorIssue]
+        var classified: [LanePreflight.Classified]
+        var cursorAuth: LanePreflight.AuthKind?
+        /// One probe per lane per doctor run; the lane-auth detector reuses it.
+        var authByLane: [String: LanePreflight.AuthKind]
+    }
+
+    /// Credential and auth failures that `doctor` already had the evidence
+    /// for, plus a dead MCP fallback on the doctor lane (#43).
+    private static func preflightIssues() async -> PreflightReport {
+        let env = ProcessInfo.processInfo.environment
+        let config = try? AgentsConfig.load()
+        let authByLane: [String: LanePreflight.AuthKind]
+        if let config {
+            authByLane = (await LaneProbe.snapshot(config: config, env: env)).authByLane
+        } else {
+            authByLane = [:]
+        }
+        var classified = LanePreflight.cronBlocked(Self.hermesCronJobs())
+        classified += LanePreflight.laneAuthIssues(authByLane: authByLane)
+        if let mcp = LanePreflight.mcpUnavailableIssue(mentioned: Self.doctorMentionedMCPUnavailable()) {
+            classified.append(mcp)
+        }
+        // Lane logins and scheduled-job blocks are reported as issues by the
+        // detector registry (lane-auth-missing:*, scheduled-blocked:*); here
+        // they only drive the one-time "Needs you" push. The doctor-lane MCP
+        // fallback has no detector, so it stays an issue.
+        let issues = classified.filter {
+            !$0.signature.hasPrefix("lane-auth-missing:") && !$0.signature.hasPrefix("hermes-cron-blocked:")
+        }.map { item in
+            DoctorIssue(
+                system: item.signature == "doctor-lane-mcp-fallback" ? "mcp" : "dispatch",
+                severity: item.needsHumanCommand == nil ? "yellow" : "notice",
+                summary: item.summary,
+                signature: item.signature,
+                needsHumanCommand: item.needsHumanCommand)
+        }
+        return PreflightReport(
+            issues: issues, classified: classified, cursorAuth: authByLane["cursor"],
+            authByLane: authByLane)
+    }
+
+    private static func hermesCronJobs() -> [LanePreflight.CronJob] {
+        let url = hermesHome().appendingPathComponent("cron/jobs.json")
+        guard let obj = jsonObject(at: url), let jobs = obj["jobs"] as? [[String: Any]] else {
+            return []
+        }
+        return jobs.map { job in
+            let name = (job["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (job["id"] as? String)
+                ?? "job"
+            return LanePreflight.CronJob(
+                name: name,
+                status: job["last_status"] as? String ?? "never",
+                error: (job["last_error"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+        }
+    }
+
+    /// Last doctor run logs, not the whole ledger. The phrase is detected;
+    /// the log text is not copied into the issue.
+    private static func doctorMentionedMCPUnavailable() -> Bool {
+        let rows = AuditDB.shared.dispatchRows(status: nil, limit: 40)
+            .filter { $0.agent == "doctor" }
+        for row in rows.prefix(5) {
+            let tail = row.runLogPath.flatMap { path -> String? in
+                guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                      !data.isEmpty else { return nil }
+                let start = data.index(data.endIndex, offsetBy: -16_384, limitedBy: data.startIndex) ?? data.startIndex
+                return String(data: data[start...], encoding: .utf8)
+            }
+            if LanePreflight.mentionsMCPUnavailable(summary: row.summary, logTail: tail) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Resolve a binary on PATH the same way dispatch does (/usr/bin/env).
     private static func which(_ name: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["which", name]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return nil }
-        process.waitUntilExit()
-        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard process.terminationStatus == 0, !path.isEmpty else { return nil }
-        return path
+        guard let result = try? ProcessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/env"), ["which", name], timeout: 5),
+              result.status == 0 else { return nil }
+        let path = result.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
     }
 
     /// Resolve `agent` (Cursor Agent CLI) on PATH the same way dispatch does (/usr/bin/env).
-    private static func cursorAgentStatus() -> String {
+    private static func cursorAgentStatus(auth: LanePreflight.AuthKind?) -> String {
         guard let path = which("agent") else {
             return "not found (install: curl https://cursor.com/install -fsS | bash)"
         }
-        return "present: \(path) (tag tasks [cursor][auto]; agent login or CURSOR_API_KEY)"
+        let login: String
+        switch auth {
+        case .ready, nil:
+            login = "login ok"
+        case .needsHuman(let command):
+            login = "login missing (run \(command))"
+        case .unreachable(let detail):
+            login = "login check failed (\(detail))"
+        }
+        return "present: \(path) (tag tasks [cursor][auto]; \(login))"
     }
 
     private static func hermesHome() -> URL {
@@ -685,7 +817,7 @@ struct Doctor: AsyncParsableCommand {
 
     /// Detects the two-trees hazard: the launchd job runs a binary built from
     /// a checkout that may carry uncommitted edits or lag its own HEAD.
-    private static func deploymentStatus() -> DoctorOut.DeploymentStatus {
+    static func deploymentStatus() -> DoctorOut.DeploymentStatus {
         var launchdBinary: String?
         if let out = capture("/bin/launchctl", ["print", "gui/\(getuid())/com.apple-tasks.dispatch"]),
            let start = out.range(of: "arguments = {") {
@@ -809,8 +941,12 @@ struct Doctor: AsyncParsableCommand {
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".config/apple-tasks", isDirectory: true)
         }()
-        // Before secretsStatus so agents.json shows up in fixedModes.
-        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir) : nil
+        // Doctor only reports. The runtime layout migration (worktrees/,
+        // scratch/, runs/ -> Application Support) runs from `dispatch`, which
+        // knows whether an agent is using those directories.
+        let layout = AppleTasksLayout.resolve()
+        let supportDir = layout.support
+        let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir, supportDir: supportDir) : nil
         let secrets = Self.secretsStatus(
             configDir: configDir,
             store: Secrets.store,
@@ -821,10 +957,55 @@ struct Doctor: AsyncParsableCommand {
             hermesGateway: hermesGateway,
             hermesCron: hermesCron,
             hermesHaLink: hermesHaLink,
-            homeAssistant: homeAssistant
+            homeAssistant: homeAssistant,
+            settings: (try? AgentsConfig.load())?.doctor?.detectors
         )
+        let registry = Self.registryFindings(
+            hermes: hermes, hermesGateway: hermesGateway, hermesCron: hermesCron,
+            hermesHaLink: hermesHaLink, homeAssistant: homeAssistant,
+            settings: (try? AgentsConfig.load())?.doctor?.detectors)
+        var findingDecisions: [String: String] = [:]
+        for finding in registry {
+            findingDecisions[finding.fingerprint] = AuditDB.shared.observeFinding(
+                fingerprint: finding.fingerprint, detector: finding.detector,
+                system: finding.system, severity: finding.severity,
+                findingClass: finding.kind.rawValue, summary: finding.summary,
+                evidence: finding.evidence, evidenceHash: finding.evidenceHash,
+                action: finding.action)
+        }
         if let pause, let issue = Self.pauseIssue(pause) {
             issues.append(issue)
+        }
+        let loadedConfig = try? AgentsConfig.load()
+        let preflight = await Self.preflightIssues()
+        let findings = await DiagnosticsLive.findings(config: loadedConfig, laneAuth: preflight.authByLane)
+        issues.append(contentsOf: findings.map(\.issue))
+        // One findings table (#52): detector findings are recorded beside the
+        // Home Assistant / Hermes ones, with the same quiet-until-evidence-
+        // changes rule, and anything no longer detected is closed.
+        for finding in findings {
+            let detector = finding.signature.split(separator: ":").first.map(String.init) ?? finding.signature
+            let hash = SHA256.hash(data: Data(finding.evidence.utf8)).map { String(format: "%02x", $0) }.joined()
+            findingDecisions[finding.signature] = AuditDB.shared.observeFinding(
+                fingerprint: finding.signature, detector: detector,
+                system: finding.system, severity: finding.severity,
+                findingClass: finding.kind.rawValue, summary: finding.summary,
+                evidence: finding.evidence, evidenceHash: hash,
+                action: finding.suggestedAction)
+        }
+        for closed in AuditDB.shared.resolveFindings(notSeen: Set(findingDecisions.keys)) {
+            HealPolicy.clear(closed)  // a clean detector resets the escalation ladder
+        }
+        if let loaded = loadedConfig {
+            let launchdNames = Self.launchdEnvExports(
+                at: configDir.appendingPathComponent("launchd.env")).map(\.name)
+            for finding in AgentEnv.exposureFindings(
+                config: loaded, launchdNames: launchdNames,
+                parentNames: Set(ProcessInfo.processInfo.environment.keys)) {
+                issues.append(DoctorIssue(
+                    system: "env", severity: "yellow",
+                    summary: finding.summary, signature: finding.signature))
+            }
         }
         let plaintextCount = secrets.filter { $0.source == SecretSource.plaintext.rawValue }.count
         if plaintextCount > 0 {
@@ -834,20 +1015,37 @@ struct Doctor: AsyncParsableCommand {
                 summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
                 signature: "secrets-plaintext"))
         }
+        issues.append(contentsOf: preflight.issues)
+        issues.append(contentsOf: ProposalsInbox.mutedIssues())
         let beats = Watchdog.directory()
         for notice in Watchdog.notices(
             dispatcher: Watchdog.read(role: "dispatcher", from: beats),
             watchdog: Watchdog.read(role: "watchdog", from: beats),
             now: Date(),
-            deadRunning: 0) {
+            deadRunning: Watchdog.liveDeadRunningCount(),
+            maxPass: Watchdog.maxPassSeconds(config: loadedConfig),
+            watchdogInstalled: Watchdog.watchdogInstalled()) {
             issues.append(DoctorIssue(
                 system: "watchdog", severity: "info",
                 summary: Watchdog.summary(notice),
-                signature: "watchdog"))
+                signature: Watchdog.signature(notice)))
         }
+        // One issue per signature: the first source wins.
+        var seenSignatures = Set<String>()
+        issues = issues.filter { seenSignatures.insert($0.signature).inserted }
+        let previous = AuditDB.shared.getState("doctor.needsHuman")
+        for item in LanePreflight.signaturesToNotify(previous: previous, issues: preflight.classified) {
+            guard let command = item.needsHumanCommand else { continue }
+            _ = await Notifier.push(
+                title: "Needs you",
+                body: "\(item.summary). Run: \(command)")
+        }
+        _ = AuditDB.shared.setState("doctor.needsHuman", LanePreflight.signatureRecord(preflight.classified))
         var heals: HealReport?
         if enqueueHeals {
-            heals = await Self.enqueueHeals(issues: issues, listName: listName)
+            heals = await Self.enqueueHeals(
+                issues: issues, listName: listName, config: loadedConfig,
+                decisions: findingDecisions, findings: registry)
         }
         emit(DoctorOut(
             binary: Executable.url.path,
@@ -873,7 +1071,7 @@ struct Doctor: AsyncParsableCommand {
             fullDiskAccess: Self.fdaStatus(),
             agentsConfig: Self.agentsConfigStatus(),
             secrets: secrets,
-            cursorAgent: Self.cursorAgentStatus(),
+            cursorAgent: Self.cursorAgentStatus(auth: preflight.cursorAuth),
             launchAgent: Self.launchAgentStatus(),
             hermes: hermes,
             hermesGateway: hermesGateway,
@@ -886,8 +1084,17 @@ struct Doctor: AsyncParsableCommand {
             automationNote: "Notes/Mail Apple Events permission cannot be probed without triggering a prompt; run 'apple-tasks notes scan --since <now>' to test.",
             issues: issues,
             heals: heals,
+            gatehouse: Self.gatehouseStatus(),
             fixedModes: fixedModes
         ))
+    }
+
+    /// Running / enrolled / hooks fail-closed / lanes that are still unsandboxed.
+    /// `AgentsConfig.load` failure leaves the lane list empty; the probe itself
+    /// never throws.
+    static func gatehouseStatus() -> GatehouseDoctorStatus {
+        let agents = (try? AgentsConfig.load())?.agents ?? [:]
+        return GatehouseClient.doctorStatus(agents: agents, facts: GatehouseClient.observe())
     }
 
     /// One issue per affected *system*. Hermes↔HA adapter is ignored when HA itself is down.
@@ -896,48 +1103,13 @@ struct Doctor: AsyncParsableCommand {
         hermesGateway: String,
         hermesCron: String,
         hermesHaLink: String,
-        homeAssistant: String
+        homeAssistant: String,
+        settings: AgentsConfig.DetectorSettings? = nil
     ) -> [DoctorIssue] {
-        var issues: [DoctorIssue] = []
-        let haDown = homeAssistant.localizedCaseInsensitiveContains("unreachable")
-            || homeAssistant.localizedCaseInsensitiveContains("HASS_TOKEN missing")
-            || homeAssistant.localizedCaseInsensitiveContains("HTTP 401")
-            || homeAssistant.localizedCaseInsensitiveContains("bad HASS_URL")
-            || homeAssistant.localizedCaseInsensitiveContains("probe failed")
-        if haDown {
-            issues.append(DoctorIssue(
-                system: "homeassistant",
-                severity: "red",
-                summary: homeAssistant,
-                signature: "homeassistant"
-            ))
-        }
-
-        var hermesBits: [String] = []
-        if hermes.localizedCaseInsensitiveContains("not installed")
-            || hermes.localizedCaseInsensitiveContains("binary not on PATH") {
-            hermesBits.append(hermes)
-        }
-        if hermesGateway.localizedCaseInsensitiveContains("not running") {
-            hermesBits.append("gateway: \(hermesGateway)")
-        }
-        if let cronIssue = Self.cronHealSummary(hermesCron) {
-            hermesBits.append(cronIssue)
-        }
-        if !haDown, hermesHaLink.localizedCaseInsensitiveContains("retrying")
-            || hermesHaLink.localizedCaseInsensitiveContains("failed")
-            || hermesHaLink.localizedCaseInsensitiveContains("error") {
-            hermesBits.append("haAdapter: \(hermesHaLink)")
-        }
-        if !hermesBits.isEmpty {
-            issues.append(DoctorIssue(
-                system: "hermes",
-                severity: "red",
-                summary: hermesBits.joined(separator: "; "),
-                signature: "hermes"
-            ))
-        }
-
+        var issues = registryFindings(
+            hermes: hermes, hermesGateway: hermesGateway, hermesCron: hermesCron,
+            hermesHaLink: hermesHaLink, homeAssistant: homeAssistant, settings: settings
+        ).map(\.issue)
         let failed = AuditDB.shared.dispatchRows(status: "failed", limit: 20)
         let cutoff = Date().addingTimeInterval(-24 * 3600)
         let iso = ISO8601DateFormatter()
@@ -961,7 +1133,43 @@ struct Doctor: AsyncParsableCommand {
                 signature: "dispatch"
             ))
         }
+        // Needs a person, not a heal agent: severity info is skipped by enqueueHeals.
+        if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
+            let exhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
+            if !exhausted.isEmpty {
+                let lines = exhausted.map { "\($0.taskId) (\($0.count) since last success)" }
+                issues.append(DoctorIssue(
+                    system: "dispatch",
+                    severity: "info",
+                    summary: "retries exhausted: " + lines.joined(separator: "; ")
+                        + ". Raise maxRetries or run dispatch-retry. Do not hunt for credentials.",
+                    signature: "retries-exhausted"))
+            }
+        }
         return issues
+    }
+
+    static func registryFindings(
+        hermes: String,
+        hermesGateway: String,
+        hermesCron: String,
+        hermesHaLink: String,
+        homeAssistant: String,
+        settings: AgentsConfig.DetectorSettings? = nil
+    ) -> [Findings.Finding] {
+        var found: [Findings.Finding] = []
+        if Findings.enabled(Findings.homeAssistantId, settings),
+           let ha = Findings.homeAssistant(status: homeAssistant) {
+            found.append(ha)
+        }
+        let haDown = Findings.homeAssistant(status: homeAssistant) != nil
+        if Findings.enabled(Findings.hermesId, settings),
+           let hermesFinding = Findings.hermes(
+            status: hermes, gateway: hermesGateway, cron: hermesCron,
+            haLink: hermesHaLink, haDown: haDown) {
+            found.append(hermesFinding)
+        }
+        return found
     }
 
     static func pauseIssue(_ pause: Dispatch.PauseState) -> DoctorIssue? {
@@ -971,26 +1179,17 @@ struct Doctor: AsyncParsableCommand {
                            summary: summary, signature: "dispatch-pause")
     }
 
-    /// Copilot 403 on a job already pinned to ollama-launch is stale, not a heal.
-    private static func cronHealSummary(_ cron: String) -> String? {
-        guard cron.localizedCaseInsensitiveContains(": error")
-                || cron.localizedCaseInsensitiveContains("last_error") else {
-            return nil
-        }
-        let staleCopilot = cron.localizedCaseInsensitiveContains("provider=ollama-launch")
-            && (cron.localizedCaseInsensitiveContains("403")
-                || cron.localizedCaseInsensitiveContains("copilot"))
-        if staleCopilot { return nil }
-        if cron.hasPrefix("no ") || cron.hasPrefix("unreadable") || cron.hasPrefix("0 jobs") {
-            return nil
-        }
-        return "cron: \(cron)"
-    }
-
-    private static func enqueueHeals(issues: [DoctorIssue], listName: String) async -> HealReport {
+    private static func enqueueHeals(issues: [DoctorIssue], listName: String,
+                                     config: AgentsConfig?,
+                                     decisions: [String: String] = [:],
+                                     findings: [Findings.Finding] = []) async -> HealReport {
         guard !issues.isEmpty else {
             return HealReport(list: listName, actions: [])
         }
+        let limits = Diagnostics.thresholds(config?.doctor?.detectors)
+        let cooldown = TimeInterval(limits.healCooldownHours) * 3600
+        let now = Date()
+        var healState = loadHealState()
         let store = Store()
         do {
             try await store.requestAccess()
@@ -1003,9 +1202,126 @@ struct Doctor: AsyncParsableCommand {
         let open = (await store.reminders(in: nil)).filter { !$0.isCompleted }
         var actions: [HealAction] = []
         for issue in issues {
+            if issue.needsHumanCommand != nil {
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: "needs-human",
+                    taskId: nil,
+                    title: nil,
+                    reason: issue.needsHumanCommand
+                ))
+                continue
+            }
             // info/notice never become heal tasks (secrets-plaintext is info).
             if issue.severity == "info" || issue.severity == "notice" { continue }
             if issue.system == "secrets" { continue }
+            if decisions[issue.signature] == "quiet" {
+                actions.append(HealAction(
+                    system: issue.system, action: "unchanged", taskId: nil, title: nil,
+                    reason: "evidence unchanged"))
+                continue
+            }
+            if let finding = findings.first(where: { $0.fingerprint == issue.signature }) {
+                switch Findings.sink(for: finding.kind) {
+                case .needsHuman:
+                    let sent = await Notifier.push(title: "apple-tasks needs you", body: finding.action)
+                    actions.append(HealAction(
+                        system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                        reason: sent ? finding.action : "notification failed: \(finding.action)"))
+                    continue
+                case .proposed:
+                    actions.append(HealAction(
+                        system: issue.system, action: "proposed", taskId: nil, title: nil,
+                        reason: finding.action))
+                    continue
+                case .heal:
+                    break
+                }
+            }
+            if issue.kind == Diagnostics.Kind.needsHuman.rawValue {
+                actions.append(HealAction(
+                    system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                    reason: issue.suggestedAction ?? issue.summary))
+                continue
+            }
+            // Ladder (#54, #55): playbook -> agent heal -> needs-human, one rung
+            // per piece of evidence. The rung used is remembered per finding
+            // and cleared when the detector comes back clean.
+            let todayCount = healState.day == Diagnostics.dayString(now) ? healState.count : 0
+            switch HealPolicy.decide(
+                fingerprint: issue.signature,
+                rung: Playbooks.rung(for: issue.signature),
+                previous: HealPolicy.level(issue.signature),
+                evidenceChanged: decisions[issue.signature] != "quiet",
+                healsToday: todayCount,
+                cap: limits.healDailyCap) {
+            case .quiet:
+                actions.append(HealAction(
+                    system: issue.system, action: "unchanged", taskId: nil, title: nil,
+                    reason: "heal rung already used for this evidence"))
+                continue
+            case .playbook(let id):
+                let steps = Playbooks.plan(
+                    await Playbooks.liveContext(config: config, store: store), only: issue.signature)
+                var applied: [String] = []
+                var failure: String?
+                for step in steps where step.apply != .none {
+                    do {
+                        try await Playbooks.apply(step, store: store)
+                        applied.append(step.summary)
+                    } catch {
+                        failure = (error as? AppleTasksError)?.description ?? error.localizedDescription
+                        break
+                    }
+                }
+                HealPolicy.remember(.playbook(id), fingerprint: issue.signature)
+                if !applied.isEmpty {
+                    healState = Diagnostics.marked(healState, signature: issue.signature, now: now)
+                    saveHealState(healState)
+                }
+                // Verify (#55): only a clean re-check counts as healed.
+                var verified = false
+                if failure == nil, !applied.isEmpty {
+                    let recheck = await DiagnosticsLive.findings(config: config)
+                    verified = !recheck.contains { $0.signature == issue.signature }
+                    if verified {
+                        _ = AuditDB.shared.setFindingState(fingerprint: issue.signature, state: "healed")
+                        HealPolicy.clear(issue.signature)
+                    }
+                }
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: failure != nil ? "playbook-failed" : (verified ? "playbook-verified" : "playbook"),
+                    taskId: nil, title: nil,
+                    reason: failure.map { "\(id): \($0)" }
+                        ?? (applied.isEmpty ? "\(id): nothing to apply"
+                            : "\(id): " + applied.joined(separator: "; ")
+                                + (verified ? " (re-check clean)" : " (still detected; next rung on new evidence)"))))
+                continue
+            case .needsHuman(let id):
+                HealPolicy.remember(.needsHuman(id), fingerprint: issue.signature)
+                let sent = await Notifier.push(
+                    title: "apple-tasks needs you",
+                    body: "\(issue.summary) Automatic healing stopped for \(id).")
+                actions.append(HealAction(
+                    system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                    reason: sent ? id : "notification failed: \(id)"))
+                continue
+            case .breaker:
+                let day = HealPolicy.dayStamp()
+                if AuditDB.shared.getState(HealPolicy.breakerKey) != day {
+                    _ = await Notifier.push(
+                        title: "apple-tasks needs you",
+                        body: "Automatic healing is paused for today (\(limits.healDailyCap) heals).")
+                    _ = AuditDB.shared.setState(HealPolicy.breakerKey, day)
+                }
+                actions.append(HealAction(
+                    system: issue.system, action: "paused", taskId: nil, title: nil,
+                    reason: "heal circuit breaker"))
+                continue
+            case .agent:
+                break
+            }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")
@@ -1017,6 +1333,21 @@ struct Doctor: AsyncParsableCommand {
                     reason: "open heal already queued"
                 ))
                 continue
+            }
+            switch Diagnostics.gate(signature: issue.signature, now: now, state: healState,
+                                    cooldown: cooldown, dailyCap: limits.healDailyCap) {
+            case .cooldown:
+                actions.append(HealAction(
+                    system: issue.system, action: "cooldown", taskId: nil, title: spec.title,
+                    reason: "heal for \(issue.signature) was enqueued within \(limits.healCooldownHours)h"))
+                continue
+            case .capped:
+                actions.append(HealAction(
+                    system: issue.system, action: "capped", taskId: nil, title: spec.title,
+                    reason: "daily heal cap \(limits.healDailyCap) already reached"))
+                continue
+            case .enqueue:
+                break
             }
             do {
                 let out = try createTask(
@@ -1032,6 +1363,8 @@ struct Doctor: AsyncParsableCommand {
                     mirrorNativeTags: true,
                     auditCommand: "doctor-heal"
                 )
+                healState = Diagnostics.marked(healState, signature: issue.signature, now: now)
+                saveHealState(healState)
                 actions.append(HealAction(
                     system: issue.system,
                     action: "created",
@@ -1039,6 +1372,7 @@ struct Doctor: AsyncParsableCommand {
                     title: out.title,
                     reason: nil
                 ))
+                HealPolicy.remember(.agent, fingerprint: issue.signature)
             } catch {
                 let reason = (error as? AppleTasksError)?.description ?? error.localizedDescription
                 actions.append(HealAction(
@@ -1051,6 +1385,33 @@ struct Doctor: AsyncParsableCommand {
             }
         }
         return HealReport(list: listName, actions: actions)
+    }
+
+    private static func loadHealState() -> Diagnostics.HealLedgerState {
+        let iso = ISO8601DateFormatter()
+        var last: [String: Date] = [:]
+        if let raw = AuditDB.shared.getState("doctor.heal.last"),
+           let data = raw.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+            for (key, value) in obj {
+                if let date = iso.date(from: value) { last[key] = date }
+            }
+        }
+        return Diagnostics.HealLedgerState(
+            lastEnqueued: last,
+            day: AuditDB.shared.getState("doctor.heal.day") ?? "",
+            count: Int(AuditDB.shared.getState("doctor.heal.count") ?? "") ?? 0)
+    }
+
+    private static func saveHealState(_ state: Diagnostics.HealLedgerState) {
+        let iso = ISO8601DateFormatter()
+        let obj = Dictionary(uniqueKeysWithValues: state.lastEnqueued.map { ($0.key, iso.string(from: $0.value)) })
+        if let data = try? JSONSerialization.data(withJSONObject: obj),
+           let text = String(data: data, encoding: .utf8) {
+            _ = AuditDB.shared.setState("doctor.heal.last", text)
+        }
+        _ = AuditDB.shared.setState("doctor.heal.day", state.day)
+        _ = AuditDB.shared.setState("doctor.heal.count", String(state.count))
     }
 
     private static func isOpenHeal(_ reminder: EKReminder, signature: String) -> Bool {
@@ -1074,6 +1435,19 @@ struct Doctor: AsyncParsableCommand {
 Never toggle Home Assistant entities (lights, climate, locks, covers). Never print tokens or .env values. Do not call dispatch_run (recursive dispatch is blocked). Launchd will not re-dispatch this task until you complete it.
 When finished: apple-tasks update <id> --append-notes "<what you did>" then apple-tasks complete <id> and apple-tasks update <id> --remove-tag dispatched:\(ClaimTags.host)
 """
+        if issue.kind == Diagnostics.Kind.healable.rawValue, let action = issue.suggestedAction {
+            let evidence = issue.evidence ?? issue.summary
+            return HealSpec(
+                tags: ["heal", "apple-mcp", "auto"],
+                title: "Heal \(issue.system): \(issue.signature)",
+                notes: header + """
+Evidence:
+\(evidence)
+
+Allowed scope: \(action)
+Do not look for credentials, tokens, SSH keys, or .env files. If the fix needs a login or a permission prompt, stop and leave this task for a person.
+""" + footer)
+        }
         switch issue.system {
         case "homeassistant":
             return HealSpec(
@@ -1098,7 +1472,7 @@ Hermes-side: start or replace the gateway (`hermes gateway run --replace` or the
                 tags: ["heal", "apple-mcp", "auto"],
                 title: "Heal failed apple-tasks dispatches",
                 notes: header + """
-Inspect apple-tasks dispatches --status failed and the run log under ~/.config/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
+Inspect apple-tasks dispatches --status failed and the run log under ~/Library/Application Support/apple-tasks/runs/. Fix the underlying failure (config, workdir tag, agent binary) so the next launchd pass can succeed. Do not re-dispatch this doctor pass.
 """ + footer
             )
         }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import EventKit
 import Foundation
 
@@ -17,8 +18,9 @@ struct Dispatch: AsyncParsableCommand {
         --dry-run the pass stops after reap/GC and appends that report. \
         --quiet (launchd) emits the paused report only when until/reason \
         changed since the last pass (dispatch.pauseLastReported); an \
-        unchanged pause plus repeat GC/skip noise collapses to [] so \
-        logs do not fill with 'paused' lines.
+        unchanged pause, an empty pass, or repeat GC/skip noise prints \
+        nothing, so logs do not fill with 'paused' lines or []. \
+        Pass start and end are timestamped on stderr either way.
         """
     )
 
@@ -42,8 +44,9 @@ struct Dispatch: AsyncParsableCommand {
     var noGC = false
 
     @Flag(name: .customLong("quiet"), help: """
-        Emit [] when this pass produced only repeat GC/skip reports identical \
-        to the previous pass (for launchd logs). A paused report is included \
+        Print nothing when this pass is empty or only repeats the previous \
+        pass's GC/skip/gate/schedule noise (for launchd logs). Real failures \
+        and dispatch lines are always printed. A paused report is included \
         only when the pause until/reason changed since the last pass.
         """)
     var quiet = false
@@ -111,6 +114,9 @@ struct Dispatch: AsyncParsableCommand {
         var stdinPrompt: String? = nil
         /// Set for `.stdin` and `.file`: `runs/<ledgerId>.prompt`.
         var promptFile: String? = nil
+        /// Auto-pool chose this lane; stamp it onto the title when the
+        /// agent actually starts so retries pin the provider that ran.
+        var stampLane: Bool = false
     }
 
     struct RunOutcome: Sendable {
@@ -142,9 +148,32 @@ struct Dispatch: AsyncParsableCommand {
             throw AppleTasksError.invalidInput(message)
         }
         let config = try AgentsConfig.load()
+        Self.passLog("dispatch pass start quiet=\(quiet) dryRun=\(dryRun)")
+        defer { Self.passLog("dispatch pass end") }
+        // Heartbeat for the watchdog (#56): a hang leaves `finished` empty.
         let passStart = Date()
-        Watchdog.markDispatcher(start: passStart, finish: nil)
-        defer { Watchdog.markDispatcher(start: passStart, finish: Date()) }
+        if !dryRun {
+            Watchdog.markDispatcher(start: passStart, finish: nil)
+            await Watchdog.checkWatchdogAlive(now: passStart)
+        }
+        defer { if !dryRun { Watchdog.markDispatcher(start: passStart, finish: Date()) } }
+        // tools/launchd starts `dispatch --quiet` on StartInterval and will
+        // not start another pass while this process is running. Arm the cap
+        // here, not by editing the installed plist.
+        let passWatchdog = PassWatchdog.arm(minutes: config.resolvedMaxPassMinutes)
+        defer { passWatchdog.disarm() }
+        if !dryRun {
+            let layout = AppleTasksLayout.resolve()
+            let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
+            if !migration.notes.isEmpty {
+                let text = migration.notes.joined(separator: "; ")
+                FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
+            }
+            if !migration.moved.isEmpty || migration.ledgerRowsRewritten > 0 {
+                Self.passLog("runtime migration moved [\(migration.moved.joined(separator: ","))], "
+                    + "repointed \(migration.ledgerRowsRewritten) ledger path(s)")
+            }
+        }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(
                 "warning: audit ledger DB is unavailable — refusing to dispatch unledgered\n".utf8))
@@ -155,7 +184,16 @@ struct Dispatch: AsyncParsableCommand {
         try await store.requestAccess()
 
         var reports: [DispatchReport] = []
-        reports += await reapAndCollect(config: config, store: store)
+        // A dry run plans only. Reaping and GC write the ledger, tags, and
+        // worktrees; doing that before the flag is checked made --dry-run
+        // mutate the machine (#44).
+        if !dryRun {
+            reports += await reapAndCollect(config: config, store: store)
+            // Nudge once per distinct pending-review set. Dry-run stays quiet;
+            // a paused or reap-only pass still notifies (the backlog is not a
+            // new claim). Repeats stay quiet until a row, branch, or commit changes.
+            await PendingReview.notifyIfChanged(items: PendingReview.items(), db: .shared)
+        }
         if reapOnly {
             emitReports(reports)
             return
@@ -194,6 +232,58 @@ struct Dispatch: AsyncParsableCommand {
             return
         }
         reports.append(pause.report)
-        AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+        if !dryRun {
+            AuditDB.shared.setState(Self.pauseLastReportedKey, pause.identity)
+        }
+    }
+
+    /// Timestamped line on stderr. launchd keeps that file separate from the
+    /// JSON stdout log, and stdout is only written when the pass finishes,
+    /// so a hung pass would otherwise leave no trace (#44).
+    static func passLog(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        FileHandle.standardError.write(Data("\(stamp) \(message)\n".utf8))
+    }
+
+    /// Wording for a `running` row whose agent pid is already gone.
+    static func orphanedDispatchSummary(dispatcherAlive: Bool) -> String {
+        if dispatcherAlive {
+            return "agent exited but dispatcher never recorded the result"
+        }
+        return "dispatcher process is gone"
+    }
+}
+
+/// Exits the process if one `dispatch` invocation outlives its cap. `defer`
+/// disarms it on the normal path. `_exit` is deliberate: a stuck pass may
+/// hold locks the ordinary `exit` would try to take.
+private final class PassWatchdog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var disarmed = false
+
+    static func arm(minutes: Int) -> PassWatchdog {
+        let watchdog = PassWatchdog()
+        let seconds = TimeInterval(max(minutes, 1) * 60)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+            watchdog.fire(minutes: max(minutes, 1))
+        }
+        return watchdog
+    }
+
+    func disarm() {
+        lock.lock()
+        disarmed = true
+        lock.unlock()
+    }
+
+    private func fire(minutes: Int) {
+        lock.lock()
+        let skip = disarmed
+        lock.unlock()
+        guard !skip else { return }
+        let message = "apple-tasks dispatch: pass exceeded \(minutes)m; exiting so launchd can start the next pass\n"
+        FileHandle.standardError.write(Data(message.utf8))
+        AgentProcess.killTracked()
+        _exit(75)
     }
 }

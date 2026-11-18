@@ -1319,7 +1319,7 @@ the capture channel that matters).
 
 ## 47. Subtask dependency modeling in the dispatcher — ✅ DONE 2026-07-15 (Checklist Swarms)
 
-Model complex task workflows natively using parent-child reminder relationships in [Dispatch.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/Dispatch.swift).
+Model complex task workflows natively using parent-child reminder relationships in [Dispatch.swift](../cli/Sources/AppleTasks/Dispatch.swift).
 - **Why**: If a parent task contains subtasks, the dispatcher shouldn't execute the parent task until all subtasks (which may be assigned to different agents) are completed.
 - **Implementation**: Before claiming/dispatching a task, check the status of its children in EventKit. Run children in sequence or in parallel according to their agent tags, and block the parent task until all subtasks resolve.
 
@@ -1341,7 +1341,7 @@ deleting a parent cascade-deletes its subtasks.
 
 ## 48. User-activity and app-focus gating — ✅ DONE 2026-07-15 (Polite background execution)
 
-Extend the context-gated dispatch system in [ContextGate.swift](file:///Users/andrewcollier/Code/apple-mcp/Sources/AppleTasks/ContextGate.swift) to respect user activity and focus.
+Extend the context-gated dispatch system in [ContextGate.swift](../cli/Sources/AppleTasks/ContextGate.swift) to respect user activity and focus.
 - **Why**: Running heavy tasks (like local LLM classification or multi-dependency builds) while the user is actively coding or in a meeting can cause CPU lag and locking conflicts.
 - **Implementation**: Add conditions like `idleMinutes` or `blockingApps` to `conditions` in `agents.json`. Swift can check system idle time via `CGEventSource.secondsSinceLastEventType(.combinedSessionState)` and check if heavy apps are running or focused via `NSWorkspace.shared.runningApplications`.
 

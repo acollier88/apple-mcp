@@ -17,6 +17,7 @@ LAUNCHCTL = launchctl
 WRAPPER_DST = $(CONFIG_DIR)/bin/run-with-env.sh
 DISPATCH_LABEL = com.apple-tasks.dispatch
 DIGEST_LABEL = com.apple-tasks.digest
+WATCHDOG_LABEL = com.apple-tasks.watchdog
 # Seconds between dispatch passes (default 5 min). Override: make install-agent INTERVAL=120
 INTERVAL ?= 300
 # Local clock for morning digest. Override: make install-digest HOUR=7 MINUTE=0
@@ -26,7 +27,8 @@ MINUTE ?= 0
 # sign-identity: once-per-machine self-signed "AgentTasks Dev" cert so TCC
 # and Keychain ACLs survive rebuilds (ad-hoc identities change every link).
 .PHONY: all cli helper install mcp app server install-server clean betacheck mail-rule \
-	install-agent uninstall-agent install-digest uninstall-digest test sign-identity
+	install-agent uninstall-agent install-digest uninstall-digest \
+	install-watchdog uninstall-watchdog test sign-identity
 
 all: cli helper
 
@@ -174,6 +176,31 @@ uninstall-digest:
 	$(LAUNCHCTL) bootout "gui/$$uid/$(DIGEST_LABEL)" 2>/dev/null || true; \
 	rm -f "$(LAUNCH_AGENTS)/$(DIGEST_LABEL).plist"
 	@echo "removed LaunchAgent $(DIGEST_LABEL)"
+
+# Dispatcher watchdog (#56): a separate 3-minute job that reads heartbeats
+# and the ledger and pushes when the dispatcher hangs or stops running.
+install-watchdog: install
+	@mkdir -p "$(CONFIG_DIR)/bin" "$(CONFIG_DIR)/logs" "$(LAUNCH_AGENTS)"
+	@cp tools/launchd/run-with-env.sh "$(WRAPPER_DST)"
+	@chmod +x "$(WRAPPER_DST)"
+	@tmp=$$(mktemp); \
+	sed -e 's|@WRAPPER@|$(WRAPPER_DST)|g' \
+	    -e 's|@APPLE_TASKS_BIN@|$(APPLE_TASKS_BIN)|g' \
+	    -e 's|@HOME@|$(HOME)|g' \
+	    tools/launchd/$(WATCHDOG_LABEL).plist > "$$tmp"; \
+	mv "$$tmp" "$(LAUNCH_AGENTS)/$(WATCHDOG_LABEL).plist"
+	@uid=$$(id -u); \
+	$(LAUNCHCTL) bootout "gui/$$uid/$(WATCHDOG_LABEL)" 2>/dev/null || true; \
+	$(LAUNCHCTL) bootstrap "gui/$$uid" "$(LAUNCH_AGENTS)/$(WATCHDOG_LABEL).plist"; \
+	$(LAUNCHCTL) enable "gui/$$uid/$(WATCHDOG_LABEL)" 2>/dev/null || true
+	@echo "installed LaunchAgent $(WATCHDOG_LABEL) (every 180s)"
+	@echo "  unload: make uninstall-watchdog"
+
+uninstall-watchdog:
+	@uid=$$(id -u); \
+	$(LAUNCHCTL) bootout "gui/$$uid/$(WATCHDOG_LABEL)" 2>/dev/null || true; \
+	rm -f "$(LAUNCH_AGENTS)/$(WATCHDOG_LABEL).plist"
+	@echo "removed LaunchAgent $(WATCHDOG_LABEL)"
 
 # Beta upgrade regression drill. Rebuilds the CLI last; dyld-runs the
 # FoundationModels probe when present under research/.

@@ -7,15 +7,15 @@ Tailscale. This file is the Phase 0 gate for apple-mcp.
 
 | Path | Role |
 |------|------|
-| `~/apple-mcp` | **Deployed.** `~/.local/bin/apple-tasks` and `com.apple-tasks.dispatch` run `cli/.build/release/apple-tasks` from here. All iOS-bridge edits land here. |
-| `~/Code/apple-mcp` | Parallel working copy. Do not treat as live. After any merge into this tree, rebuild (`make cli`) and reinstall AgentTasks (`make app`) from **this** repo, then confirm launchd still points at `~/apple-mcp`. |
+| Working checkout | Where edits land. `make install` copies a signed `apple-tasks` into `~/.local/bin` (override with `BINDIR`). That copy is what launchd should run, not `cli/.build/release/apple-tasks`. |
+| `~/.local/bin/apple-tasks` | **Installed.** `com.apple-tasks.dispatch` should point here. Reinstall after a merge with `make install` from the checkout you want to ship. |
 
 Sync procedure if both trees must stay:
 
 1. Commit in `~/apple-mcp`.
 2. Merge or cherry-pick into `~/Code/apple-mcp` (or the reverse), never edit both blindly.
-3. `cd ~/apple-mcp && make cli && make app`
-4. `launchctl print gui/$(id -u)/com.apple-tasks.dispatch` — ProgramArguments must still be `~/apple-mcp/cli/.build/release/apple-tasks`.
+3. `make install` from the checkout you want to ship, and `make app` if the menu-bar app changed.
+4. `launchctl print gui/$(id -u)/com.apple-tasks.dispatch` — ProgramArguments must be the installed binary (`~/.local/bin/apple-tasks` unless `BINDIR` says otherwise), not `cli/.build/release/apple-tasks`.
 
 ## `apple-tasks-server`
 

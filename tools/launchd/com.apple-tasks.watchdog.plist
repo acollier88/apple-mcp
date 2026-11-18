@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Dispatcher watchdog (#56). Separate from com.apple-tasks.dispatch so a stuck
-  pass can still be noticed. Install beside the dispatcher plist; this file
-  is not loaded by `make install-agent`.
+  pass can still be noticed. Install with `make install-watchdog`; it is not
+  part of `make install-agent`.
   Placeholders match the dispatcher plist and are substituted the same way.
 -->
 <plist version="1.0">
