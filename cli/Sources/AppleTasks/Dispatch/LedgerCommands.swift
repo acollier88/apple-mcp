@@ -264,11 +264,18 @@ struct DispatchAccept: AsyncParsableCommand {
         let alreadyMerged: Bool
         let fastForward: Bool
         let clean: Bool
+        /// Branch checked out in the repo (`symbolic-ref`); nil when detached.
+        var target: String? = nil
     }
 
-    static func plan(fastForward: Bool, clean: Bool) -> Plan {
+    static func plan(fastForward: Bool, clean: Bool, target: String? = "main") -> Plan {
+        // A detached HEAD has no branch to advance; merging there would leave
+        // the agent's commits on no branch at all.
+        guard target != nil else {
+            return Plan(action: .pullRequest, reason: "HEAD is detached")
+        }
         if fastForward && clean {
-            return Plan(action: .merge, reason: "clean fast-forward")
+            return Plan(action: .merge, reason: "clean fast-forward of \(target ?? "HEAD")")
         }
         if !fastForward {
             return Plan(action: .pullRequest, reason: "not a fast-forward of HEAD")
@@ -289,8 +296,10 @@ struct DispatchAccept: AsyncParsableCommand {
         } else {
             clean = false
         }
+        let target = Dispatch.gitOutput(["symbolic-ref", "--short", "-q", "HEAD"], repo: repo)
+            .flatMap { $0.isEmpty ? nil : $0 }
         return Probe(branchExists: branchExists, alreadyMerged: alreadyMerged,
-                     fastForward: fastForward, clean: clean)
+                     fastForward: fastForward, clean: clean, target: target)
     }
 
     static func gitPushArguments(branch: String) -> [String] {
@@ -388,7 +397,7 @@ struct DispatchAccept: AsyncParsableCommand {
                 pullRequestURL: nil))
         }
 
-        let choice = plan(fastForward: probe.fastForward, clean: probe.clean)
+        let choice = plan(fastForward: probe.fastForward, clean: probe.clean, target: probe.target)
         switch choice.action {
         case .merge:
             if dryRun {
@@ -583,6 +592,8 @@ struct DispatchRetry: AsyncParsableCommand {
         if !next.removed.isEmpty { _ = NativeTags.remove(tags: next.removed, externalId: ext) }
         if next.addedAuto { _ = NativeTags.mirror(tags: ["auto"], externalId: ext) }
 
+        // A human retry is a fresh start: older failures stop counting.
+        AuditDB.shared.resetRetryBudget(taskId: taskId)
         AuditDB.shared.record(command: "dispatch-retry-requeue", taskId: taskId,
                               list: reminder.calendar?.title,
                               detail: parsed.title + (ledgerId.map { " (from #\($0))" } ?? ""))

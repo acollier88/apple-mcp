@@ -211,6 +211,11 @@ enum HostPolicy {
         if matches(ip, network: 0xA9FE_0000, prefix: 16) { return "link-local address" }   // 169.254.0.0/16
         if matches(ip, network: 0x0000_0000, prefix: 8) { return "unspecified address" }   // 0.0.0.0/8
         if matches(ip, network: 0x6440_0000, prefix: 10) { return "CGNAT address" }        // 100.64.0.0/10
+        if matches(ip, network: 0xC000_0000, prefix: 24) { return "reserved address" }     // 192.0.0.0/24 (IETF)
+        if matches(ip, network: 0xC000_0200, prefix: 24) { return "reserved address" }     // 192.0.2.0/24 (TEST-NET-1)
+        if matches(ip, network: 0xC612_0000, prefix: 15) { return "reserved address" }     // 198.18.0.0/15 (benchmarking)
+        if matches(ip, network: 0xC633_6400, prefix: 24) { return "reserved address" }     // 198.51.100.0/24 (TEST-NET-2)
+        if matches(ip, network: 0xCB00_7100, prefix: 24) { return "reserved address" }     // 203.0.113.0/24 (TEST-NET-3)
         if matches(ip, network: 0xE000_0000, prefix: 4) { return "multicast address" }     // 224.0.0.0/4
         if matches(ip, network: 0xF000_0000, prefix: 4) { return "reserved address" }      // 240.0.0.0/4 (+ broadcast)
         return nil

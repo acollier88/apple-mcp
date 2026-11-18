@@ -71,17 +71,26 @@ enum ProcessRunner {
         var timedOut = false
         if exited.wait(timeout: .now() + timeout) == .timedOut {
             timedOut = true
-            process.terminate()
+            // The child and its descendants: a grandchild (osascript, node)
+            // would otherwise outlive the timeout and keep the pipes open.
+            let tree = AgentProcess.signalTree(process.processIdentifier, SIGTERM)
             if exited.wait(timeout: .now() + killGrace) == .timedOut {
                 kill(process.processIdentifier, SIGKILL)
                 exited.wait()
             }
+            for pid in tree where AgentProcess.isAlive(pid) { kill(pid, SIGKILL) }
         }
         process.waitUntilExit()
 
         // EOF normally arrives with exit. A grandchild that inherited the
         // pipe can hold it open; don't let its lifetime extend ours.
-        _ = drains.wait(timeout: .now() + 2)
+        if drains.wait(timeout: .now() + 2) == .timedOut {
+            // Closing our read ends wakes the blocked read(2) calls, so the
+            // drain threads end instead of waiting on the grandchild forever.
+            try? outPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForReading.close()
+            _ = drains.wait(timeout: .now() + 1)
+        }
 
         return ProcessResult(status: process.terminationStatus,
                              stdout: outBox.data, stderr: errBox.data,

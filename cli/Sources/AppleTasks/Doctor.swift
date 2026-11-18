@@ -468,6 +468,8 @@ struct Doctor: AsyncParsableCommand {
         var issues: [DoctorIssue]
         var classified: [LanePreflight.Classified]
         var cursorAuth: LanePreflight.AuthKind?
+        /// One probe per lane per doctor run; the lane-auth detector reuses it.
+        var authByLane: [String: LanePreflight.AuthKind]
     }
 
     /// Credential and auth failures that `doctor` already had the evidence
@@ -486,16 +488,23 @@ struct Doctor: AsyncParsableCommand {
         if let mcp = LanePreflight.mcpUnavailableIssue(mentioned: Self.doctorMentionedMCPUnavailable()) {
             classified.append(mcp)
         }
-        let issues = classified.map { item in
+        // Lane logins and scheduled-job blocks are reported as issues by the
+        // detector registry (lane-auth-missing:*, scheduled-blocked:*); here
+        // they only drive the one-time "Needs you" push. The doctor-lane MCP
+        // fallback has no detector, so it stays an issue.
+        let issues = classified.filter {
+            !$0.signature.hasPrefix("lane-auth-missing:") && !$0.signature.hasPrefix("hermes-cron-blocked:")
+        }.map { item in
             DoctorIssue(
-                system: item.signature == "mcp-unavailable" ? "mcp" : "dispatch",
+                system: item.signature == "doctor-lane-mcp-fallback" ? "mcp" : "dispatch",
                 severity: item.needsHumanCommand == nil ? "yellow" : "notice",
                 summary: item.summary,
                 signature: item.signature,
                 needsHumanCommand: item.needsHumanCommand)
         }
         return PreflightReport(
-            issues: issues, classified: classified, cursorAuth: authByLane["cursor"])
+            issues: issues, classified: classified, cursorAuth: authByLane["cursor"],
+            authByLane: authByLane)
     }
 
     private static func hermesCronJobs() -> [LanePreflight.CronJob] {
@@ -953,7 +962,8 @@ struct Doctor: AsyncParsableCommand {
             issues.append(issue)
         }
         let loadedConfig = try? AgentsConfig.load()
-        let findings = await DiagnosticsLive.findings(config: loadedConfig)
+        let preflight = await Self.preflightIssues()
+        let findings = await DiagnosticsLive.findings(config: loadedConfig, laneAuth: preflight.authByLane)
         issues.append(contentsOf: findings.map(\.issue))
         if let loaded = loadedConfig {
             let launchdNames = Self.launchdEnvExports(
@@ -974,8 +984,10 @@ struct Doctor: AsyncParsableCommand {
                 summary: "\(plaintextCount) secret(s) in plaintext; run apple-tasks secret migrate --apply",
                 signature: "secrets-plaintext"))
         }
-        let preflight = await Self.preflightIssues()
         issues.append(contentsOf: preflight.issues)
+        // One issue per signature: the first source wins.
+        var seenSignatures = Set<String>()
+        issues = issues.filter { seenSignatures.insert($0.signature).inserted }
         let previous = AuditDB.shared.getState("doctor.needsHuman")
         for item in LanePreflight.signaturesToNotify(previous: previous, issues: preflight.classified) {
             guard let command = item.needsHumanCommand else { continue }

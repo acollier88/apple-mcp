@@ -117,18 +117,21 @@ final class GatehouseTests: XCTestCase {
         gate run -- apple-tasks update T1 --append-notes "y"
         """
         let out = PromptTemplate.prefixGateRun(prompt)
-        XCTAssertTrue(out.contains("gate run -- apple-tasks update T1 --append-notes \"x\""))
-        XCTAssertTrue(out.contains("gate run -- apple-tasks complete T1"))
-        XCTAssertTrue(out.contains("gate run -- apple-tasks notes create"))
-        XCTAssertTrue(out.contains("gate run -- apple-tasks notify --push"))
-        XCTAssertTrue(out.contains("gate run -- apple-tasks approve request"))
-        XCTAssertTrue(out.contains("gate run -- apple-tasks approve check TOK"))
-        XCTAssertFalse(out.contains("gate run -- apple-tasks secret"))
-        XCTAssertFalse(out.contains("gate run -- apple-tasks approve answer"))
-        XCTAssertFalse(out.contains("gate run -- apple-tasks dispatch"))
-        XCTAssertFalse(out.contains("gate run -- apple-tasks serve"))
-        XCTAssertFalse(out.contains("gate run -- apple-tasks web fetch"))
-        XCTAssertEqual(out.components(separatedBy: "gate run -- gate run --").count, 1)
+        XCTAssertTrue(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks update T1 --append-notes \"x\""))
+        XCTAssertTrue(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks complete T1"))
+        XCTAssertTrue(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks notes create"))
+        XCTAssertTrue(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks notify --push"))
+        XCTAssertTrue(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks approve request"))
+        XCTAssertTrue(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks approve check TOK"))
+        XCTAssertFalse(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks secret"))
+        XCTAssertFalse(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks approve answer"))
+        XCTAssertFalse(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks dispatch"))
+        XCTAssertFalse(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks serve"))
+        XCTAssertFalse(out.contains("gate run --env APPLE_TASKS_CALLER -- apple-tasks web fetch"))
+        XCTAssertEqual(out.components(separatedBy: "gate run -- gate run").count, 1)
+        XCTAssertEqual(out.components(separatedBy: "-- gate run").count, 1)
+        // The line that was already gated is left as written.
+        XCTAssertTrue(out.contains("\ngate run -- apple-tasks update T1 --append-notes \"y\""))
         let plain = Dispatch.taskPrompt(
             template: AgentsConfig.defaultPromptTemplate, taskId: "T1", list: "L",
             title: "Hi", notes: nil, claimTag: "dispatched:mac")
@@ -237,6 +240,15 @@ final class GatehouseTests: XCTestCase {
         XCTAssertTrue(result.moved.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: config.appendingPathComponent("worktrees/9").path))
+    }
+
+    func testGateIsResolvedFromFixedLocationsNotPATH() {
+        let home = URL(fileURLWithPath: "/Users/x")
+        XCTAssertNil(GatehouseClient.gateExecutable(home: home, isExecutable: { _ in false }))
+        XCTAssertEqual(
+            GatehouseClient.gateExecutable(home: home, isExecutable: { $0 == "/Users/x/.cargo/bin/gate" })?.path,
+            "/Users/x/.cargo/bin/gate")
+        XCTAssertNil(GatehouseClient.gateExecutable(home: home, isExecutable: { $0 == "/tmp/evil/gate" }))
     }
 
     func testMainGitDirFromRelativeFile() throws {

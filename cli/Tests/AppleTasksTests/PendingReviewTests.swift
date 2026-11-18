@@ -129,7 +129,10 @@ final class PendingReviewTests: XCTestCase {
     func testAcceptPlanChoosesMergeOrPullRequestWithoutNetwork() {
         XCTAssertEqual(
             DispatchAccept.plan(fastForward: true, clean: true),
-            DispatchAccept.Plan(action: .merge, reason: "clean fast-forward"))
+            DispatchAccept.Plan(action: .merge, reason: "clean fast-forward of main"))
+        XCTAssertEqual(
+            DispatchAccept.plan(fastForward: true, clean: true, target: nil),
+            DispatchAccept.Plan(action: .pullRequest, reason: "HEAD is detached"))
         XCTAssertEqual(
             DispatchAccept.plan(fastForward: false, clean: true),
             DispatchAccept.Plan(action: .pullRequest, reason: "not a fast-forward of HEAD"))
@@ -161,7 +164,7 @@ final class PendingReviewTests: XCTestCase {
             return XCTFail("expected a dry-run decision")
         }
         XCTAssertEqual(dry.action, "merge")
-        XCTAssertEqual(dry.reason, "clean fast-forward")
+        XCTAssertTrue(dry.reason.hasPrefix("clean fast-forward of "), dry.reason)
         XCTAssertTrue(dry.dryRun)
         XCTAssertFalse(dry.merged)
         XCTAssertEqual(try git(["rev-parse", "HEAD"], repo: fixture.repo), headBefore)

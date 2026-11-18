@@ -194,6 +194,37 @@ final class AuditDBTests: XCTestCase {
         XCTAssertEqual(db.failedAttempts(taskId: "hung").count, 1)
     }
 
+    private func failOnce(_ db: AuditDB, task: String, status: String = "failed") {
+        guard case .claimed(let id) = db.claimDispatch(taskId: task, agent: "cursor", command: "x", cwd: nil) else {
+            return XCTFail("claim failed for \(task)")
+        }
+        XCTAssertTrue(db.finishDispatch(id: id, status: status, exitCode: 1))
+    }
+
+    func testHumanRetryResetsTheBudget() {
+        let db = openDB()
+        failOnce(db, task: "flaky")
+        failOnce(db, task: "flaky")
+        XCTAssertEqual(db.failedAttempts(taskId: "flaky").count, 2)
+        db.resetRetryBudget(taskId: "flaky")
+        XCTAssertEqual(db.failedAttempts(taskId: "flaky").count, 0)
+        XCTAssertTrue(db.retriesExhausted(maxRetries: 1).isEmpty)
+        failOnce(db, task: "flaky")
+        XCTAssertEqual(db.failedAttempts(taskId: "flaky").count, 1)
+    }
+
+    func testRetriesExhaustedIgnoresTasksWhoseLatestRunWasNotAFailure() {
+        let db = openDB()
+        failOnce(db, task: "gave-up")
+        failOnce(db, task: "gave-up")
+        failOnce(db, task: "cancelled-later")
+        failOnce(db, task: "cancelled-later")
+        failOnce(db, task: "cancelled-later", status: "cancelled")
+        XCTAssertEqual(db.retriesExhausted(maxRetries: 1).map(\.taskId), ["gave-up"])
+        // Old failures (outside the window) are not reported.
+        XCTAssertTrue(db.retriesExhausted(maxRetries: 1, withinDays: -1).isEmpty)
+    }
+
     func testCancelledDoesNotCountAsFailedAttempt() {
         let db = openDB()
         let claim = db.claimDispatch(taskId: "cancel-me", agent: "cursor", command: "x", cwd: nil)

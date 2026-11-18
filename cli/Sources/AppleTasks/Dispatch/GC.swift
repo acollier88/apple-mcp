@@ -118,7 +118,7 @@ extension Dispatch {
                     } else {
                         action = "gc: kept, unmerged branch \(branch) pending"
                     }
-                case "failed", "timeout", "cancelled":
+                case "failed", "timeout", "cancelled", "aborted":
                     guard let finished = row.finishedAt,
                           let date = iso.date(from: finished), date < keepCutoff else { continue }
                     let empty = Self.gitOutput(["rev-list", "--count", branch, "--not", "HEAD"],

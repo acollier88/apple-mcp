@@ -386,7 +386,7 @@ final class AuditDB {
     /// Finished runs that still have a worktree on record (GC candidates).
     func worktreeRows() -> [DispatchRow] {
         selectDispatches(
-            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout','cancelled')",
+            where: "worktree IS NOT NULL AND status IN ('succeeded','failed','timeout','cancelled','aborted')",
             binds: [], limit: 500)
     }
 
@@ -557,22 +557,53 @@ final class AuditDB {
                 (SELECT MAX(id) FROM dispatches
                  WHERE task_id = ?1 AND status = 'succeeded'),
                 0)
+          AND id > ?2
         """
+        // A human `dispatch-retry` starts the budget over (retryResetKey).
+        let resetId = Int64(getState(Self.retryResetKey(taskId)) ?? "") ?? 0
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return (0, nil) }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, resetId)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return (0, nil) }
         let last = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
         return (Int(sqlite3_column_int(stmt, 0)), last)
     }
 
+    static func retryResetKey(_ taskId: String) -> String { "retry.reset.\(taskId)" }
+
+    /// Called by `dispatch-retry`: failures up to the task's newest ledger
+    /// row no longer count against `maxRetries`.
+    func resetRetryBudget(taskId: String) {
+        guard db != nil else { return }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT COALESCE(MAX(id), 0) FROM dispatches WHERE task_id = ?",
+                                 -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return }
+        _ = setState(Self.retryResetKey(taskId), String(sqlite3_column_int64(stmt, 0)))
+    }
+
     /// Tasks whose countable failures since the last success exceed `maxRetries`.
-    func retriesExhausted(maxRetries: Int) -> [(taskId: String, count: Int)] {
+    /// Only tasks whose newest ledger row is a failure finished in the last
+    /// `withinDays` days: a task that later succeeded, was cancelled, or has
+    /// not been tried in a month (likely completed or deleted by hand) drops
+    /// off instead of being reported forever.
+    func retriesExhausted(maxRetries: Int, withinDays: Int = 30) -> [(taskId: String, count: Int)] {
         guard db != nil, maxRetries > 0 else { return [] }
         var stmt: OpaquePointer?
-        let sql = "SELECT DISTINCT task_id FROM dispatches WHERE status IN ('failed','timeout')"
+        let cutoff = ISO8601DateFormatter().string(
+            from: Date().addingTimeInterval(-TimeInterval(withinDays) * 86400))
+        let sql = """
+        SELECT d.task_id FROM dispatches d
+        JOIN (SELECT task_id, MAX(id) AS last_id FROM dispatches GROUP BY task_id) latest
+          ON latest.task_id = d.task_id AND latest.last_id = d.id
+        WHERE d.status IN ('failed','timeout') AND d.finished_at > ?
+        """
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, cutoff, -1, SQLITE_TRANSIENT)
         var ids: [String] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let id = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }) {

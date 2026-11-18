@@ -63,6 +63,17 @@ final class LanePreflightTests: XCTestCase {
             .ready)
     }
 
+    func testMissingBinaryIsUnreachableNotALogin() {
+        XCTAssertEqual(
+            LanePreflight.interpretAgentStatus(hasAPIKey: false, timedOut: false, exitCode: 127,
+                                               output: "env: agent: No such file or directory"),
+            .unreachable("agent not found on PATH"))
+        XCTAssertEqual(
+            LanePreflight.interpretClaudeAuth(hasAPIKey: false, timedOut: false, exitCode: 127,
+                                              output: "env: claude: No such file or directory"),
+            .unreachable("claude not found on PATH"))
+    }
+
     func testClaudeAuthAcceptsAPIKeyLine() {
         XCTAssertEqual(
             LanePreflight.interpretClaudeAuth(
@@ -101,7 +112,7 @@ final class LanePreflightTests: XCTestCase {
         XCTAssertTrue(LanePreflight.mentionsMCPUnavailable(
             summary: nil, logTail: "MCP unavailable, falling back to the CLI"))
         XCTAssertFalse(LanePreflight.mentionsMCPUnavailable(summary: "ok", logTail: "done"))
-        XCTAssertEqual(LanePreflight.mcpUnavailableIssue(mentioned: true)?.signature, "mcp-unavailable")
+        XCTAssertEqual(LanePreflight.mcpUnavailableIssue(mentioned: true)?.signature, "doctor-lane-mcp-fallback")
         XCTAssertNil(LanePreflight.mcpUnavailableIssue(mentioned: true)?.needsHumanCommand)
         XCTAssertNil(LanePreflight.mcpUnavailableIssue(mentioned: false))
     }
