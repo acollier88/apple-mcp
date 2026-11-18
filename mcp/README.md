@@ -25,7 +25,7 @@ Env overrides:
 
 | Variable | Purpose |
 |----------|---------|
-| `APPLE_TASKS_BIN` | Path to the `apple-tasks` binary (default: `../cli/.build/release/apple-tasks`) |
+| `APPLE_TASKS_BIN` | Path to the `apple-tasks` binary. Default: `~/.local/bin/apple-tasks` when that file exists, otherwise `../cli/.build/release/apple-tasks`. |
 | `APPLE_TASKS_FINDMY_PYTHON` | Python for the Find My sidecar (auto-detects `~/.config/apple-tasks/findmy/venv`) |
 
 TCC grants are **per host process**. If tools fail after working in Terminal,

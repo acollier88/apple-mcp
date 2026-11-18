@@ -33,12 +33,13 @@ extension Dispatch {
         await Self.appendNotesTrailer(store: store, taskId: spec.taskId, trailer: trailerText)
         let notifyOn = config.notifyOn ?? "failure"
         let summaryLine = trailerText.components(separatedBy: "\n").first ?? outcome.status
+        // A success that mentioned a credential path stays in the report and
+        // the ledger. It does not page: lanes legitimately print their own
+        // dotenv path, so the flag is a false positive too often (#50).
         if notifyOn == "all" || (notifyOn == "failure" && outcome.status != "succeeded") {
             Notifier.banner(title: spec.title, body: summaryLine)
         }
-        // Failures always reach the phone when ntfy is configured —
-        // the banner is useless if you're not at the Mac.
-        if outcome.status != "succeeded" {
+        if CredentialScan.shouldPush(status: outcome.status) {
             await Notifier.push(title: "agent \(outcome.status): \(spec.title)", body: summaryLine)
         }
 

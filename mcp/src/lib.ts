@@ -11,9 +11,22 @@ import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 
 const execFileAsync = promisify(execFile);
 
-export const BIN =
-  process.env.APPLE_TASKS_BIN ??
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../cli/.build/release/apple-tasks");
+const BUILD_BIN = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../cli/.build/release/apple-tasks");
+
+/** Installed copy when present, otherwise the SwiftPM build product. */
+export function resolveBin(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (candidate: string) => boolean = existsSync,
+): string {
+  if (env.APPLE_TASKS_BIN) return env.APPLE_TASKS_BIN;
+  const installed = path.join(os.homedir(), ".local/bin/apple-tasks");
+  if (exists(installed)) return installed;
+  return BUILD_BIN;
+}
+
+export const BIN = resolveBin();
 
 /** `~/.config/apple-tasks` — config, ledger, secrets; overridable for tests. */
 export const CONFIG_DIR =
@@ -118,7 +131,7 @@ function asCliError(err: unknown, timeoutMs: number): Error & { code?: number; s
 export async function cli(args: string[], opts: CliOpts = {}): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
-    const { stdout } = await execFileAsync(BIN, args, {
+    const { stdout } = await execFileAsync(resolveBin(), args, {
       timeout: timeoutMs,
       env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
     });
@@ -132,7 +145,7 @@ export async function cli(args: string[], opts: CliOpts = {}): Promise<string> {
 export async function cliInput(args: string[], input: string, opts: CliOpts = {}): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? STDIN_TIMEOUT_MS;
   try {
-    const pending = execFileAsync(BIN, args, {
+    const pending = execFileAsync(resolveBin(), args, {
       timeout: timeoutMs,
       env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
     });

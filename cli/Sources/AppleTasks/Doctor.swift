@@ -535,18 +535,11 @@ struct Doctor: AsyncParsableCommand {
 
     /// Resolve a binary on PATH the same way dispatch does (/usr/bin/env).
     private static func which(_ name: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["which", name]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return nil }
-        process.waitUntilExit()
-        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard process.terminationStatus == 0, !path.isEmpty else { return nil }
-        return path
+        guard let result = try? ProcessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/env"), ["which", name], timeout: 5),
+              result.status == 0 else { return nil }
+        let path = result.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
     }
 
     /// Resolve `agent` (Cursor Agent CLI) on PATH the same way dispatch does (/usr/bin/env).
@@ -967,6 +960,17 @@ struct Doctor: AsyncParsableCommand {
         let loadedConfig = try? AgentsConfig.load()
         let findings = await DiagnosticsLive.findings(config: loadedConfig)
         issues.append(contentsOf: findings.map(\.issue))
+        if let loaded = loadedConfig {
+            let launchdNames = Self.launchdEnvExports(
+                at: configDir.appendingPathComponent("launchd.env")).map(\.name)
+            for finding in AgentEnv.exposureFindings(
+                config: loaded, launchdNames: launchdNames,
+                parentNames: Set(ProcessInfo.processInfo.environment.keys)) {
+                issues.append(DoctorIssue(
+                    system: "env", severity: "yellow",
+                    summary: finding.summary, signature: finding.signature))
+            }
+        }
         let plaintextCount = secrets.filter { $0.source == SecretSource.plaintext.rawValue }.count
         if plaintextCount > 0 {
             issues.append(DoctorIssue(
