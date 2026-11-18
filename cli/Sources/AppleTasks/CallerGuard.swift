@@ -46,6 +46,15 @@ enum CallerGuard {
             + "the human answers via the ntfy buttons or their own terminal"
     }
 
+    /// Refusal for review decisions on agent output (`dispatch-accept`,
+    /// `dispatch-discard`, `dispatch-retry`): accepting, discarding or
+    /// re-queuing a run is the human's call, not another agent's.
+    static func reviewRefusal(command: String, caller: String?) -> String? {
+        guard isDispatchedAgent(caller), let caller else { return nil }
+        return "\(command) is a human review decision and is not available to dispatched agents "
+            + "(APPLE_TASKS_CALLER=\(caller)); run it from your own terminal"
+    }
+
     /// Audit the refusal, then throw. Call from `run()` before doing work.
     static func enforce(_ refusal: String?, command: String, detail: String?) throws {
         guard let refusal else { return }

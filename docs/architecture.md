@@ -68,7 +68,7 @@ Documented fully in [`cli/README.md`](../cli/README.md):
 
 - A **plan** = a Reminders list; a **task** = a reminder in it.
 - Tags are leading `[tag]` title prefixes (EventKit has no public native tags).
-- Config and state live under `~/.config/apple-tasks/` (never in the repo).
+- Config, the ledger, and secrets live under `~/.config/apple-tasks/` (never in the repo). Worktrees, scratch dirs, and run logs live under `~/Library/Application Support/apple-tasks/`.
 
 ## Layout
 

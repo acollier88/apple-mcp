@@ -1,6 +1,6 @@
 import Foundation
 
-/// Owner-only run artifacts under `~/.config/apple-tasks/runs/`.
+/// Owner-only run artifacts under Application Support `apple-tasks/runs/`.
 enum RunLogs {
     static func ensureDirectory(_ url: URL) {
         try? FileManager.default.createDirectory(

@@ -52,6 +52,17 @@ enum HealPolicy {
         levelPrefix + fingerprint
     }
 
+    /// The rung last used for this finding, or nil once it was cleared.
+    static func level(_ fingerprint: String, db: AuditDB = .shared) -> String? {
+        guard let raw = db.getState(levelKey(fingerprint)), !raw.isEmpty else { return nil }
+        return raw
+    }
+
+    /// Reset the ladder: the detector came back clean.
+    static func clear(_ fingerprint: String, db: AuditDB = .shared) {
+        _ = db.setState(levelKey(fingerprint), "")
+    }
+
     static func remember(_ action: Action, fingerprint: String, db: AuditDB = .shared) {
         let stored: String?
         switch action {

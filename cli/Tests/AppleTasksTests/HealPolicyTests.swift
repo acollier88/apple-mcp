@@ -47,4 +47,26 @@ final class HealPolicyTests: XCTestCase {
         XCTAssertEqual(report.first?.level, "playbook")
         XCTAssertEqual(report.first?.attempts, 2)
     }
+
+    func testCleanRecheckResetsTheLadder() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("heal-level-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = AuditDB(url: dir.appendingPathComponent("t.db"))
+        HealPolicy.remember(.agent, fingerprint: "launch-exit-1", db: db)
+        XCTAssertEqual(HealPolicy.level("launch-exit-1", db: db), "agent")
+        // A second agent attempt on new evidence escalates to a human.
+        XCTAssertEqual(HealPolicy.decide(fingerprint: "launch-exit-1", rung: .agent,
+                                         previous: HealPolicy.level("launch-exit-1", db: db),
+                                         evidenceChanged: true, healsToday: 0, cap: 3),
+                       .needsHuman("launch-exit-1"))
+        HealPolicy.clear("launch-exit-1", db: db)
+        XCTAssertNil(HealPolicy.level("launch-exit-1", db: db))
+        // After a clean re-check the next occurrence starts at the bottom again.
+        XCTAssertEqual(HealPolicy.decide(fingerprint: "launch-exit-1", rung: .agent,
+                                         previous: HealPolicy.level("launch-exit-1", db: db),
+                                         evidenceChanged: true, healsToday: 0, cap: 3),
+                       .agent)
+    }
 }

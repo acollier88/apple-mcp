@@ -64,6 +64,12 @@ final class HostPolicyTests: XCTestCase {
         assertRefused("http://100.127.255.1/")
     }
 
+    func testReservedAndDocumentationRangesRefused() {
+        for host in ["192.0.0.8", "192.0.2.1", "198.18.0.1", "198.19.255.254", "198.51.100.7", "203.0.113.9"] {
+            assertRefused("http://\(host)/")
+        }
+    }
+
     func testIPv6LoopbackAndUnspecifiedRefused() {
         assertRefused("http://[::1]/")
         assertRefused("http://[::]/")

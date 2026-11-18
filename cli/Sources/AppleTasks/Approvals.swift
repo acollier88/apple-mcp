@@ -9,6 +9,11 @@ import Foundation
 // approvals table; `approve answer` is the Mac-side path (and the escape
 // hatch when a push was quiet-hours suppressed). First answer wins.
 //
+// When gatehouse is running and a passkey is enrolled, the decision is a
+// `gate ask` of an ask_strong argv instead. ntfy still fires, without
+// buttons — a notification only. If gatehouse is absent the ntfy/CLI path
+// below is unchanged.
+//
 // Trust model: whoever knows the reply topic name can answer, exactly like
 // the main ntfy topic's trust model — topics are the secret. Keep both
 // unguessable. The audit table records every request and answer with caller.
@@ -59,7 +64,8 @@ struct Approve: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "approve",
         abstract: "Human-in-the-loop approvals over ntfy: request with Approve/Deny buttons, check/wait for the answer.",
-        subcommands: [ApproveRequest.self, ApproveCheck.self, ApproveAnswer.self, ApproveList.self]
+        subcommands: [ApproveRequest.self, ApproveCheck.self, ApproveAnswer.self, ApproveList.self,
+                      ApproveGateWait.self]
     )
 }
 
@@ -70,7 +76,9 @@ struct ApproveRequest: AsyncParsableCommand {
         Push an approval request with [Approve] [Deny] buttons and emit its \
         token. The push respects quietHours (notify.json) unless --force; a \
         suppressed request still exists and can be answered with 'approve \
-        answer' or seen in 'approve list'.
+        answer' or seen in 'approve list'. When gatehouse is running and a \
+        passkey is enrolled, the decision is a gate ask_strong request and \
+        ntfy is a notification only.
         """
     )
 
@@ -87,6 +95,10 @@ struct ApproveRequest: AsyncParsableCommand {
     var force = false
 
     func run() async throws {
+        if GatehouseClient.delegatesApprovals(GatehouseClient.observe()) {
+            try await runViaGatehouse()
+            return
+        }
         let (server, topic, replyTopic) = try ApprovalTopics.resolve()
         let token = UUID().uuidString.prefix(8).lowercased()
         let iso = ISO8601DateFormatter()
@@ -108,6 +120,46 @@ struct ApproveRequest: AsyncParsableCommand {
         }
 
         guard let row = AuditDB.shared.approvalRows(token: String(token)).first else {
+            throw AppleTasksError.saveFailed("approval row vanished after insert (db unwritable?)")
+        }
+        emit(ApprovalOut(row, pushSuppressed: suppressed))
+    }
+
+    /// Gatehouse is the approval channel. ntfy, when configured, is a
+    /// notification without buttons. A missing daemon answer leaves the row
+    /// pending so `approve answer` still works.
+    private func runViaGatehouse() async throws {
+        let token = String(UUID().uuidString.prefix(8)).lowercased()
+        let iso = ISO8601DateFormatter()
+        let expiresAt = iso.string(from: Date().addingTimeInterval(TimeInterval(expiresMinutes) * 60))
+
+        AuditDB.shared.createApproval(token: token, taskId: taskId,
+                                      question: question, expiresAt: expiresAt)
+        AuditDB.shared.record(command: "approve request", taskId: taskId, detail: "\(token): \(question)")
+
+        var suppressed: String?
+        let config = NotifyConfig.load()
+        if !force, let quiet = config?.quietHours, case .inside(let window) = quiet.check() {
+            suppressed = window
+            AuditDB.shared.record(command: "approve request", taskId: taskId,
+                                  detail: token, result: "push suppressed (quiet hours \(window))")
+        } else if NotifyConfig.resolveTopic(config) != nil {
+            let title = "Agent approval needed" + (taskId.map { " (task \($0.prefix(8))…)" } ?? "")
+            _ = await Notifier.push(title: title, body: question + "\n[\(token)]\nApprove on this Mac (gatehouse).")
+        }
+
+        // Only gatehouse may answer this row: `approve check` skips the ntfy
+        // reply topic for it, so a POST to that topic cannot approve it.
+        _ = AuditDB.shared.setState(GatehouseClient.channelKey(token), "gatehouse")
+        // Waiting on `gate ask` here would block the agent's own command for
+        // up to expiresMinutes (longer than any lane timeout). A detached
+        // waiter records the decision; the agent polls `approve check`.
+        if !ApproveGateWait.spawnDetached(token: token, timeoutSeconds: max(expiresMinutes, 1) * 60) {
+            AuditDB.shared.record(command: "approve request", taskId: taskId, detail: token,
+                                  result: "error", error: "could not start the gatehouse waiter")
+        }
+
+        guard let row = AuditDB.shared.approvalRows(token: token).first else {
             throw AppleTasksError.saveFailed("approval row vanished after insert (db unwritable?)")
         }
         emit(ApprovalOut(row, pushSuppressed: suppressed))
@@ -201,6 +253,10 @@ struct ApproveCheck: AsyncParsableCommand {
             return AuditDB.shared.approvalRows(token: token).first ?? row
         }
 
+        // A gatehouse-delegated request is answered by gatehouse only.
+        if AuditDB.shared.getState(GatehouseClient.channelKey(token)) == "gatehouse" {
+            return row
+        }
         let (server, _, replyTopic) = try ApprovalTopics.resolve()
         let since = iso.date(from: row.requestedAt).map { Int($0.timeIntervalSince1970) } ?? 0
         guard let url = URL(string: "\(server)/\(replyTopic)/json?poll=1&since=\(since)") else { return row }
@@ -283,5 +339,71 @@ struct ApproveList: AsyncParsableCommand {
 
     func run() async throws {
         emit(AuditDB.shared.approvalRows(status: status, limit: limit).map { ApprovalOut($0) })
+    }
+}
+
+/// Detached waiter for a gatehouse-delegated approval: runs `gate ask` for
+/// the row and records the decision. Started by `approve request` in its own
+/// session so it outlives the agent's process group; bounded by the
+/// request's expiry. Hidden: it is plumbing, not a command for people.
+struct ApproveGateWait: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "gate-wait",
+        abstract: "Internal: wait for gatehouse to answer one delegated approval.",
+        shouldDisplay: false
+    )
+
+    @Argument var token: String
+
+    @Option(name: .customLong("timeout-seconds"))
+    var timeoutSeconds: Int = 14_400
+
+    func run() async throws {
+        try CallerGuard.enforce(
+            CallerGuard.approvalAnswerRefusal(caller: CallerGuard.currentCaller),
+            command: "approve gate-wait", detail: token)
+        guard AuditDB.shared.getState(GatehouseClient.channelKey(token)) == "gatehouse",
+              let row = AuditDB.shared.approvalRows(token: token).first,
+              row.status == "pending" else {
+            throw AppleTasksError.invalidInput("no pending gatehouse approval '\(token)'")
+        }
+        guard let decision = GatehouseClient.askStrong(
+            token: token, question: row.question, timeout: TimeInterval(max(timeoutSeconds, 1))) else {
+            return  // timeout or gate unavailable: the row expires on its own
+        }
+        let status = decision == "approved" ? "approved" : "denied"
+        if AuditDB.shared.answerApproval(token: token, status: status, via: "gatehouse") {
+            AuditDB.shared.record(command: "approve answer", taskId: row.taskId,
+                                  detail: "\(token): \(status) via gatehouse")
+        }
+    }
+
+    /// `posix_spawn` with `POSIX_SPAWN_SETSID`: a new session, so the
+    /// dispatcher's process-group cleanup after the agent exits does not kill
+    /// the waiter. stdio is /dev/null. Returns false if the spawn failed.
+    static func spawnDetached(token: String, timeoutSeconds: Int) -> Bool {
+        let exe = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).path
+        var attr: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attr) == 0 else { return false }
+        defer { posix_spawnattr_destroy(&attr) }
+        guard posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID)) == 0 else { return false }
+        var actions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(&actions) == 0 else { return false }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        for fd in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] {
+            let flags = fd == STDIN_FILENO ? O_RDONLY : O_WRONLY
+            guard posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", flags, 0) == 0 else { return false }
+        }
+        let argv = [exe, "approve", "gate-wait", token, "--timeout-seconds", String(timeoutSeconds)]
+        var cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
+        defer { for p in cArgs { free(p) } }
+        var environment = ProcessInfo.processInfo.environment
+        // Audit rows from the waiter say who recorded the answer.
+        environment["APPLE_TASKS_CALLER"] = "approval-waiter"
+        let env = environment.map { "\($0.key)=\($0.value)" }
+        var cEnv: [UnsafeMutablePointer<CChar>?] = env.map { strdup($0) } + [nil]
+        defer { for p in cEnv { free(p) } }
+        var pid: pid_t = 0
+        return posix_spawn(&pid, exe, &actions, &attr, &cArgs, &cEnv) == 0
     }
 }

@@ -27,6 +27,13 @@ enum CredentialScan {
         labels.isEmpty ? nil : "cred-paths-in-log=" + labels.joined(separator: ",")
     }
 
+    /// Successes are not paged, even when the log mentioned a credential
+    /// path. Those mentions false-positive on lanes that touch their own
+    /// dotenv file (#50).
+    static func shouldPush(status: String) -> Bool {
+        status != "succeeded"
+    }
+
     /// `.env` / `.env.local` as a path component, not `process.env` or
     /// `launchd.env` (that one has its own label) or `.envrc`.
     static let dotenv = try! NSRegularExpression(

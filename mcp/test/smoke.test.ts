@@ -31,6 +31,9 @@ function childEnv(overrides: Record<string, string>): Record<string, string> {
     ...getDefaultEnvironment(),
     APPLE_TASKS_BIN: fakeBin,
     APPLE_TASKS_CONFIG_DIR: configDir,
+    // Run logs live under the support dir; point it at the scratch dir too,
+    // so a real ~/Library/Application Support/apple-tasks/runs is never read.
+    APPLE_TASKS_SUPPORT_DIR: configDir,
     FAKE_ARGV_LOG: argvLog,
     FAKE_ARGV_RAW_LOG: argvRawLog,
     ...overrides,
