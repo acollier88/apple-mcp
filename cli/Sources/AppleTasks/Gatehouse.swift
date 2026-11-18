@@ -11,6 +11,8 @@ struct GatehouseProbeFacts: Equatable {
     var hooksText: String?
     /// `~/.gatehouse/run/ctl.sock` (or `$GATEHOUSE_RUNTIME_DIR/ctl.sock`) exists.
     var ctlSocketExists: Bool = false
+    /// Text of the host gatehouse `policy.toml`, when one was readable.
+    var policyText: String? = nil
 }
 
 /// Doctor's gatehouse report. Missing gatehouse is these fields, not an error.
@@ -19,6 +21,9 @@ struct GatehouseDoctorStatus: Codable, Equatable {
     let passkeyEnrolled: Bool
     let hooksFailClosed: Bool
     let unsandboxedLanes: [String]
+    /// The host policy has the shipped `__approve_strong` ask_strong rule.
+    /// Without it `approve request` keeps the ntfy/CLI path.
+    var strongApprovalPolicy: Bool = false
     let note: String
 }
 
@@ -58,8 +63,26 @@ enum GatehouseClient {
         return compact.contains("failclosed=true") || compact.contains("\"failclosed\":true")
     }
 
+    /// Delegate only when the decision would really be ask_strong: daemon up,
+    /// passkey enrolled, and the host policy carries the `__approve_strong`
+    /// ask_strong rule. Without that rule the argv falls to a plain "ask",
+    /// which any local `gate approve` caller (an agent included) can answer.
     static func delegatesApprovals(_ facts: GatehouseProbeFacts) -> Bool {
-        daemonRunning(facts) && passkeyEnrolled(facts)
+        daemonRunning(facts) && passkeyEnrolled(facts) && strongApprovalPolicy(facts)
+    }
+
+    /// A `[[rules]]` block in the host policy that names `__approve_strong`
+    /// and has tier `ask_strong`.
+    static func strongApprovalPolicy(_ facts: GatehouseProbeFacts) -> Bool {
+        guard let text = facts.policyText else { return false }
+        let blocks = text.components(separatedBy: "[[rules]]").dropFirst()
+        return blocks.contains { block in
+            let body = block.components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+                .joined(separator: "\n")
+            let compact = body.filter { !$0.isWhitespace }
+            return compact.contains("__approve_strong") && compact.contains("tier=\"ask_strong\"")
+        }
     }
 
     static func doctorStatus(agents: [String: AgentsConfig.Agent],
@@ -67,6 +90,7 @@ enum GatehouseClient {
         let running = daemonRunning(facts)
         let enrolled = passkeyEnrolled(facts)
         let failClosed = hooksFailClosed(facts)
+        let strongPolicy = strongApprovalPolicy(facts)
         let unsandboxed = agents.keys.filter { agents[$0]?.sandbox?.isGatehouse != true }.sorted()
         var notes: [String] = []
         if !running {
@@ -75,6 +99,9 @@ enum GatehouseClient {
             notes.append("gatehoused is running; no passkey enrolled (gate enroll)")
         } else {
             notes.append("gatehoused is running and a passkey is enrolled")
+        }
+        if running && enrolled && !strongPolicy {
+            notes.append("host policy has no __approve_strong ask_strong rule (merge examples/gatehouse/apple-tasks-policy.toml); approvals stay on ntfy/CLI")
         }
         if !failClosed {
             notes.append("hooks are not fail-closed (shipped gate hook returns ask when the broker is unreachable; set fail_closed = true in gatehouse hooks.toml)")
@@ -87,6 +114,7 @@ enum GatehouseClient {
             passkeyEnrolled: enrolled,
             hooksFailClosed: failClosed,
             unsandboxedLanes: unsandboxed,
+            strongApprovalPolicy: strongPolicy,
             note: notes.joined(separator: "; "))
     }
 
@@ -124,6 +152,12 @@ enum GatehouseClient {
                 facts.passkeyJSON.append(data)
             }
         }
+        for url in policyURLs(env: env, home: home) {
+            if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
+                facts.policyText = text
+                break
+            }
+        }
         for url in hooksURLs(env: env, home: home) {
             if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
                 facts.hooksText = text
@@ -152,6 +186,13 @@ enum GatehouseClient {
         roots.append(home.appendingPathComponent(".local/share/gatehouse", isDirectory: true))
         return roots.flatMap {
             [$0.appendingPathComponent("passkeys.json"), $0.appendingPathComponent("passkeys-phone.json")]
+        }
+    }
+
+    /// Same roots as `hooksURLs`: `$GATEHOUSE_CONFIG_DIR`, then Application Support.
+    static func policyURLs(env: [String: String], home: URL) -> [URL] {
+        hooksURLs(env: env, home: home).map {
+            $0.deletingLastPathComponent().appendingPathComponent("policy.toml")
         }
     }
 

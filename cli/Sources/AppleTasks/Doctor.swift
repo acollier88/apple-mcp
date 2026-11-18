@@ -931,15 +931,10 @@ struct Doctor: AsyncParsableCommand {
             return FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".config/apple-tasks", isDirectory: true)
         }()
-        // Before secretsStatus so agents.json shows up in fixedModes.
-        // runs/ now lives under Application Support; move any legacy copies
-        // once, then tighten that tree too.
+        // Doctor only reports. The runtime layout migration (worktrees/,
+        // scratch/, runs/ -> Application Support) runs from `dispatch`, which
+        // knows whether an agent is using those directories.
         let layout = AppleTasksLayout.resolve()
-        let migration = AppleTasksLayout.migrateRuntime(from: layout.config, to: layout.support)
-        if !migration.notes.isEmpty {
-            let text = migration.notes.joined(separator: "; ")
-            FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
-        }
         let supportDir = layout.support
         let fixedModes = fixModes ? ConfigPermissions.fixModes(configDir: configDir, supportDir: supportDir) : nil
         let secrets = Self.secretsStatus(

@@ -183,11 +183,22 @@ final class GatehouseTests: XCTestCase {
         try Data("{\"agents\":{}}".utf8).write(to: config.appendingPathComponent("agents.json"))
 
         var repairs: [(String, [String])] = []
-        let result = AppleTasksLayout.migrateRuntime(from: config, to: support) { gitDir, trees in
+        var rewrites: [(String, String)] = []
+        let result = AppleTasksLayout.migrateRuntime(
+            from: config, to: support, busy: { false },
+            rewriteLedger: { rewrites.append(($0, $1)); return 1 }
+        ) { gitDir, trees in
             repairs.append((gitDir, trees))
             return 0
         }
         XCTAssertEqual(Set(result.moved), Set(["worktrees", "scratch", "runs"]))
+        XCTAssertEqual(rewrites.map(\.0), ["worktrees", "scratch", "runs"].map {
+            config.appendingPathComponent($0, isDirectory: true).path + "/"
+        })
+        XCTAssertEqual(rewrites.map(\.1), ["worktrees", "scratch", "runs"].map {
+            support.appendingPathComponent($0, isDirectory: true).path + "/"
+        })
+        XCTAssertEqual(result.ledgerRowsRewritten, 3)
         XCTAssertEqual(repairs.map(\.0), ["/tmp/not-a-repo/.git"])
         let repaired = repairs.first?.1.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
         XCTAssertEqual(repaired, [support.appendingPathComponent("worktrees/7").standardizedFileURL.path])
@@ -198,12 +209,34 @@ final class GatehouseTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: config.appendingPathComponent("worktrees").path))
         XCTAssertFalse(fm.fileExists(atPath: config.appendingPathComponent("scratch").path))
 
-        let again = AppleTasksLayout.migrateRuntime(from: config, to: support) { _, _ in
+        let again = AppleTasksLayout.migrateRuntime(
+            from: config, to: support, busy: { false }, rewriteLedger: { _, _ in 0 }
+        ) { _, _ in
             XCTFail("second migration must not repair")
             return 1
         }
         XCTAssertTrue(again.moved.isEmpty)
         XCTAssertTrue(again.repairedGitDirs.isEmpty)
+    }
+
+    func testMigrationDefersWhileADispatchIsRunning() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("apple-tasks-layout-busy-\(UUID().uuidString)", isDirectory: true)
+        let config = root.appendingPathComponent("config", isDirectory: true)
+        let support = root.appendingPathComponent("support", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: config.appendingPathComponent("worktrees/9"), withIntermediateDirectories: true)
+        let result = AppleTasksLayout.migrateRuntime(
+            from: config, to: support, busy: { true },
+            rewriteLedger: { _, _ in XCTFail("no rewrite while busy"); return 0 }
+        ) { _, _ in
+            XCTFail("no repair while busy")
+            return 1
+        }
+        XCTAssertTrue(result.moved.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: config.appendingPathComponent("worktrees/9").path))
     }
 
     func testMainGitDirFromRelativeFile() throws {
@@ -313,7 +346,16 @@ final class GatehouseTests: XCTestCase {
             passkeyJSON: [Data("[{}]".utf8)],
             hooksText: "fail_closed = true\n",
             ctlSocketExists: false)
-        XCTAssertTrue(GatehouseClient.delegatesApprovals(live))
+        // No host policy rule yet: a plain "ask" is not a strong approval.
+        XCTAssertFalse(GatehouseClient.delegatesApprovals(live))
+        var withPolicy = live
+        withPolicy.policyText = try String(
+            contentsOf: repoRoot().appendingPathComponent("examples/gatehouse/apple-tasks-policy.toml"),
+            encoding: .utf8)
+        XCTAssertTrue(GatehouseClient.delegatesApprovals(withPolicy))
+        var weakPolicy = live
+        weakPolicy.policyText = "[[rules]]\ntier = \"ask\"\nargs_glob = [\"__approve_strong *\"]\n"
+        XCTAssertFalse(GatehouseClient.delegatesApprovals(weakPolicy))
         let ready = GatehouseClient.doctorStatus(agents: config.agents, facts: live)
         XCTAssertTrue(ready.running)
         XCTAssertTrue(ready.passkeyEnrolled)
@@ -349,7 +391,9 @@ final class GatehouseTests: XCTestCase {
         for allow in ["update *", "complete *", "notes create*", "notify*", "approve request*", "approve check*"] {
             XCTAssertTrue(text.contains("\"\(allow)\""), allow)
         }
-        for deny in ["secret*", "approve answer*", "dispatch-retry*", "serve*"] {
+        for deny in ["secret*", "approve answer*", "dispatch-retry*", "serve*",
+                     "dispatch-accept*", "dispatch-discard*", "dispatch-cancel*",
+                     "dispatch-pause*", "dispatch-resume*"] {
             XCTAssertTrue(text.contains("\"\(deny)\""), deny)
         }
         XCTAssertTrue(text.contains("\"dispatch\""))

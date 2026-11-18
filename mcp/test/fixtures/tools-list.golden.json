@@ -1600,6 +1600,37 @@
               "type": "null"
             }
           ]
+        },
+        "fixedModes": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Paths chmod'd by --fix-modes. Absent on a normal doctor run."
         }
       },
       "required": [

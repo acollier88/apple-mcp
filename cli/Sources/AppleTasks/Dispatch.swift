@@ -162,6 +162,10 @@ struct Dispatch: AsyncParsableCommand {
                 let text = migration.notes.joined(separator: "; ")
                 FileHandle.standardError.write(Data("apple-tasks runtime migration: \(text)\n".utf8))
             }
+            if !migration.moved.isEmpty || migration.ledgerRowsRewritten > 0 {
+                Self.passLog("runtime migration moved [\(migration.moved.joined(separator: ","))], "
+                    + "repointed \(migration.ledgerRowsRewritten) ledger path(s)")
+            }
         }
         if !AuditDB.shared.isAvailable {
             FileHandle.standardError.write(Data(

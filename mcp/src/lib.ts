@@ -128,12 +128,23 @@ function asCliError(err: unknown, timeoutMs: number): Error & { code?: number; s
   return wrapped;
 }
 
+/**
+ * APPLE_TASKS_CALLER for CLI calls made by this server. A server started by a
+ * dispatched agent inherits `agent:<tag>`; keep it, so the CLI's agent-only
+ * guards (approve answer, review commands, one recurring complete per run)
+ * still apply when the agent goes through MCP. Anyone else is `mcp`.
+ */
+export function callerFor(env: NodeJS.ProcessEnv = process.env): string {
+  const inherited = (env.APPLE_TASKS_CALLER ?? "").trim();
+  return inherited.toLowerCase().startsWith("agent:") ? inherited : "mcp";
+}
+
 export async function cli(args: string[], opts: CliOpts = {}): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
     const { stdout } = await execFileAsync(resolveBin(), args, {
       timeout: timeoutMs,
-      env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
+      env: { ...process.env, APPLE_TASKS_CALLER: callerFor() },
     });
     return stdout.trim();
   } catch (err) {
@@ -147,7 +158,7 @@ export async function cliInput(args: string[], input: string, opts: CliOpts = {}
   try {
     const pending = execFileAsync(resolveBin(), args, {
       timeout: timeoutMs,
-      env: { ...process.env, APPLE_TASKS_CALLER: "mcp" },
+      env: { ...process.env, APPLE_TASKS_CALLER: callerFor() },
     });
     pending.child.stdin?.end(input);
     const { stdout } = await pending;
