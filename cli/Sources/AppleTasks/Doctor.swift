@@ -1229,6 +1229,41 @@ struct Doctor: AsyncParsableCommand {
                     reason: issue.suggestedAction ?? issue.summary))
                 continue
             }
+            // Ladder (#54): a playbook when one exists, applied here in code;
+            // an agent heal task only for problems without one.
+            switch Playbooks.rung(for: issue.signature) {
+            case .playbook(let id):
+                let steps = Playbooks.plan(
+                    await Playbooks.liveContext(config: config, store: store), only: issue.signature)
+                var applied: [String] = []
+                var failure: String?
+                for step in steps where step.apply != .none {
+                    do {
+                        try await Playbooks.apply(step, store: store)
+                        applied.append(step.summary)
+                    } catch {
+                        failure = (error as? AppleTasksError)?.description ?? error.localizedDescription
+                        break
+                    }
+                }
+                actions.append(HealAction(
+                    system: issue.system,
+                    action: failure == nil ? "playbook" : "playbook-failed",
+                    taskId: nil, title: nil,
+                    reason: failure.map { "\(id): \($0)" }
+                        ?? (applied.isEmpty ? "\(id): nothing to apply" : "\(id): " + applied.joined(separator: "; "))))
+                continue
+            case .needsHuman(let id):
+                let sent = await Notifier.push(
+                    title: "apple-tasks needs you",
+                    body: "\(issue.summary) (\(id); no automatic fix)")
+                actions.append(HealAction(
+                    system: issue.system, action: "needs-human", taskId: nil, title: nil,
+                    reason: sent ? id : "notification failed: \(id)"))
+                continue
+            case .agent:
+                break
+            }
             let spec = Self.healSpec(issue)
             if let existing = open.first(where: { Self.isOpenHeal($0, signature: issue.signature) }) {
                 let parsed = Tags.parse(existing.title ?? "")
