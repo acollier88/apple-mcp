@@ -1017,6 +1017,19 @@ struct Doctor: AsyncParsableCommand {
         }
         issues.append(contentsOf: preflight.issues)
         issues.append(contentsOf: ProposalsInbox.mutedIssues())
+        let beats = Watchdog.directory()
+        for notice in Watchdog.notices(
+            dispatcher: Watchdog.read(role: "dispatcher", from: beats),
+            watchdog: Watchdog.read(role: "watchdog", from: beats),
+            now: Date(),
+            deadRunning: Watchdog.liveDeadRunningCount(),
+            maxPass: Watchdog.maxPassSeconds(config: loadedConfig),
+            watchdogInstalled: Watchdog.watchdogInstalled()) {
+            issues.append(DoctorIssue(
+                system: "watchdog", severity: "info",
+                summary: Watchdog.summary(notice),
+                signature: Watchdog.signature(notice)))
+        }
         // One issue per signature: the first source wins.
         var seenSignatures = Set<String>()
         issues = issues.filter { seenSignatures.insert($0.signature).inserted }

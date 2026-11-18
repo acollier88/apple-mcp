@@ -150,6 +150,13 @@ struct Dispatch: AsyncParsableCommand {
         let config = try AgentsConfig.load()
         Self.passLog("dispatch pass start quiet=\(quiet) dryRun=\(dryRun)")
         defer { Self.passLog("dispatch pass end") }
+        // Heartbeat for the watchdog (#56): a hang leaves `finished` empty.
+        let passStart = Date()
+        if !dryRun {
+            Watchdog.markDispatcher(start: passStart, finish: nil)
+            await Watchdog.checkWatchdogAlive(now: passStart)
+        }
+        defer { if !dryRun { Watchdog.markDispatcher(start: passStart, finish: Date()) } }
         // tools/launchd starts `dispatch --quiet` on StartInterval and will
         // not start another pass while this process is running. Arm the cap
         // here, not by editing the installed plist.
