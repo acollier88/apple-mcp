@@ -993,7 +993,9 @@ struct Doctor: AsyncParsableCommand {
                 evidence: finding.evidence, evidenceHash: hash,
                 action: finding.suggestedAction)
         }
-        AuditDB.shared.resolveFindings(notSeen: Set(findingDecisions.keys))
+        for closed in AuditDB.shared.resolveFindings(notSeen: Set(findingDecisions.keys)) {
+            HealPolicy.clear(closed)  // a clean detector resets the escalation ladder
+        }
         if let loaded = loadedConfig {
             let launchdNames = Self.launchdEnvExports(
                 at: configDir.appendingPathComponent("launchd.env")).map(\.name)
@@ -1229,9 +1231,22 @@ struct Doctor: AsyncParsableCommand {
                     reason: issue.suggestedAction ?? issue.summary))
                 continue
             }
-            // Ladder (#54): a playbook when one exists, applied here in code;
-            // an agent heal task only for problems without one.
-            switch Playbooks.rung(for: issue.signature) {
+            // Ladder (#54, #55): playbook -> agent heal -> needs-human, one rung
+            // per piece of evidence. The rung used is remembered per finding
+            // and cleared when the detector comes back clean.
+            let todayCount = healState.day == Diagnostics.dayString(now) ? healState.count : 0
+            switch HealPolicy.decide(
+                fingerprint: issue.signature,
+                rung: Playbooks.rung(for: issue.signature),
+                previous: HealPolicy.level(issue.signature),
+                evidenceChanged: decisions[issue.signature] != "quiet",
+                healsToday: todayCount,
+                cap: limits.healDailyCap) {
+            case .quiet:
+                actions.append(HealAction(
+                    system: issue.system, action: "unchanged", taskId: nil, title: nil,
+                    reason: "heal rung already used for this evidence"))
+                continue
             case .playbook(let id):
                 let steps = Playbooks.plan(
                     await Playbooks.liveContext(config: config, store: store), only: issue.signature)
@@ -1246,20 +1261,50 @@ struct Doctor: AsyncParsableCommand {
                         break
                     }
                 }
+                HealPolicy.remember(.playbook(id), fingerprint: issue.signature)
+                if !applied.isEmpty {
+                    healState = Diagnostics.marked(healState, signature: issue.signature, now: now)
+                    saveHealState(healState)
+                }
+                // Verify (#55): only a clean re-check counts as healed.
+                var verified = false
+                if failure == nil, !applied.isEmpty {
+                    let recheck = await DiagnosticsLive.findings(config: config)
+                    verified = !recheck.contains { $0.signature == issue.signature }
+                    if verified {
+                        _ = AuditDB.shared.setFindingState(fingerprint: issue.signature, state: "healed")
+                        HealPolicy.clear(issue.signature)
+                    }
+                }
                 actions.append(HealAction(
                     system: issue.system,
-                    action: failure == nil ? "playbook" : "playbook-failed",
+                    action: failure != nil ? "playbook-failed" : (verified ? "playbook-verified" : "playbook"),
                     taskId: nil, title: nil,
                     reason: failure.map { "\(id): \($0)" }
-                        ?? (applied.isEmpty ? "\(id): nothing to apply" : "\(id): " + applied.joined(separator: "; "))))
+                        ?? (applied.isEmpty ? "\(id): nothing to apply"
+                            : "\(id): " + applied.joined(separator: "; ")
+                                + (verified ? " (re-check clean)" : " (still detected; next rung on new evidence)"))))
                 continue
             case .needsHuman(let id):
+                HealPolicy.remember(.needsHuman(id), fingerprint: issue.signature)
                 let sent = await Notifier.push(
                     title: "apple-tasks needs you",
-                    body: "\(issue.summary) (\(id); no automatic fix)")
+                    body: "\(issue.summary) Automatic healing stopped for \(id).")
                 actions.append(HealAction(
                     system: issue.system, action: "needs-human", taskId: nil, title: nil,
                     reason: sent ? id : "notification failed: \(id)"))
+                continue
+            case .breaker:
+                let day = HealPolicy.dayStamp()
+                if AuditDB.shared.getState(HealPolicy.breakerKey) != day {
+                    _ = await Notifier.push(
+                        title: "apple-tasks needs you",
+                        body: "Automatic healing is paused for today (\(limits.healDailyCap) heals).")
+                    _ = AuditDB.shared.setState(HealPolicy.breakerKey, day)
+                }
+                actions.append(HealAction(
+                    system: issue.system, action: "paused", taskId: nil, title: nil,
+                    reason: "heal circuit breaker"))
                 continue
             case .agent:
                 break
@@ -1314,6 +1359,7 @@ struct Doctor: AsyncParsableCommand {
                     title: out.title,
                     reason: nil
                 ))
+                HealPolicy.remember(.agent, fingerprint: issue.signature)
             } catch {
                 let reason = (error as? AppleTasksError)?.description ?? error.localizedDescription
                 actions.append(HealAction(
