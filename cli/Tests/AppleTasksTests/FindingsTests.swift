@@ -63,4 +63,26 @@ final class FindingsTests: XCTestCase {
         XCTAssertEqual(db.findings(state: "open").count, 0)
         XCTAssertEqual(db.findings(state: "dismissed").count, 1)
     }
+
+    func testUndetectedFindingsCloseAndRecurrencesReopen() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("findings-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = AuditDB(url: dir.appendingPathComponent("test.db"))
+        func observe(_ fp: String, _ evidence: String) -> String {
+            db.observeFinding(fingerprint: fp, detector: fp, system: "s", severity: "yellow",
+                              findingClass: "healable", summary: fp, evidence: evidence,
+                              evidenceHash: evidence, action: nil)
+        }
+        XCTAssertEqual(observe("disk", "90%"), "open")
+        XCTAssertEqual(observe("launchd", "exit 1"), "open")
+        XCTAssertEqual(observe("disk", "90%"), "quiet")
+        // This run only saw "disk": launchd came back clean.
+        XCTAssertEqual(db.resolveFindings(notSeen: ["disk"]), ["launchd"])
+        XCTAssertEqual(db.finding(fingerprint: "launchd")?.state, "healed")
+        // Same evidence again after it was healed is a recurrence, not quiet.
+        XCTAssertEqual(observe("launchd", "exit 1"), "refresh")
+        XCTAssertEqual(db.finding(fingerprint: "launchd")?.state, "open")
+    }
 }

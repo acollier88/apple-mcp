@@ -2,44 +2,68 @@ import XCTest
 @testable import apple_tasks
 
 final class PlaybookTests: XCTestCase {
-    func testLadderAndForbiddenCommands() {
+    func testLadderMatchesDetectorSignatures() {
         XCTAssertEqual(Playbooks.rung(for: "homeassistant"), .agent)
-        XCTAssertEqual(Playbooks.rung(for: "logs-oversize"), .playbook("logs-oversize"))
-        XCTAssertEqual(Playbooks.rung(for: "binary-drift"), .needsHuman("binary-drift"))
-        XCTAssertFalse(Playbooks.allowedArgv(["/usr/bin/git", "push", "origin", "main"]))
-        XCTAssertFalse(Playbooks.allowedArgv(["/usr/bin/git", "branch", "-D", "agent/x"]))
-        XCTAssertTrue(Playbooks.allowedArgv([
-            "/usr/bin/git", "worktree", "remove", "--force", "/tmp/wt"]))
-        XCTAssertFalse(Playbooks.allowedArgv([
-            "/bin/kill", "-TERM", "not-a-pid"]))
-        XCTAssertFalse(Playbooks.isInfrastructure("the patch did not compile"))
-        XCTAssertTrue(Playbooks.isInfrastructure("dispatcher died"))
-        XCTAssertTrue(Playbooks.countsAfterReset(finishedAt: "2026-11-02T00:00:00Z", ignoreBefore: "2026-11-01T00:00:00Z"))
-        XCTAssertFalse(Playbooks.countsAfterReset(finishedAt: "2026-10-01T00:00:00Z", ignoreBefore: "2026-11-01T00:00:00Z"))
+        XCTAssertEqual(Playbooks.rung(for: "disk-logs"), .playbook("disk-logs"))
+        XCTAssertEqual(Playbooks.rung(for: "launch-not-loaded"), .playbook("launch-not-loaded"))
+        XCTAssertEqual(Playbooks.rung(for: "dispatcher-hung"), .playbook("dispatcher-hung"))
+        XCTAssertEqual(Playbooks.rung(for: "deployment-drift"), .needsHuman("deployment-drift"))
+        // Retention and retries are not playbooks (GC and #77 own them).
+        XCTAssertEqual(Playbooks.rung(for: "disk-worktrees"), .agent)
+        XCTAssertEqual(Playbooks.rung(for: "retries-exhausted:t1"), .agent)
     }
 
-    func testPlanKeepsBranchesAndRefusesForeignProcesses() {
+    func testOnlyTheTwoKnownCommandsAreAllowed() {
+        XCTAssertFalse(Playbooks.allowedArgv(["/usr/bin/git", "push", "origin", "main"]))
+        XCTAssertFalse(Playbooks.allowedArgv(["/usr/bin/git", "worktree", "remove", "--force", "/tmp/wt"]))
+        XCTAssertFalse(Playbooks.allowedArgv(["/bin/kill", "-TERM", "not-a-pid"]))
+        XCTAssertFalse(Playbooks.allowedArgv(["/bin/kill", "-TERM", "1"]))
+        XCTAssertFalse(Playbooks.allowedArgv(["/bin/kill", "-KILL", "4242"]))
+        XCTAssertTrue(Playbooks.allowedArgv(["/bin/kill", "-TERM", "4242"]))
+        XCTAssertTrue(Playbooks.allowedArgv([
+            "/bin/launchctl", "bootstrap", "gui/501", "/Users/x/Library/LaunchAgents/com.apple-tasks.dispatch.plist"]))
+        XCTAssertFalse(Playbooks.allowedArgv([
+            "/bin/launchctl", "bootstrap", "gui/501", "/tmp/evil.plist"]))
+    }
+
+    func testHungDispatcherNeedsAgeAndALiveDispatchProcess() {
+        let rows: [(ledgerId: Int, dispatcherPid: Int?, ageSeconds: TimeInterval, timeoutSeconds: TimeInterval)] = [
+            (1, 4242, 3600, 3600),            // at timeout, within grace
+            (2, nil, 99_999, 3600),           // no dispatcher pid on record
+            (3, 5151, 3600 + 1200, 3600),     // 10 min past timeout + grace
+        ]
+        let hung = Playbooks.hungDispatcher(rows: rows) { pid in
+            pid == 5151 ? "/Users/x/.local/bin/apple-tasks dispatch --quiet" : nil
+        }
+        XCTAssertEqual(hung?.pid, 5151)
+        XCTAssertEqual(hung?.ledgerId, 3)
+        XCTAssertNil(Playbooks.hungDispatcher(rows: rows) { _ in nil })
+    }
+
+    func testPlanReleasesOnlyOurOldClaimsAndRefusesForeignProcesses() {
         var ctx = Playbooks.Context()
-        ctx.hungPid = 44
-        ctx.hungCommand = "/usr/bin/sleep 10"
-        ctx.worktrees = [(path: "/tmp/agent-wt", ageDays: 9)]
-        ctx.claims = [(title: "[dispatched:other] [auto] Fix it", ageDays: 30),
-                      (title: "[dispatched:\(ClaimTags.host)] Fix ours", ageDays: 30)]
-        ctx.retries = [(taskId: "t1", summary: "connection reset", alreadyReset: false),
-                       (taskId: "t2", summary: "connection reset", alreadyReset: true),
-                       (taskId: "t3", summary: "model refused", alreadyReset: false)]
-        ctx.deploymentNote = "binary is behind HEAD"
+        ctx.hung = .init(pid: 44, command: "/usr/bin/sleep 10", ledgerId: 9, overSeconds: 60)
+        ctx.claims = [
+            .init(taskId: "a", title: "[dispatched:other-mac] [auto] Fix it", ageDays: 30),
+            .init(taskId: "b", title: "[dispatched:\(ClaimTags.host)] Fix ours", ageDays: 30),
+            .init(taskId: "c", title: "[dispatched:\(ClaimTags.host)] Fresh", ageDays: 2),
+        ]
         let steps = Playbooks.plan(ctx)
         XCTAssertTrue(steps.contains { $0.playbook == "dispatcher-hung" && $0.apply == .none })
-        let git = steps.first { $0.playbook == "worktree-retention" }
-        XCTAssertEqual(git?.apply, .argv(["/usr/bin/git", "worktree", "remove", "--force", "/tmp/agent-wt"]))
-        let titles = steps.compactMap { step -> String? in
-            if case .retitle(_, let new) = step.apply { return new }
+        let released = steps.compactMap { step -> String? in
+            if case .releaseClaim(let id, let title) = step.apply { return "\(id):\(title)" }
             return nil
         }
-        XCTAssertEqual(titles, ["Fix ours"])
-        XCTAssertEqual(steps.filter { $0.playbook == "retries-exhausted" }.count, 1)
-        XCTAssertTrue(steps.contains { $0.playbook == "binary-drift" })
+        XCTAssertEqual(released, ["b:Fix ours"])
+
+        var real = Playbooks.Context()
+        real.hung = .init(pid: 4242, command: "/Users/x/.local/bin/apple-tasks dispatch --quiet",
+                          ledgerId: 9, overSeconds: 60)
+        XCTAssertEqual(Playbooks.plan(real, only: "dispatcher-hung").first?.apply,
+                       .argv(["/bin/kill", "-TERM", "4242"]))
+        var cancel = Playbooks.Context()
+        cancel.hung = .init(pid: 4243, command: "apple-tasks dispatch-cancel 9", ledgerId: 9, overSeconds: 60)
+        XCTAssertEqual(Playbooks.plan(cancel).first?.apply, Playbooks.Apply.none)
     }
 
     func testLogRotateStaysInsideTheLogsDirectory() throws {
@@ -50,6 +74,7 @@ final class PlaybookTests: XCTestCase {
         let log = root.appendingPathComponent("dispatch.stderr.log")
         try Data(repeating: 1, count: 32).write(to: log)
         XCTAssertFalse(Playbooks.logIsInside("/tmp/credentials.json", root: root.path))
+        XCTAssertFalse(Playbooks.logIsInside(log.path, root: ""))
         let moved = try Playbooks.rotateLog(at: log.path, root: root.path)
         XCTAssertEqual(moved, log.path + ".1")
         XCTAssertTrue(FileManager.default.fileExists(atPath: moved))

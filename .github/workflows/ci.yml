@@ -21,9 +21,41 @@ jobs:
       - name: Test server
         working-directory: server
         run: swift test
+      # Typecheck only. build.sh / make install write ~/.local/bin and
+      # /Applications. If no installed Xcode has a macOS 27 SDK the step skips
+      # with a warning annotation, so a skipped typecheck is visible on the run.
+      - name: Typecheck AgentTasks
+        run: |
+          set -euo pipefail
+          DEPLOY_MAJOR=27
+          # The default Xcode on the image may predate the app's SDK; look at
+          # every installed Xcode (betas included) for a macOS 27+ SDK.
+          DEV=""
+          SDK_VER=""
+          for app in "$(xcode-select -p 2>/dev/null | sed 's#/Contents/Developer$##')" /Applications/Xcode*.app; do
+            [ -d "$app/Contents/Developer" ] || continue
+            ver="$(DEVELOPER_DIR="$app/Contents/Developer" xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+            major="${ver%%.*}"
+            case "$major" in ''|*[!0-9]*) continue ;; esac
+            echo "found $app: macOS SDK $ver"
+            if [ "$major" -ge "$DEPLOY_MAJOR" ]; then DEV="$app/Contents/Developer"; SDK_VER="$ver"; break; fi
+          done
+          if [ -z "$DEV" ]; then
+            echo "::warning::skip: no installed Xcode has a macOS ${DEPLOY_MAJOR} SDK; apps/AgentTasks was not typechecked"
+            exit 0
+          fi
+          export DEVELOPER_DIR="$DEV"
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          ARCH="$(uname -m)"
+          echo "typecheck apps/AgentTasks/Sources with $DEV (macOS SDK ${SDK_VER}, target ${ARCH}-apple-macos${DEPLOY_MAJOR}.0)"
+          xcrun swiftc -typecheck -parse-as-library \
+            -target "${ARCH}-apple-macos${DEPLOY_MAJOR}.0" \
+            -sdk "$SDK" \
+            -module-name AgentTasks \
+            apps/AgentTasks/Sources/*.swift
 
-  # apps/AgentTasks is not built here: it needs the Xcode 27 beta.
-  # `make betacheck` remains the local gate for it.
+  # Full `make betacheck` / apps/AgentTasks/build.sh stay local: build.sh
+  # installs over ~/.local/bin and /Applications.
 
   mcp:
     runs-on: ubuntu-latest

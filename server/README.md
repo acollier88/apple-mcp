@@ -38,7 +38,7 @@ Or write `~/.config/apple-tasks/serve.json`:
 | GET | `/v1/dispatches?status=&limit=` | `dispatches` — `status=pending-review` lists unmerged succeeded worktree branches |
 | GET | `/v1/log?limit=&since=&task=&caller=` | `log` |
 | POST | `/v1/dispatch` `{dryRun,agent,list,reapOnly}` | `dispatch`. **`dryRun` defaults to true** (omit/`true` → `--dry-run`, 60s). Only the literal `"dryRun": false` is a live run (1800s). `reapOnly: true` → `--reap-only`. |
-| GET | `/v1/runs/{id}/log?tail=` | last `tail` bytes of `~/.config/apple-tasks/runs/{id}.log` (default 262144, max 4 MiB) |
+| GET | `/v1/runs/{id}/log?tail=` | last `tail` bytes of `~/Library/Application Support/apple-tasks/runs/{id}.log` (default 262144, max 4 MiB) |
 | POST | `/v1/triage` `{apply,list,agent,notes}` | `triage` / `--apply` / `--inbox <list>` / `--agent` / `--notes` |
 | POST | `/v1/dispatches/{id}/cancel` | `dispatch-cancel {id}` — kills the agent tree, marks the row `cancelled`, sheds the claim tag; no `[failed]`, no retry (30s) |
 | POST | `/v1/dispatches/{id}/discard` | `dispatch-discard {id}` — force-remove worktree, delete agent branch, mark reviewed (60s) |

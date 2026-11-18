@@ -44,6 +44,48 @@ enum PromptTemplate {
         while s.contains(">>>") { s = s.replacingOccurrences(of: ">>>", with: "> > >") }
         return s
     }
+
+    /// Write-back commands a sandboxed lane must send through the broker.
+    /// Longer phrases first so `approve request` is not confused with a
+    /// shorter prefix. `approve answer`, `secret`, `dispatch`, and `serve`
+    /// are intentionally absent — policy denies them.
+    static let writeBackCommands = [
+        "notes create", "approve request", "approve check", "update", "complete", "notify",
+    ]
+
+    /// What a sandboxed write-back is prefixed with. `gate run` starts the
+    /// broker-side command from an empty environment, so the agent's
+    /// `APPLE_TASKS_CALLER=agent:<tag>` is passed through by name: without it
+    /// the CLI's agent-only guards and the audit caller would be lost.
+    static let gateRunPrefix = "gate run --env APPLE_TASKS_CALLER -- "
+
+    /// Prefix `apple-tasks <write-back>` with `gateRunPrefix`. A command that
+    /// already follows a `gate run ... -- ` is left alone. Unsandboxed lanes
+    /// do not call this.
+    static func prefixGateRun(_ prompt: String) -> String {
+        let token = "apple-tasks "
+        let alreadyForms = [gateRunPrefix, "gate run -- "]
+        var out = ""
+        var i = prompt.startIndex
+        while i < prompt.endIndex {
+            if prompt[i...].hasPrefix(token) {
+                let after = prompt.index(i, offsetBy: token.count)
+                let rest = prompt[after...]
+                let matched = writeBackCommands.contains { rest.hasPrefix($0) }
+                let gated = alreadyForms.contains { already in
+                    guard prompt.distance(from: prompt.startIndex, to: i) >= already.count else { return false }
+                    let start = prompt.index(i, offsetBy: -already.count)
+                    return prompt[start..<i] == already
+                }
+                if matched && !gated {
+                    out += gateRunPrefix
+                }
+            }
+            out.append(prompt[i])
+            i = prompt.index(after: i)
+        }
+        return out
+    }
 }
 
 extension Dispatch {

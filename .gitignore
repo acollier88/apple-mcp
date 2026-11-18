@@ -18,3 +18,7 @@ research/ClaudeLanguageModel/build/
 # apple-tasks.db, runs/) — never in the repo.
 .env
 local.env
+
+# Python
+__pycache__/
+*.pyc

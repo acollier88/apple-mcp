@@ -1,0 +1,60 @@
+# Gatehouse policy fragment for apple-tasks. Not installed by apple-tasks.
+# Merge these [[rules]] into the host policy (~/Library/Application Support/gatehouse/policy.toml
+# on macOS, or $GATEHOUSE_CONFIG_DIR/policy.toml). Rules are first match wins.
+# Tiers match gatehouse: "allow" | "ask" | "ask_strong" | "deny".
+#
+# Write-back subcommands (`update`, `complete`, `notes create`, `notify`,
+# `approve request`, `approve check`) are allowed. args_glob cannot bind the
+# task id from the dispatch request, so `update *` / `complete *` allow ANY
+# task id: a sandboxed agent can edit or complete other reminders. Narrowing
+# that needs gatehouse to template the request's task id into the rule.
+# Denied: `secret`, `approve answer`, `dispatch` and every human review /
+# control command (`dispatch-accept`, `-discard`, `-retry`, `-cancel`,
+# `-pause`, `-resume`), and `serve`. Everything else asks.
+#
+# `approve request` only delegates to gatehouse when it finds the
+# `__approve_strong` ask_strong rule below in the host policy. Without it a
+# plain "ask" could be answered by any local `gate approve` caller.
+#
+# `__approve_strong` is the argv `approve request` submits via `gate ask` so
+# the human decision is ask_strong (passkey) when this fragment is installed.
+# A sandboxed agent cannot self-approve: that argv is not in the allow list.
+
+default_tier = "ask"
+
+[[rules]]
+name = "deny apple-tasks secret, approve answer, dispatch and review commands, serve"
+tier = "deny"
+argv0 = ["apple-tasks"]
+args_glob = [
+  "secret*",
+  "approve answer*",
+  "dispatch",
+  "dispatch *",
+  "dispatch-retry*",
+  "dispatch-accept*",
+  "dispatch-discard*",
+  "dispatch-cancel*",
+  "dispatch-pause*",
+  "dispatch-resume*",
+  "serve*",
+]
+
+[[rules]]
+name = "allow apple-tasks write-back for the task id in the request"
+tier = "allow"
+argv0 = ["apple-tasks"]
+args_glob = [
+  "update *",
+  "complete *",
+  "notes create*",
+  "notify*",
+  "approve request*",
+  "approve check*",
+]
+
+[[rules]]
+name = "apple-tasks human approval is ask_strong"
+tier = "ask_strong"
+argv0 = ["apple-tasks"]
+args_glob = ["__approve_strong *"]
