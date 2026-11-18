@@ -51,6 +51,8 @@ struct AppleTasksLayout: Equatable {
 struct RuntimeMigration: Equatable {
     var moved: [String] = []
     var repairedGitDirs: [String] = []
+    /// `worktree` / `run_log_path` values repointed at the support dir.
+    var ledgerRowsRewritten = 0
     var notes: [String] = []
 }
 
@@ -60,16 +62,50 @@ extension AppleTasksLayout {
     /// moved worktree's `.git` file names a git dir, `repair` runs
     /// `git worktree repair` for it. The default repair shells out to git;
     /// tests pass a closure and a temp pair of directories.
+    ///
+    /// The ledger stores absolute `worktree` / `run_log_path` values, so every
+    /// `<config>/<name>/` prefix is rewritten to `<support>/<name>/` too
+    /// (`rewriteLedger`). That step runs even when nothing is left to move,
+    /// so a ledger left behind by an earlier move is repaired. The move is
+    /// skipped while any dispatch row is `running` (`busy`): an agent's cwd
+    /// must not vanish under it. The next idle pass migrates.
     static func migrateRuntime(
         from configDir: URL,
         to supportDir: URL,
+        busy: () -> Bool = { !AuditDB.shared.dispatchRows(status: "running", limit: 1).isEmpty },
+        rewriteLedger: (_ old: String, _ new: String) -> Int? = { AuditDB.shared.rewritePathPrefix(from: $0, to: $1) },
         repair: (_ gitDir: String, _ worktrees: [String]) -> Int32 = liveWorktreeRepair
     ) -> RuntimeMigration {
         let fm = FileManager.default
         var result = RuntimeMigration()
         let names = ["worktrees", "scratch", "runs"]
         let sources = names.filter { isDirectory(configDir.appendingPathComponent($0)) }
-        guard !sources.isEmpty else { return result }
+        if !sources.isEmpty && busy() {
+            result.notes.append("deferred: a dispatch is running")
+            return result
+        }
+        func rewrite(_ result: inout RuntimeMigration) {
+            for name in names {
+                // A source that is still there (a move failed, or children
+                // were left because the destination already had them) keeps
+                // its ledger paths; they still resolve.
+                if isDirectory(configDir.appendingPathComponent(name)) {
+                    result.notes.append("\(name)/ still in the config dir; ledger paths kept")
+                    continue
+                }
+                let old = configDir.appendingPathComponent(name, isDirectory: true).path + "/"
+                let new = supportDir.appendingPathComponent(name, isDirectory: true).path + "/"
+                if let changed = rewriteLedger(old, new) {
+                    result.ledgerRowsRewritten += changed
+                } else {
+                    result.notes.append("ledger path rewrite failed for \(name)/")
+                }
+            }
+        }
+        guard !sources.isEmpty else {
+            rewrite(&result)
+            return result
+        }
 
         _ = ConfigPermissions.ensurePrivateDirectory(supportDir)
         for name in sources {
@@ -99,6 +135,7 @@ extension AppleTasksLayout {
                 result.notes.append("git worktree repair exited \(code) for \(gitDir)")
             }
         }
+        rewrite(&result)
         return result
     }
 

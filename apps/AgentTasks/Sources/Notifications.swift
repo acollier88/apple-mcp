@@ -45,7 +45,6 @@ enum LocalNotifications {
     static let failureCategory = "agenttasks.failure"
     static let approvalCategory = "agenttasks.approval"
     static let openLogAction = "OPEN_LOG"
-    static let approveAction = "APPROVE"
     static let denyAction = "DENY"
 
     private static let failureReadyKey = "agentTasks.failuresBootstrapped"
@@ -57,14 +56,17 @@ enum LocalNotifications {
 
     static func registerCategories(center: UNUserNotificationCenter = .current()) {
         let openLog = UNNotificationAction(identifier: openLogAction, title: "Open Log", options: [.foreground])
-        let approve = UNNotificationAction(identifier: approveAction, title: "Approve", options: [.foreground])
+        // No Approve button on the banner: the question is agent-written and
+        // a banner shows 140 characters of it. Approving goes through the
+        // Pending Approvals window (full question + confirmation). Deny is
+        // the safe answer and stays one tap.
         let deny = UNNotificationAction(
             identifier: denyAction, title: "Deny", options: [.destructive, .foreground])
         center.setNotificationCategories([
             UNNotificationCategory(
                 identifier: failureCategory, actions: [openLog], intentIdentifiers: [], options: []),
             UNNotificationCategory(
-                identifier: approvalCategory, actions: [approve, deny], intentIdentifiers: [], options: []),
+                identifier: approvalCategory, actions: [deny], intentIdentifiers: [], options: []),
         ])
     }
 
@@ -112,9 +114,9 @@ enum LocalNotifications {
         let action = response.actionIdentifier
         let kind = info["kind"] as? String
 
-        if let token = info["token"] as? String, !token.isEmpty,
-           action == approveAction || action == denyAction {
-            await LedgerWatcher.shared.answer(token: token, approve: action == approveAction)
+        // Only Deny is answered from the banner; anything else opens the queue.
+        if let token = info["token"] as? String, !token.isEmpty, action == denyAction {
+            await LedgerWatcher.shared.answer(token: token, approve: false)
             return
         }
 
@@ -128,7 +130,7 @@ enum LocalNotifications {
             return
         }
 
-        if kind == "approval" {
+        if kind == "approval" || info["token"] != nil {
             ApprovalsWindow.show()
         }
     }

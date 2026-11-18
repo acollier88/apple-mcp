@@ -3,10 +3,18 @@
 # on macOS, or $GATEHOUSE_CONFIG_DIR/policy.toml). Rules are first match wins.
 # Tiers match gatehouse: "allow" | "ask" | "ask_strong" | "deny".
 #
-# Write-back subcommands are allowed when they carry the task id from the
-# dispatch request (`update <id>`, `complete <id>`; notes/notify/approve
-# request/check are the other write-backs). `secret`, `approve answer`,
-# `dispatch`, `dispatch-retry`, and `serve` are denied. Everything else asks.
+# Write-back subcommands (`update`, `complete`, `notes create`, `notify`,
+# `approve request`, `approve check`) are allowed. args_glob cannot bind the
+# task id from the dispatch request, so `update *` / `complete *` allow ANY
+# task id: a sandboxed agent can edit or complete other reminders. Narrowing
+# that needs gatehouse to template the request's task id into the rule.
+# Denied: `secret`, `approve answer`, `dispatch` and every human review /
+# control command (`dispatch-accept`, `-discard`, `-retry`, `-cancel`,
+# `-pause`, `-resume`), and `serve`. Everything else asks.
+#
+# `approve request` only delegates to gatehouse when it finds the
+# `__approve_strong` ask_strong rule below in the host policy. Without it a
+# plain "ask" could be answered by any local `gate approve` caller.
 #
 # `__approve_strong` is the argv `approve request` submits via `gate ask` so
 # the human decision is ask_strong (passkey) when this fragment is installed.
@@ -15,7 +23,7 @@
 default_tier = "ask"
 
 [[rules]]
-name = "deny apple-tasks secret, approve answer, dispatch, serve"
+name = "deny apple-tasks secret, approve answer, dispatch and review commands, serve"
 tier = "deny"
 argv0 = ["apple-tasks"]
 args_glob = [
@@ -24,6 +32,11 @@ args_glob = [
   "dispatch",
   "dispatch *",
   "dispatch-retry*",
+  "dispatch-accept*",
+  "dispatch-discard*",
+  "dispatch-cancel*",
+  "dispatch-pause*",
+  "dispatch-resume*",
   "serve*",
 ]
 

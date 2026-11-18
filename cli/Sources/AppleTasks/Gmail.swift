@@ -232,7 +232,7 @@ struct GmailLogin: AsyncParsableCommand {
     func run() async throws {
         // A human must click the consent screen; an agent kicking this off
         // just throws a surprise browser window at the user.
-        guard ProcessInfo.processInfo.environment["APPLE_TASKS_CALLER"] != "mcp" else {
+        guard !CallerGuard.isAutomated(CallerGuard.currentCaller) else {
             throw AppleTasksError.invalidInput("gmail login is interactive; run it from a terminal, never via MCP")
         }
         let client = try GmailAuth.loadClient()

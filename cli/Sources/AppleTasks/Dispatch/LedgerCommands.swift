@@ -164,6 +164,9 @@ struct DispatchDiscard: AsyncParsableCommand {
     }
 
     func run() async throws {
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "dispatch-discard", caller: CallerGuard.currentCaller),
+            command: "dispatch-discard", detail: nil)
         guard let row = AuditDB.shared.dispatchRow(id: ledgerId) else {
             throw AppleTasksError.invalidInput("no dispatch ledger row #\(ledgerId)")
         }
@@ -325,6 +328,9 @@ struct DispatchAccept: AsyncParsableCommand {
     }
 
     func run() async throws {
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "dispatch-accept", caller: CallerGuard.currentCaller),
+            command: "dispatch-accept", detail: nil)
         guard let row = AuditDB.shared.dispatchRow(id: ledgerId) else {
             throw AppleTasksError.invalidInput("no dispatch ledger row #\(ledgerId)")
         }
@@ -546,6 +552,9 @@ struct DispatchRetry: AsyncParsableCommand {
     }
 
     func run() async throws {
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "dispatch-retry", caller: CallerGuard.currentCaller),
+            command: "dispatch-retry", detail: nil)
         var taskId = target
         var ledgerId: Int?
         if target.allSatisfy(\.isNumber), let id = Int64(target),

@@ -77,6 +77,27 @@ final class AuditDBTests: XCTestCase {
         }
     }
 
+    func testRewritePathPrefixRepointsWorktreeAndRunLog() {
+        let db = openDB()
+        guard case .claimed(let id) = db.claimDispatch(taskId: "t", agent: "cursor", command: "echo", cwd: "/repo"),
+              case .claimed(let other) = db.claimDispatch(taskId: "u", agent: "cursor", command: "echo", cwd: "/repo")
+        else { return XCTFail("claim failed") }
+        db.setDispatchPaths(id: id, runLogPath: "/h/.config/apple-tasks/runs/\(id).log",
+                            worktree: "/h/.config/apple-tasks/worktrees/\(id)")
+        db.setDispatchPaths(id: other, runLogPath: "/elsewhere/runs/x.log", worktree: nil)
+
+        XCTAssertEqual(db.rewritePathPrefix(from: "/h/.config/apple-tasks/worktrees/",
+                                            to: "/h/Support/worktrees/"), 1)
+        XCTAssertEqual(db.rewritePathPrefix(from: "/h/.config/apple-tasks/runs/",
+                                            to: "/h/Support/runs/"), 1)
+        let row = db.dispatchRow(id: id)
+        XCTAssertEqual(row?.worktree, "/h/Support/worktrees/\(id)")
+        XCTAssertEqual(row?.runLogPath, "/h/Support/runs/\(id).log")
+        XCTAssertEqual(db.dispatchRow(id: other)?.runLogPath, "/elsewhere/runs/x.log")
+        // Idempotent.
+        XCTAssertEqual(db.rewritePathPrefix(from: "/h/.config/apple-tasks/runs/", to: "/h/Support/runs/"), 0)
+    }
+
     func testDirectoryPathIsUnavailable() throws {
         let dir = tempDir.appendingPathComponent("not-a-db", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

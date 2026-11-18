@@ -352,6 +352,37 @@ final class AuditDB {
         return sqlite3_step(stmt) == SQLITE_DONE
     }
 
+    /// Rewrite `worktree` and `run_log_path` values that start with `old`
+    /// to start with `new` instead. Used by the runtime layout migration,
+    /// which moves those directories: without it every pending-review row
+    /// and run log would point at a path that no longer exists. Idempotent.
+    /// Returns the number of rows changed, or nil on a SQLite error.
+    @discardableResult
+    func rewritePathPrefix(from old: String, to new: String) -> Int? {
+        guard db != nil, !old.isEmpty, old != new else { return 0 }
+        var total = 0
+        for column in ["worktree", "run_log_path"] {
+            var stmt: OpaquePointer?
+            let sql = """
+            UPDATE dispatches SET \(column) = ?2 || substr(\(column), length(?1) + 1) \
+            WHERE substr(\(column), 1, length(?1)) = ?1
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                noteSQLiteFailure("rewritePathPrefix prepare \(column)")
+                return nil
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, old, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, new, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                noteSQLiteFailure("rewritePathPrefix \(column)")
+                return nil
+            }
+            total += Int(sqlite3_changes(db))
+        }
+        return total
+    }
+
     /// Finished runs that still have a worktree on record (GC candidates).
     func worktreeRows() -> [DispatchRow] {
         selectDispatches(
