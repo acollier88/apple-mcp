@@ -297,6 +297,7 @@ available the task stays queued — it is not `[failed]`. Config at
   "keepFailedWorktreeDays": 7,
   "pendingReviewWorktreeDays": 0,
   "retention": { "runLogDays": 30, "failedRunLogDays": 90, "ledgerTextDays": 180 },
+  "limits": { "maxPerDay": 40, "maxAutomatedPerDay": 10, "maxPerLanePerDay": { "claude": 15 } },
   "notifyOn": "failure",
   "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] },
   "autoBudget": "skipRed"
@@ -317,6 +318,23 @@ answered approval questions are cleared. The ledger rows themselves stay, so
 retry accounting and history still work. The ledger is checkpointed and
 `VACUUM`ed at most once a day. `0` keeps that item forever. `doctor` reports
 the windows, the size of `runs/` and the ledger, and the oldest retained log.
+
+`limits` (#68) caps claims per local day: `maxPerDay` across lanes,
+`maxPerLanePerDay` per lane, and `maxAutomatedPerDay` for tasks a human
+did not create. Each ledger row records an `origin`, taken from the audit row
+that created the task: `doctor` (heals), `github` (`sync-github`), `mcp` or
+`agent:<tag>`. Everything else counts as `human`, including tasks made in
+Reminders, Siri or mail rules, and `proposals accept`. A reached cap leaves
+tasks queued (`gated: daily … limit reached`) until midnight, sends one
+"Needs you" push per cap per day, and shows in `doctor` (`limits`) and the
+digest. Absent or `0` means no cap. `maxConcurrent` still bounds parallel runs.
+
+`apple-tasks stop --all [--reason …]` is the kill switch. It pauses claiming
+indefinitely, cancels every running dispatch (process groups, claims shed,
+no `[failed]`), and turns off `research run`, `doctor --enqueue-heals` and
+its playbooks. `dispatch-resume` undoes it. Dispatched agents are refused
+both. It is also available as MCP `dispatch_stop`, HTTP `POST /v1/stop` (no
+resume route) and **Stop all** in the menu bar (click twice).
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Optional `repoDescriptions` (same keys) is the text Jev sees

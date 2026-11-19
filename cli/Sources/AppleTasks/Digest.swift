@@ -72,6 +72,10 @@ struct DigestOut: Codable {
     var pendingReviewNotified: Bool? = nil
     /// Tasks whose countable failures since the last success exceed maxRetries.
     var retriesExhausted: [String] = []
+    /// Daily caps hit since the watermark (#68), e.g. "daily limit for claude reached (10)".
+    var limitsReached: [String] = []
+    /// Set while `stop --all` is in force.
+    var stoppedAt: String?
 
     struct DispatchLine: Codable {
         let id: Int
@@ -148,6 +152,8 @@ struct Digest: AsyncParsableCommand {
                             dueToday: dueToday, events: events,
                             noteCreated: nil, pushed: nil,
                             proposals: ProposalsInbox.list().proposals)
+        out.limitsReached = audit.filter { $0.command == "limit-reached" }.compactMap(\.detail)
+        out.stoppedAt = Limits.stopped()
         if let maxRetries = (try? AgentsConfig.load())?.maxRetries, maxRetries > 0 {
             out.retriesExhausted = AuditDB.shared.retriesExhausted(maxRetries: maxRetries)
                 .map { "\($0.taskId) (\($0.count) since last success)" }
@@ -211,6 +217,12 @@ struct Digest: AsyncParsableCommand {
         if !d.retriesExhausted.isEmpty {
             text += ", \(d.retriesExhausted.count) retries exhausted"
         }
+        if !d.limitsReached.isEmpty {
+            text += ", \(d.limitsReached.count) daily limit\(d.limitsReached.count == 1 ? "" : "s") hit"
+        }
+        if d.stoppedAt != nil {
+            text += ", dispatch STOPPED"
+        }
         if let proposals = d.proposals, !proposals.isEmpty {
             text += ", \(proposals.count) proposals"
         }
@@ -239,6 +251,16 @@ struct Digest: AsyncParsableCommand {
                     + (line.summary.map { ": \(HTML.escape(String($0.prefix(140))))" } ?? "")
                     + "</li>"
             }.joined() + "</ul>")
+        }
+
+        if let stopped = d.stoppedAt {
+            parts.append("<h2>Dispatch stopped</h2>")
+            parts.append("<p>Stopped at \(HTML.escape(stopped)) with <code>apple-tasks stop --all</code>. "
+                + "Run <code>apple-tasks dispatch-resume</code> to restart.</p>")
+        }
+        if !d.limitsReached.isEmpty {
+            parts.append("<h2>Daily limits hit (\(d.limitsReached.count))</h2>")
+            parts.append("<ul>" + d.limitsReached.map { "<li>\(HTML.escape($0))</li>" }.joined() + "</ul>")
         }
 
         if !d.retriesExhausted.isEmpty {

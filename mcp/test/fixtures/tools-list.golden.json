@@ -1378,6 +1378,81 @@
     }
   },
   {
+    "name": "dispatch_stop",
+    "description": "Kill switch: pause claiming indefinitely, cancel every running dispatch (process groups), and turn off research, heal enqueue and playbooks. Undo with dispatch_resume or `apple-tasks dispatch-resume`. Dispatched agents are refused both.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Shown in dispatch_status, doctor and the digest."
+        }
+      },
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "stopped": {
+          "type": "boolean"
+        },
+        "pausedUntil": {
+          "type": "string"
+        },
+        "cancelled": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "process": {
+                "type": "string"
+              },
+              "tagShed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "taskId",
+              "agent",
+              "status",
+              "process",
+              "tagShed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stopped",
+        "pausedUntil",
+        "cancelled",
+        "note"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
     "name": "doctor",
     "description": "Diagnose apple-tasks setup for THIS host process: Reminders/Calendar permission status, dispatcher config, independent Hermes vs Home Assistant healthchecks, Budget Tracker bandwidth, structured issues[], and optional --enqueue-heals (creates [heal][auto] tasks for unhealthy systems; launchd dispatch picks them up — this tool does not spawn agents). TCC grants are per-host-process.",
     "inputSchema": {

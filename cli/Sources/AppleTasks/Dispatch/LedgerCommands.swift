@@ -98,9 +98,21 @@ struct DispatchCancel: AsyncParsableCommand {
             return
         }
 
+        let store = Store()
+        let ready = (try? await store.requestAccess()) != nil
+        emit(await Dispatch.cancelRunning(row: row, store: ready ? store : nil))
+    }
+}
+
+extension Dispatch {
+    /// Signal the agent, mark the row `cancelled`, shed this Mac's claim and
+    /// append the notes trailer. `store` nil (no Reminders access) still
+    /// cancels the ledger row and the process.
+    static func cancelRunning(row: AuditDB.DispatchRow, store: Store?) async -> DispatchCancel.Result {
+        let ledgerId = Int64(row.id)
         var processNote = "not found"
         if let pid = row.pid,
-           AgentProcess.looksLikeOurs(Int32(pid), ledgerId: Int64(row.id),
+           AgentProcess.looksLikeOurs(Int32(pid), ledgerId: ledgerId,
                                       taskId: row.taskId, agent: row.agent) {
             processNote = AgentProcess.terminate(Int32(pid))
         }
@@ -112,27 +124,23 @@ struct DispatchCancel: AsyncParsableCommand {
         var tagShed = false
         var title = row.command
         var list: String?
-        do {
-            let store = Store()
-            try await store.requestAccess()
-            tagShed = await Dispatch.shedOwnDispatchedClaim(store: store, taskId: row.taskId)
+        if let store {
+            tagShed = await shedOwnDispatchedClaim(store: store, taskId: row.taskId)
             if let reminder = try? await store.reminder(id: row.taskId) {
                 let parsed = Tags.parse(reminder.title ?? "")
                 title = parsed.title.isEmpty ? (reminder.title ?? row.command) : parsed.title
                 list = reminder.calendar?.title
             }
-            let trailerText = Dispatch.trailer(
+            let trailerText = trailer(
                 ledgerId: ledgerId, status: "cancelled", exitCode: -1,
                 branch: nil, repo: row.cwd, logPath: row.runLogPath, seat: nil)
-            await Dispatch.appendNotesTrailer(store: store, taskId: row.taskId, trailer: trailerText)
-        } catch {
-            // Reminder gone or no access: the ledger row is still cancelled.
+            await appendNotesTrailer(store: store, taskId: row.taskId, trailer: trailerText)
         }
 
         AuditDB.shared.record(command: "dispatch-cancel", taskId: row.taskId,
                               list: list, detail: "\(row.agent): \(title)", result: "ok")
-        emit(Result(id: row.id, taskId: row.taskId, agent: row.agent,
-                    status: "cancelled", process: processNote, tagShed: tagShed))
+        return DispatchCancel.Result(id: row.id, taskId: row.taskId, agent: row.agent,
+                                     status: "cancelled", process: processNote, tagShed: tagShed)
     }
 }
 

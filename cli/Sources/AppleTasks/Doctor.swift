@@ -39,6 +39,8 @@ struct DoctorOut: Codable {
     let gatehouse: GatehouseDoctorStatus
     /// Retention windows, what `runs/` and the ledger occupy, oldest kept log (#70).
     let retention: Retention.Status
+    /// Today's claims against `limits`, and whether `stop --all` is in force (#68).
+    let limits: Limits.Status
     /// `--fix-modes` only: every chmod it made beyond the secret files
     /// (config dir, ledger DB/WAL/SHM, logs/, runs/*, agents.json[.bak-*]).
     let fixedModes: [ConfigPermissions.ModeChange]?
@@ -1044,7 +1046,13 @@ struct Doctor: AsyncParsableCommand {
         }
         _ = AuditDB.shared.setState("doctor.needsHuman", LanePreflight.signatureRecord(preflight.classified))
         var heals: HealReport?
-        if enqueueHeals {
+        if enqueueHeals, Limits.stopped() != nil {
+            // Kill switch (#68): no heal tasks and no playbooks while stopped.
+            heals = HealReport(list: listName, actions: [
+                HealAction(system: "dispatch", action: "skipped", taskId: nil, title: nil,
+                           reason: Limits.stoppedReason),
+            ])
+        } else if enqueueHeals {
             heals = await Self.enqueueHeals(
                 issues: issues, listName: listName, config: loadedConfig,
                 decisions: findingDecisions, findings: registry)
@@ -1090,6 +1098,8 @@ struct Doctor: AsyncParsableCommand {
             retention: Retention.status(
                 policy: .init((try? AgentsConfig.load())?.retention),
                 runs: layout.runs, ledger: AuditDB.url),
+            limits: Limits.status(limits: loadedConfig?.limits,
+                                  lanes: Array((loadedConfig?.agents ?? [:]).keys)),
             fixedModes: fixedModes
         ))
     }

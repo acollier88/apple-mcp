@@ -293,6 +293,12 @@ final class LedgerWatcher: ObservableObject {
         await mutate(["dispatch-resume"], success: "Dispatcher resumed")
     }
 
+    /// Kill switch (#68): pause indefinitely, cancel every running dispatch,
+    /// turn off research / heal enqueue / playbooks. Resume undoes it.
+    func stopAll() async {
+        await mutate(["stop", "--all", "--reason", "menu bar"], success: "Stopped all dispatch")
+    }
+
     /// Mac-side answer (`approve answer`). The audit log records the caller.
     func answer(token: String, approve: Bool) async {
         guard !answering.contains(token) else { return }

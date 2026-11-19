@@ -109,7 +109,7 @@ final class AuditDB {
     }
 
     /// Schema version the code expects. Bump when adding a migration case.
-    static let schemaVersion: Int32 = 4
+    static let schemaVersion: Int32 = 5
 
     var schemaVersion: Int32 { Int32(scalarInt("PRAGMA user_version") ?? 0) }
 
@@ -150,6 +150,10 @@ final class AuditDB {
                 // Due date captured at claim so an agent can roll a recurring
                 // series only once for this ledger row (#42).
                 addColumnIfMissing(table: "dispatches", column: "occurrence_due", type: "TEXT")
+            case 4:
+                // Who created the task this row ran (#68): human | doctor |
+                // github | mcp | agent:<tag>. NULL on older rows (= human).
+                addColumnIfMissing(table: "dispatches", column: "origin", type: "TEXT")
             default:
                 return
             }
@@ -1047,5 +1051,57 @@ extension AuditDB {
             return nil
         }
         return Int(sqlite3_changes(db))
+    }
+}
+
+// MARK: - Limits (#68)
+
+extension AuditDB {
+    @discardableResult
+    func setOrigin(id: Int64, origin: String) -> Bool {
+        guard db != nil else { return false }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "UPDATE dispatches SET origin = ? WHERE id = ?", -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, origin, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, id)
+        return sqlite3_step(stmt) == SQLITE_DONE
+    }
+
+    /// Claims since `since` (aborted claims never ran and do not count).
+    /// `agent` narrows to one lane; `automatedOnly` to rows whose origin is
+    /// set and not `human`.
+    func dispatchCount(since: String, agent: String? = nil, automatedOnly: Bool = false) -> Int {
+        guard db != nil else { return 0 }
+        var sql = "SELECT COUNT(*) FROM dispatches WHERE started_at >= ?1 AND status != 'aborted'"
+        if agent != nil { sql += " AND agent = ?2" }
+        if automatedOnly { sql += " AND origin IS NOT NULL AND origin != 'human'" }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, since, -1, SQLITE_TRANSIENT)
+        if let agent { sqlite3_bind_text(stmt, 2, agent, -1, SQLITE_TRANSIENT) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    /// The audit row that created `taskId` through apple-tasks, if any.
+    func creationRecord(taskId: String) -> (caller: String, command: String)? {
+        guard db != nil else { return nil }
+        let sql = """
+        SELECT caller, command FROM audit WHERE task_id = ? AND result = 'ok' \
+        AND command IN ('add','add-batch','sync-github','proposal-accept','doctor-heal') \
+        ORDER BY id ASC LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, taskId, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW,
+              let caller = sqlite3_column_text(stmt, 0),
+              let command = sqlite3_column_text(stmt, 1) else { return nil }
+        return (String(cString: caller), String(cString: command))
     }
 }

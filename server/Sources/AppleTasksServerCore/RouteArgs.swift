@@ -35,6 +35,13 @@ public enum RouteArgs {
             let id = String(p.dropFirst("/v1/dispatches/".count).dropLast("/discard".count))
             guard !id.isEmpty, id.allSatisfy(\.isNumber) else { return .badRequest("bad ledger id") }
             return .cli(args: ["dispatch-discard", id], timeout: 60)
+        case ("POST", "/v1/stop"):
+            // Kill switch (#68). Resuming is CLI-only: there is no HTTP route for it.
+            var args = ["stop", "--all"]
+            if let reason = jsonObject(body)["reason"] as? String, !reason.isEmpty {
+                args.append(option("--reason", reason))
+            }
+            return .cli(args: args, timeout: 120)
         case ("POST", "/v1/triage"):
             return triage(body)
         case ("GET", let p) where p.hasPrefix("/v1/runs/") && p.hasSuffix("/log"):

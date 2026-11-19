@@ -155,6 +155,40 @@ export function registerDispatchTools(server: McpServer): void {
   });
 
   defineTool(server, {
+    name: "dispatch_stop",
+    description:
+      "Kill switch: pause claiming indefinitely, cancel every running dispatch (process groups), and turn off " +
+      "research, heal enqueue and playbooks. Undo with dispatch_resume or `apple-tasks dispatch-resume`. " +
+      "Dispatched agents are refused both.",
+    input: {
+      reason: z.string().optional().describe("Shown in dispatch_status, doctor and the digest."),
+    },
+    // StopCommand.Out (Limits.swift)
+    output: {
+      stopped: z.boolean(),
+      pausedUntil: z.string(),
+      cancelled: z.array(
+        z.object({
+          id: z.number().int(),
+          taskId: z.string(),
+          agent: z.string(),
+          status: z.string(),
+          process: z.string(),
+          tagShed: z.boolean(),
+        }),
+      ),
+      note: z.string(),
+    },
+    annotations: { title: "Stop all dispatch", destructiveHint: true, idempotentHint: true },
+    timeoutMs: 120_000,
+    argv: ({ reason }) => {
+      const args = ["stop", "--all"];
+      if (reason) args.push(...opt("--reason", reason));
+      return args;
+    },
+  });
+
+  defineTool(server, {
     name: "dispatch_resume",
     description: "Clear a dispatcher pause so the next pass can claim work again.",
     input: {},

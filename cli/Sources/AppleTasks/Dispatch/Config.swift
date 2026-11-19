@@ -149,6 +149,8 @@ struct AgentsConfig: Codable {
     var pendingReviewWorktreeDays: Int?
     /// How long run artifacts and ledger text are kept (#70). Absent = defaults.
     var retention: RetentionConfig?
+    /// Daily dispatch caps (#68). Absent = no caps.
+    var limits: DispatchLimits?
     /// macOS notification on run finish: "failure" (default) | "all" | "none".
     var notifyOn: String?
     /// Hermes-style preference lists (IDEAS #52). `auto` is the ordered pool

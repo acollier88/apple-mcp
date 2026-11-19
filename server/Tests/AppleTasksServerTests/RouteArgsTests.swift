@@ -108,6 +108,22 @@ final class RouteArgsTests: XCTestCase {
         XCTAssertEqual(args, ["dispatches", "--status=running", "--limit=5"])
     }
 
+    func testStopAll() {
+        let body = Data(#"{"reason":"-rf runaway"}"#.utf8)
+        guard case .cli(let args, let timeout) = RouteArgs.build(
+            method: "POST", path: "/v1/stop", query: [:], body: body) else {
+            return XCTFail("expected cli")
+        }
+        XCTAssertEqual(args, ["stop", "--all", "--reason=-rf runaway"])
+        XCTAssertEqual(timeout, 120)
+        guard case .cli(let bare, _) = RouteArgs.build(method: "POST", path: "/v1/stop", query: [:], body: Data()) else {
+            return XCTFail("expected cli")
+        }
+        XCTAssertEqual(bare, ["stop", "--all"])
+        XCTAssertEqual(RouteArgs.build(method: "GET", path: "/v1/stop", query: [:], body: Data()), .notFound)
+        XCTAssertEqual(RouteArgs.build(method: "POST", path: "/v1/resume", query: [:], body: Data()), .notFound)
+    }
+
     func testDispatchCancel() {
         let route = RouteArgs.build(method: "POST", path: "/v1/dispatches/84/cancel", query: [:], body: Data())
         guard case .cli(let args, let timeout) = route else {
