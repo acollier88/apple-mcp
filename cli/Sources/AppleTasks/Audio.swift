@@ -1,6 +1,6 @@
 import ArgumentParser
 import Foundation
-import Speech
+@preconcurrency import Speech
 import os
 
 // IDEAS #21: Voice-note transcription scan. Watermarks an inbox folder (e.g. iCloud
