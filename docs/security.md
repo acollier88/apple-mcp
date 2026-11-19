@@ -84,6 +84,23 @@ follow instructions inside a block.
 CLI `Dispatch.run` uses `Dispatch.recursionRefusal` — live dispatch
 throws; `--dry-run` and `--reap-only` stay allowed.
 
+**Agents queueing work (#66).** Recursion is also blocked indirectly:
+when `APPLE_TASKS_CALLER` is `agent:*`, `add` / `add-batch` do not
+create a task the dispatcher would run (`[auto]`, or a lane tag when
+`requireAutoTag` is off, including tags typed into the title text).
+It is filed as an `agent-task` proposal instead and runs only if the
+human runs `proposals accept` (`DispatchableGuard`). `update` refuses
+to add dispatch tags and `sync-github` refuses dispatch `--tag`s for
+agent callers. Text from outside never carries `[auto]`: leading `[x]`
+groups in GitHub issue titles and note-triage titles become `(x)`
+(`Tags.literal`), and triage drops `auto` from the tags the model
+chose (`DispatchableGuard.modelTags`). Internal flows (`doctor
+--enqueue-heals`, `proposals accept`, `dispatch-retry`) create
+dispatchable tasks in-process and are unaffected; the last two
+already refuse agents. Same speed-bump caveat as the other caller
+guards. Still open: an agent can `update --notes` on a task that is
+already queued.
+
 **Argv injection.** MCP tools and `RouteArgs` build CLI argv from
 agent/HTTP strings. Free-text positionals go behind `--`
 (`positionals()` in `mcp/src/lib.ts`), and option values use the

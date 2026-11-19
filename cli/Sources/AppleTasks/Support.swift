@@ -71,6 +71,15 @@ enum Tags {
         return tags.map { "[\($0)]" }.joined() + " " + title
     }
 
+    /// Text from outside (a GitHub issue title) used as a title: leading
+    /// `[x]` groups become `(x)` so they cannot parse as tags such as `[auto]`.
+    static func literal(_ title: String) -> String {
+        let (tags, rest) = parse(title)
+        guard !tags.isEmpty else { return title }
+        let shown = tags.map { "(\($0))" }.joined()
+        return rest.isEmpty ? shown : shown + " " + rest
+    }
+
     static func validate(_ tag: String) throws {
         if tag.isEmpty || tag.contains(" ") || tag.contains("[") || tag.contains("]") {
             throw AppleTasksError.invalidTag(tag)
