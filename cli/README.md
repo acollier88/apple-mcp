@@ -296,6 +296,7 @@ available the task stays queued — it is not `[failed]`. Config at
   "maxConcurrent": 2,
   "keepFailedWorktreeDays": 7,
   "pendingReviewWorktreeDays": 0,
+  "retention": { "runLogDays": 30, "failedRunLogDays": 90, "ledgerTextDays": 180 },
   "notifyOn": "failure",
   "modelPrefs": { "auto": ["hermes", "cursor", "claude", "antigravity"] },
   "autoBudget": "skipRed"
@@ -305,6 +306,17 @@ available the task stays queued — it is not `[failed]`. Config at
 `pendingReviewWorktreeDays` defaults to off (`0` or omitted). Set it to a
 positive number of days (14 is a reasonable start) to have GC delete only
 the worktree directory of an unmerged succeeded run and keep the git branch.
+
+`retention` (#70) bounds what dispatch keeps. Each live pass's GC step deletes
+the run log and prompt copy (`runs/<id>.log`, `runs/<id>.prompt`) of a
+succeeded or cancelled run after `runLogDays` (default 30), and of a failed,
+timed-out or aborted run after `failedRunLogDays` (default 90). Runs that
+still have a worktree, such as an unmerged branch pending review, keep their
+log. After `ledgerTextDays` (default 180), agent summaries, audit details and
+answered approval questions are cleared. The ledger rows themselves stay, so
+retry accounting and history still work. The ledger is checkpointed and
+`VACUUM`ed at most once a day. `0` keeps that item forever. `doctor` reports
+the windows, the size of `runs/` and the ledger, and the oldest retained log.
 
 The first task tag matching a `workdirs` key sets the agent's working
 directory. Optional `repoDescriptions` (same keys) is the text Jev sees

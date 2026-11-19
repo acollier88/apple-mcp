@@ -149,6 +149,18 @@ extension Dispatch {
                                                   exitCode: nil, runLog: row.runLogPath, worktree: wt))
                 }
             }
+            // Run logs, prompt copies and old ledger text (#70). Same ledger
+            // guard as scratch: without it nothing can be matched to a row.
+            if AuditDB.shared.isAvailable {
+                let kept = Retention.prune(policy: .init(config.retention),
+                                           runs: AppleTasksLayout.resolve().runs)
+                if !kept.isEmpty {
+                    Self.passLog("retention: removed \(kept.runLogsRemoved) run logs, "
+                        + "\(kept.promptFilesRemoved) prompt files; cleared \(kept.textCleared) ledger texts"
+                        + (kept.compacted ? "; compacted ledger" : "")
+                        + (kept.skipped.isEmpty ? "" : "; skipped: " + kept.skipped.joined(separator: ", ")))
+                }
+            }
             let scratchBase = AppleTasksLayout.resolve().scratch
             // Without the ledger every dir looks orphaned — skip rather than
             // delete a running agent's scratch space.
