@@ -169,7 +169,7 @@ struct ApproveRequest: AsyncParsableCommand {
     /// that carries action buttons cleanly.
     static func push(server: String, topic: String, replyTopic: String,
                      token: String, question: String, taskId: String?) async throws {
-        struct Action: Codable {
+        struct Action: Encodable {
             let action = "http"
             let label: String
             let url: String
@@ -177,7 +177,7 @@ struct ApproveRequest: AsyncParsableCommand {
             let body: String
             let clear = true
         }
-        struct Publish: Codable {
+        struct Publish: Encodable {
             let topic: String
             let title: String
             let message: String

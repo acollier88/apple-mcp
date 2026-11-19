@@ -444,7 +444,7 @@ struct Triage: AsyncParsableCommand {
         process.standardOutput = out
         process.standardError = FileHandle.nullDevice
         let stdinPipe: Pipe?
-        if let stdin {
+        if stdin != nil {
             let pipe = Pipe()
             process.standardInput = pipe
             stdinPipe = pipe
