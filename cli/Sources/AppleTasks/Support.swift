@@ -6,6 +6,8 @@ import Foundation
 enum AppleTasksError: Error, CustomStringConvertible {
     case accessDenied
     case calendarAccessDenied
+    /// No grant yet and nobody can answer the prompt (#35).
+    case accessNotGranted(String)
     case listNotFound(String)
     case calendarNotFound(String)
     case taskNotFound(String)
@@ -21,6 +23,11 @@ enum AppleTasksError: Error, CustomStringConvertible {
         switch self {
         case .accessDenied:
             return "Reminders access denied. Grant access in System Settings > Privacy & Security > Reminders (the prompt is attributed to the terminal/app that launched this command)."
+        case .accessNotGranted(let what):
+            return "\(what) access has not been granted to this apple-tasks binary, and this caller cannot show "
+                + "the permission prompt (a dispatched agent or launchd job would wait for it until timeout). "
+                + "Run `\(Executable.url.path) \(what == "Calendars" ? "events list" : "lists")` once from Terminal and click Allow, "
+                + "or run `make sign-identity` so rebuilds keep their grants. Set APPLE_TASKS_WAIT_FOR_TCC=1 to wait anyway."
         case .calendarAccessDenied:
             return "Calendar access denied. Grant access in System Settings > Privacy & Security > Calendars (the prompt is attributed to the terminal/app that launched this command)."
         case .listNotFound(let name):
@@ -294,6 +301,7 @@ final class Store {
     let ek = EKEventStore()
 
     func requestAccess() async throws {
+        try Self.refuseUnanswerablePrompt(EKEventStore.authorizationStatus(for: .reminder), what: "Reminders")
         let granted: Bool
         if #available(macOS 14.0, *) {
             granted = try await ek.requestFullAccessToReminders()
@@ -343,6 +351,7 @@ final class Store {
     // MARK: Calendar events
 
     func requestEventAccess() async throws {
+        try Self.refuseUnanswerablePrompt(EKEventStore.authorizationStatus(for: .event), what: "Calendars")
         let granted: Bool
         if #available(macOS 14.0, *) {
             granted = try await ek.requestFullAccessToEvents()
@@ -377,6 +386,31 @@ final class Store {
             try ek.save(event, span: .thisEvent, commit: true)
         } catch {
             throw AppleTasksError.saveFailed(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: - Unanswerable TCC prompts (#35)
+
+extension Store {
+    /// A first request from a binary with no grant shows a prompt. Under
+    /// launchd or a dispatched agent nobody sees it and the call waits until
+    /// the lane's timeout; three of the ledger's timeouts were exactly that,
+    /// right after a redeploy changed the ad-hoc signature. Fail fast there.
+    /// Unanswerable: a dispatched agent, or one of our launchd jobs (launchd
+    /// sets XPC_SERVICE_NAME to the job label). A terminal, an MCP host app or
+    /// the AgentTasks app can show the prompt, so they still wait for it.
+    static func promptIsUnanswerable(status: EKAuthorizationStatus, caller: String?,
+                                     env: [String: String]) -> Bool {
+        guard status == .notDetermined, env["APPLE_TASKS_WAIT_FOR_TCC"] != "1" else { return false }
+        if CallerGuard.isDispatchedAgent(caller) { return true }
+        return env["XPC_SERVICE_NAME"]?.hasPrefix("com.apple-tasks.") == true
+    }
+
+    static func refuseUnanswerablePrompt(_ status: EKAuthorizationStatus, what: String) throws {
+        if promptIsUnanswerable(status: status, caller: CallerGuard.currentCaller,
+                                env: ProcessInfo.processInfo.environment) {
+            throw AppleTasksError.accessNotGranted(what)
         }
     }
 }

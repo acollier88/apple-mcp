@@ -58,7 +58,13 @@ enum DiagnosticsLive {
         }
         if Diagnostics.enabled(Diagnostics.ID.permissions, settings) {
             let status = EKEventStore.authorizationStatus(for: .reminder)
-            snap.permissions = [Diagnostics.PermissionCheck(name: "reminders", status: reminderStatus(status))]
+            snap.permissions = [
+                Diagnostics.PermissionCheck(name: "reminders", status: reminderStatus(status)),
+                // Calendars too (#35): a rebuilt ad-hoc binary can keep Reminders
+                // and lose Calendars, and calendar tasks then hang.
+                Diagnostics.PermissionCheck(
+                    name: "calendars", status: reminderStatus(EKEventStore.authorizationStatus(for: .event))),
+            ]
         }
         await batch1(into: &snap, config: config, settings: settings, now: now)
         return snap
