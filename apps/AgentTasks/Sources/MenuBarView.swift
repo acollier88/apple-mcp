@@ -98,6 +98,8 @@ struct MenuBarView: View {
     @AppStorage(NotificationPrefs.failures) private var notifyFailures = true
     @AppStorage(NotificationPrefs.approvals) private var notifyApprovals = true
     @State private var decision: ApprovalDecision?
+    /// First click on "Stop all" arms it; the second within 5s stops.
+    @State private var stopArmed = false
 
     private let runningLimit = 4
     private let failureLimit = 3
@@ -166,6 +168,26 @@ struct MenuBarView: View {
                 .controlSize(.small)
                 .disabled(ledger.isActing)
                 .help("apple-tasks dispatch-pause. Stops new claims; in-flight agents keep running.")
+            }
+            if !(ledger.snapshot.pause.reason ?? "").hasPrefix("stopped") {
+                Button(stopArmed ? "Click again to stop everything" : "Stop all") {
+                    if stopArmed {
+                        stopArmed = false
+                        Task { await ledger.stopAll() }
+                    } else {
+                        stopArmed = true
+                        Task {
+                            try? await Task.sleep(nanoseconds: 5_000_000_000)
+                            stopArmed = false
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .controlSize(.small)
+                .disabled(ledger.isActing)
+                .help("apple-tasks stop --all. Pauses claiming, cancels every running agent, and turns off "
+                    + "research, heals and playbooks until Resume.")
             }
             if let errorCaption = ledger.errorCaption {
                 Text(errorCaption)

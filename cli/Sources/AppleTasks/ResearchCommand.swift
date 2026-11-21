@@ -36,6 +36,10 @@ struct ResearchRun: AsyncParsableCommand {
 
     func run() async throws {
         let config = try? AgentsConfig.load()
+        if Limits.stopped() != nil {
+            emit(ResearchOut(ran: false, reason: Limits.stoppedReason, dryRun: dryRun, recorded: [], skipped: []))
+            return
+        }
         let budget = ResearchDetectors.spareBudget(BudgetBandwidth.load())
         let quiet = ResearchDetectors.quietState(NotifyConfig.load()?.quietHours)
         let running = AuditDB.shared.dispatchRows(status: "running", limit: 100).count

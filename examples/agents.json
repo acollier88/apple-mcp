@@ -149,6 +149,7 @@
   "keepFailedWorktreeDays": 7,
   "pendingReviewWorktreeDays": 0,
   "retention": { "runLogDays": 30, "failedRunLogDays": 90, "ledgerTextDays": 180 },
+  "limits": { "maxPerDay": 40, "maxAutomatedPerDay": 10 },
   "notifyOn": "failure",
   "modelPrefs": {
     "auto": [

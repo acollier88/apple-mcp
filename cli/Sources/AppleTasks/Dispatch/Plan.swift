@@ -212,6 +212,23 @@ extension Dispatch {
                 continue
             }
 
+            // Daily caps (#68). Counted from the ledger, so claims made
+            // earlier in this pass count too.
+            let origin = Limits.origin(tags: parsed.tags,
+                                       creation: AuditDB.shared.creationRecord(taskId: taskId))
+            if config.limits != nil {
+                let since = Limits.dayStart()
+                if let hit = Limits.taskHit(
+                    limits: config.limits, total: AuditDB.shared.dispatchCount(since: since),
+                    automated: AuditDB.shared.dispatchCount(since: since, automatedOnly: true),
+                    origin: origin) {
+                    reports.append(DispatchReport(taskId: taskId, title: parsed.title, agent: reportAgent,
+                                                  cwd: nil, action: "\(hit.reason) — stays queued",
+                                                  exitCode: nil, runLog: nil, worktree: nil))
+                    continue
+                }
+            }
+
             let cwd = parsed.tags.lazy
                 .compactMap { config.workdirs?[$0.lowercased()] }
                 .first
@@ -384,6 +401,7 @@ extension Dispatch {
             case .claimed(let id):
                 ledgerId = id
             }
+            AuditDB.shared.setOrigin(id: ledgerId, origin: origin)
 
             // Anchor the occurrence so a second agent `complete` in this run
             // cannot roll a recurring series forward again (#42).
@@ -504,6 +522,9 @@ extension Dispatch {
             specsPerAgent[agentTag, default: 0] += 1
         }
 
+        if !dryRun, config.limits != nil {
+            await Limits.alert(Limits.reached(limits: config.limits, lanes: Array(config.agents.keys)))
+        }
         return PlanResult(specs: specs, reports: reports, openReminderCount: reminders.count)
     }
 
@@ -551,6 +572,12 @@ extension Dispatch {
             isHealTarget: isHealTarget
         ) {
             return LanePreflight.skipReason(block)
+        }
+        if let hit = Limits.laneHit(
+            limits: config.limits, lane: tag,
+            count: config.limits?.maxPerLanePerDay?[tag] == nil
+                ? 0 : AuditDB.shared.dispatchCount(since: Limits.dayStart(), agent: tag)) {
+            return hit.reason
         }
         if let cap = agent.maxConcurrent,
            AuditDB.shared.activeDispatchCount(agent: tag)

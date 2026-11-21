@@ -148,6 +148,7 @@ extension Dispatch {
             parseISO8601(raw) != nil ? raw : nil
         }
         clearPause(db)
+        db.setState(Limits.stoppedKey, "")
         return ResumeOut(paused: false, wasPausedUntil: previous)
     }
 
@@ -210,6 +211,10 @@ struct DispatchResume: AsyncParsableCommand {
     )
 
     func run() async throws {
+        // Restarting after a pause or `stop --all` is the human's call (#68).
+        try CallerGuard.enforce(
+            CallerGuard.reviewRefusal(command: "dispatch-resume", caller: CallerGuard.currentCaller),
+            command: "dispatch-resume", detail: nil)
         let out = Dispatch.applyResume(db: .shared)
         AuditDB.shared.record(command: "dispatch-resume",
                               detail: out.wasPausedUntil, result: "ok")

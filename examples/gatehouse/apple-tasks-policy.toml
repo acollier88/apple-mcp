@@ -37,6 +37,7 @@ args_glob = [
   "dispatch-cancel*",
   "dispatch-pause*",
   "dispatch-resume*",
+  "stop*",
   "serve*",
 ]
 

@@ -41,6 +41,7 @@ Or write `~/.config/apple-tasks/serve.json`:
 | GET | `/v1/runs/{id}/log?tail=` | last `tail` bytes of `~/Library/Application Support/apple-tasks/runs/{id}.log` (default 262144, max 4 MiB) |
 | POST | `/v1/triage` `{apply,list,agent,notes}` | `triage` / `--apply` / `--inbox <list>` / `--agent` / `--notes` |
 | POST | `/v1/dispatches/{id}/cancel` | `dispatch-cancel {id}` — kills the agent tree, marks the row `cancelled`, sheds the claim tag; no `[failed]`, no retry (30s) |
+| POST | `/v1/stop` `{reason}` | `stop --all` — kill switch: pause indefinitely, cancel every running dispatch, turn off research, heal enqueue and playbooks (120s). There is deliberately no resume route: `dispatch-resume` from the human's terminal or the app |
 | POST | `/v1/dispatches/{id}/discard` | `dispatch-discard {id}` — force-remove worktree, delete agent branch, mark reviewed (60s) |
 
 All routes except `/v1/health` require `Authorization: Bearer <token>`.
