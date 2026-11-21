@@ -687,7 +687,7 @@ apple-tasks secret migrate --apply    # move + strip plaintext + chmod 600
 | Canonical item | Env var (wins) | Plaintext fallback |
 |---|---|---|
 | `ntfy.topic` | `APPLE_TASKS_NTFY_TOPIC` | `notify.json` `ntfy.topic` |
-| `ntfy.approvalsReplyTopic` | `APPLE_TASKS_NTFY_APPROVALS_TOPIC` | `notify.json` `approvalsReplyTopic` (else `<topic>-approvals`) |
+| `ntfy.approvalsReplyTopic` | `APPLE_TASKS_NTFY_APPROVALS_TOPIC` | `notify.json` `approvalsReplyTopic` (required for ntfy approvals; no default) |
 | `serve.token` | `APPLE_TASKS_SERVE_TOKEN` | `serve.json` `token` |
 | `gmail.clientSecret` | `APPLE_TASKS_GMAIL_CLIENT_SECRET` | `gmail/credentials.json` `client_secret` |
 | `gmail.token` | — | `gmail/token.json` (JSON of the OAuth blob) |

@@ -90,11 +90,17 @@ final class SecretConsumersTests: XCTestCase {
         XCTAssertEqual(resolved?.source, .keychain)
     }
 
-    func testDerivedApprovalsReplyTopicInheritsSource() throws {
+    func testApprovalsReplyTopicIsNeverDerived() throws {
         try Secrets.store.set(Secrets.ntfyTopic, "kc-topic")
-        let reply = NotifyConfig.resolveApprovalsReplyTopic(nil)
-        XCTAssertEqual(reply?.value, "kc-topic-approvals")
-        XCTAssertEqual(reply?.source, .keychain)
+        XCTAssertNil(NotifyConfig.resolveApprovalsReplyTopic(nil))
+        XCTAssertThrowsError(try ApprovalTopics.resolve())
+    }
+
+    func testApprovalTokensAreFullLength() {
+        let token = ApprovalTopics.newToken()
+        XCTAssertEqual(token.count, 32)
+        XCTAssertTrue(token.allSatisfy { $0.isHexDigit && !$0.isUppercase })
+        XCTAssertNotEqual(token, ApprovalTopics.newToken())
     }
 
     func testExplicitApprovalsReplyTopicBeatsDerived() {

@@ -131,7 +131,7 @@ below are this Mac's `~/.config/apple-tasks/` (`ls`/`stat`) before that.
 |---|---|---|---|---|---|
 | `llm.<profile>.apiKey` | `llm.json` | file absent here | `LlmCommand.run`: `apiKeyEnv` → `apiKeyKeychain` / `llm.<profile>.apiKey` → `apiKey` | env → keychain → plaintext | Prefer `apiKeyEnv`; comment says chmod 600 if inlined |
 | `ntfy.topic` | `notify.json` | file absent here | `NotifyConfig.resolveTopic` (`Notifier.push`, `ApprovalTopics.resolve`) | env `APPLE_TASKS_NTFY_TOPIC` → keychain `ntfy.topic` → file | Topic **is** the auth secret (public relay) |
-| `ntfy.approvalsReplyTopic` | `notify.json` | — | `NotifyConfig.resolveApprovalsReplyTopic` | env `APPLE_TASKS_NTFY_APPROVALS_TOPIC` → keychain → file → `<topic>-approvals` (inherits topic source) | Keep as unguessable as the main topic |
+| `ntfy.approvalsReplyTopic` | `notify.json` | — | `NotifyConfig.resolveApprovalsReplyTopic` | env `APPLE_TASKS_NTFY_APPROVALS_TOPIC` → keychain → file; **no derived default** (#28): ntfy approvals refuse to run without it, or when it equals the main topic | Keep as unguessable as the main topic |
 | `serve.token` | `serve.json` | `600` | `AppleTasksServerMain`: `APPLE_TASKS_SERVE_TOKEN` → keychain `serve.token` → file | env → keychain → file | Required; empty token exits 2 |
 | Gmail `client_secret` | `gmail/credentials.json` | **not chmod'd in code** | `GmailAuth.loadClient` / `Client.resolvedClientSecret` | env `APPLE_TASKS_GMAIL_CLIENT_SECRET` → keychain `gmail.clientSecret` → file | Dir absent on this Mac; matches review §2.7 |
 | Gmail refresh blob | `gmail/token.json` | `600` on `GmailAuth.save` | `GmailAuth.loadToken` / `save` (rotation writes Keychain when `gmail.token` already exists) | keychain `gmail.token` → file; `GmailAuth.tokenSource` | `secret migrate --apply` deletes the file |
@@ -160,7 +160,7 @@ names** only (`topic` is not redacted); does not cover `llm.json`,
 **ntfy.** Default server `https://ntfy.sh` (`Notify.swift`,
 `Approvals.swift`). Whoever knows the topic can read pushes and, on the
 reply topic, POST `approve <token>` / `deny <token>`. Tokens are
-`UUID` prefix **8 hex chars** (`ApproveRequest`).
+a whole `UUID` as **32 hex chars** (`ApprovalTopics.newToken`, #28).
 
 Topic entropy: **≥ 24 random characters**. Example (no `/+=`):
 
@@ -169,7 +169,7 @@ openssl rand -base64 24 | tr -d '/+='
 ```
 
 Put that in `notify.json` `ntfy.topic` (and a second value in
-`approvalsReplyTopic` — do not rely on the `<topic>-approvals` suffix).
+`approvalsReplyTopic`; it is required and must differ from the topic).
 There is no `examples/notify.json` yet; this rule lives here until one
 exists.
 
