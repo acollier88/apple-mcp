@@ -46,16 +46,31 @@ struct ApprovalOut: Codable {
 }
 
 enum ApprovalTopics {
-    /// Reply topic carrying button answers. Defaults to "<topic>-approvals";
-    /// override with "approvalsReplyTopic" in notify.json or Keychain.
+    /// 32 lowercase hex characters (a whole UUID). The reply topic is public on
+    /// a shared ntfy relay, so the token must not be guessable either (#28).
+    static func newToken() -> String {
+        UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    /// Reply topic carrying button answers. Must be configured explicitly
+    /// (`approvalsReplyTopic` in notify.json, Keychain or env) and differ from
+    /// the notification topic: a derived "<topic>-approvals" is guessable by
+    /// anyone who learns the main topic (#28).
     static func resolve() throws -> (server: String, topic: String, replyTopic: String) {
         let config = NotifyConfig.load()
         guard let topic = NotifyConfig.resolveTopic(config) else {
             throw AppleTasksError.saveFailed(
                 "approvals need an ntfy topic: apple-tasks secret set ntfy.topic, or {\"ntfy\": {\"topic\": \"...\"}} at \(NotifyConfig.url.path)")
         }
-        let reply = NotifyConfig.resolveApprovalsReplyTopic(config)
-            ?? Secrets.Resolved(value: "\(topic.value)-approvals", source: topic.source)
+        guard let reply = NotifyConfig.resolveApprovalsReplyTopic(config) else {
+            throw AppleTasksError.saveFailed(
+                "approvals need their own reply topic: apple-tasks secret set \(Secrets.ntfyApprovalsReplyTopic) "
+                + "(a second random value, not derived from the notification topic)")
+        }
+        guard reply.value != topic.value else {
+            throw AppleTasksError.saveFailed(
+                "\(Secrets.ntfyApprovalsReplyTopic) must differ from \(Secrets.ntfyTopic)")
+        }
         return (NotifyConfig.server(config), topic.value, reply.value)
     }
 }
@@ -100,7 +115,7 @@ struct ApproveRequest: AsyncParsableCommand {
             return
         }
         let (server, topic, replyTopic) = try ApprovalTopics.resolve()
-        let token = UUID().uuidString.prefix(8).lowercased()
+        let token = ApprovalTopics.newToken()
         let iso = ISO8601DateFormatter()
         let expiresAt = iso.string(from: Date().addingTimeInterval(TimeInterval(expiresMinutes) * 60))
 
@@ -129,7 +144,7 @@ struct ApproveRequest: AsyncParsableCommand {
     /// notification without buttons. A missing daemon answer leaves the row
     /// pending so `approve answer` still works.
     private func runViaGatehouse() async throws {
-        let token = String(UUID().uuidString.prefix(8)).lowercased()
+        let token = ApprovalTopics.newToken()
         let iso = ISO8601DateFormatter()
         let expiresAt = iso.string(from: Date().addingTimeInterval(TimeInterval(expiresMinutes) * 60))
 

@@ -49,8 +49,8 @@ struct NotifyConfig: Codable {
             plaintext: config?.approvalsReplyTopic) {
             return explicit
         }
-        guard let topic = resolveTopic(config) else { return nil }
-        return Secrets.Resolved(value: "\(topic.value)-approvals", source: topic.source)
+        // No "<topic>-approvals" fallback (#28): ApprovalTopics.resolve refuses instead.
+        return nil
     }
 
     /// ntfy.server ?? "https://ntfy.sh"

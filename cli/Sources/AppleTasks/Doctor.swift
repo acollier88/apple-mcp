@@ -305,9 +305,8 @@ struct Doctor: AsyncParsableCommand {
             envName: Secrets.ntfyApprovalsReplyTopicEnv,
             itemName: Secrets.ntfyApprovalsReplyTopic,
             plaintext: notify?.approvalsReplyTopic, store: store, env: env)
-        let replySource = replyExplicit != .missing ? replyExplicit
-            : (topicSource != .missing ? topicSource : .missing)
-        rows.append(status(name: Secrets.ntfyApprovalsReplyTopic, source: replySource, file: notifyFile))
+        // No derived fallback since #28: missing means approvals over ntfy are off.
+        rows.append(status(name: Secrets.ntfyApprovalsReplyTopic, source: replyExplicit, file: notifyFile))
 
         let servePlain: String? = {
             guard let data = try? Data(contentsOf: serveURL),
