@@ -207,6 +207,21 @@ struct AgentsConfig: Codable {
         var healCooldownHours: Int? = nil
         /// Max `[heal]` tasks `doctor --enqueue-heals` may create per local day.
         var healDailyCap: Int? = nil
+        // Batch 1 detectors (#57).
+        /// Live passes a task may wait for the same reason (default 12 = 1h at 5 min).
+        var queueStuckPasses: Int? = nil
+        /// Days another Mac's claim may sit unchanged (default 3).
+        var foreignClaimDays: Int? = nil
+        /// Failed/timed-out runs in a row before a lane is flagged (default 3).
+        var laneFailStreak: Int? = nil
+        /// Tasks with the same title before "make it recurring" (default 3).
+        var cadenceMinRuns: Int? = nil
+        /// Green PRs open this many days (default 7).
+        var stalePRDays: Int? = nil
+        /// Uncommitted work untouched this many days (default 3).
+        var dirtyCloneDays: Int? = nil
+        /// Agent branches pending review this many days (default 7).
+        var pendingReviewDays: Int? = nil
     }
 
     static let defaultClaimGuard = "modified"

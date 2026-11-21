@@ -168,7 +168,14 @@
         "logMegabytes": 512,
         "volumeFreePercent": 5,
         "healCooldownHours": 24,
-        "healDailyCap": 3
+        "healDailyCap": 3,
+        "queueStuckPasses": 12,
+        "foreignClaimDays": 3,
+        "laneFailStreak": 3,
+        "cadenceMinRuns": 3,
+        "stalePRDays": 7,
+        "dirtyCloneDays": 3,
+        "pendingReviewDays": 7
       }
     }
   }

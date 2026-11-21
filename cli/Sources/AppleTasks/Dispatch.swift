@@ -208,6 +208,11 @@ struct Dispatch: AsyncParsableCommand {
 
         let plan = try await plan(config: config, store: store, requireAuto: requireAuto)
         reports += plan.reports
+        // Queue health (#57): what is still waiting, and why, after each full
+        // live pass. A scoped pass (--agent / --list) sees only part of the queue.
+        if !dryRun, onlyAgent == nil, listName == nil {
+            Diagnostics.recordWaiting(reports: plan.reports)
+        }
         reports += await executeAll(plan.specs, config: config, store: store)
         if dryRun {
             let listLabel = listName ?? "all lists"

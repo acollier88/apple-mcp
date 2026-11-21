@@ -441,6 +441,23 @@ Hermes → `[hermes][heal]`, failed dispatches → `[heal][apple-mcp]`), deduped
 by `heal-signature:` in notes. It does **not** spawn agents; launchd dispatch
 picks them up. Dispatched agents cannot call `dispatch_run`.
 
+Detector batch 1 (#57) runs with the other doctor detectors. Each one can be
+turned off with `doctor.detectors.disabled`.
+
+| Detector | Finds | Class |
+|---|---|---|
+| `queueHealth` | an `[auto]` task left queued for the same reason on `queueStuckPasses` live passes in a row (default 12, about 1h); another Mac's `[dispatched:…]` / `[failed:…]` claim unchanged for `foreignClaimDays` (3) | needs-human |
+| `laneHealth` | `laneFailStreak` (3) failed or timed-out runs in a row on a lane | healable |
+| `laneHealth` | the last 3 succeeded runs in one repo exited without completing their task | proposable |
+| `cadence` | the same title created as `cadenceMinRuns` (3) separate tasks at a steady interval of a day or more: "make it recurring" | proposable |
+| `devHygiene` | your green PRs open `stalePRDays` (7); merged local branches (not `agent/*`); uncommitted work untouched `dirtyCloneDays` (3); agent branches pending review `pendingReviewDays` (7) | proposable |
+
+Proposable findings land in `apple-tasks proposals list` and never become
+heal tasks. The waiting record behind `queueHealth` is written only by full
+live passes; dry runs and `--agent` / `--list` passes don't write it. Stale-PR
+checks use `gh pr list --author @me` in each `workdirs` repo, when `gh` is
+installed.
+
 The optional `triage` block runs the [on-demand inbox
 triage](#on-demand-triage-no-loop) at the start of every dispatch cycle:
 untagged captures get classified and routed first, so a voice memo tagged
