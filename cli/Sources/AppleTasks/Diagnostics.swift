@@ -13,15 +13,23 @@ enum Diagnostics {
         static let mcp = "mcp"
         static let deploymentDrift = "deploymentDrift"
         static let permissions = "permissions"
+        // Batch 1 (#57).
+        static let queueHealth = "queueHealth"
+        static let laneHealth = "laneHealth"
+        static let cadence = "cadence"
+        static let devHygiene = "devHygiene"
         static let all = [
             launchAgents, dispatcherLiveness, disk, retriesExhausted, laneAuth,
             scheduledJobs, mcp, deploymentDrift, permissions,
+            queueHealth, laneHealth, cadence, devHygiene,
         ]
     }
 
     enum Kind: String, Equatable {
         case healable
         case needsHuman = "needs-human"
+        /// Recorded in the proposals inbox (#53); never a heal task.
+        case proposable
     }
 
     struct Finding: Equatable {
@@ -47,6 +55,7 @@ enum Diagnostics {
         var volumeFreeFraction: Double
         var healCooldownHours: Int
         var healDailyCap: Int
+        var batch1 = Batch1Thresholds()
 
         static let standard = Thresholds(
             launchSilentIntervals: 2,
@@ -133,6 +142,13 @@ enum Diagnostics {
         var mcp: MCPCheck?
         var deployment: DeploymentCheck?
         var permissions: [PermissionCheck]
+        // Batch 1 (#57).
+        var waiting: [WaitingTask] = []
+        var foreignClaims: [ForeignClaim] = []
+        var laneRuns: [LaneRun] = []
+        var dispatched: [DispatchedTitle] = []
+        var repos: [RepoHygiene] = []
+        var pending: [PendingAge] = []
 
         init(now: Date = Date(),
              launch: LaunchJob? = nil,
@@ -194,6 +210,14 @@ enum Diagnostics {
         }
         if let hours = raw.healCooldownHours, hours >= 0 { out.healCooldownHours = hours }
         if let cap = raw.healDailyCap, cap >= 0 { out.healDailyCap = cap }
+        func positive(_ value: Int?, _ apply: (Int) -> Void) { if let value, value >= 1 { apply(value) } }
+        positive(raw.queueStuckPasses) { out.batch1.queueStuckPasses = $0 }
+        positive(raw.foreignClaimDays) { out.batch1.foreignClaimDays = $0 }
+        positive(raw.laneFailStreak) { out.batch1.laneFailStreak = $0; out.batch1.repoUnverifiedStreak = $0 }
+        positive(raw.cadenceMinRuns) { out.batch1.cadenceMinRuns = max(2, $0) }
+        positive(raw.stalePRDays) { out.batch1.stalePRDays = $0 }
+        positive(raw.dirtyCloneDays) { out.batch1.dirtyCloneDays = $0 }
+        positive(raw.pendingReviewDays) { out.batch1.pendingReviewDays = $0 }
         return out
     }
 
@@ -221,6 +245,13 @@ enum Diagnostics {
             take(ID.deploymentDrift, deploymentDrift(deployment))
         }
         take(ID.permissions, permissions(snapshot.permissions))
+        let b1 = limits.batch1
+        take(ID.queueHealth, queueStuck(snapshot.waiting, minPasses: b1.queueStuckPasses)
+            + foreignClaims(snapshot.foreignClaims, now: snapshot.now, days: b1.foreignClaimDays))
+        take(ID.laneHealth, laneStreaks(snapshot.laneRuns, streak: b1.laneFailStreak)
+            + repoUnverified(snapshot.laneRuns, streak: b1.repoUnverifiedStreak))
+        take(ID.cadence, cadence(snapshot.dispatched, minRuns: b1.cadenceMinRuns))
+        take(ID.devHygiene, devHygiene(repos: snapshot.repos, pending: snapshot.pending, limits: b1))
         return out
     }
 

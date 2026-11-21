@@ -60,6 +60,7 @@ enum DiagnosticsLive {
             let status = EKEventStore.authorizationStatus(for: .reminder)
             snap.permissions = [Diagnostics.PermissionCheck(name: "reminders", status: reminderStatus(status))]
         }
+        await batch1(into: &snap, config: config, settings: settings, now: now)
         return snap
     }
 
