@@ -147,6 +147,8 @@ struct AgentsConfig: Codable {
     /// than 1, disables age-out (the default). A positive default would
     /// delete checkouts the user did not opt into; set `14` to reclaim disk.
     var pendingReviewWorktreeDays: Int?
+    /// How long run artifacts and ledger text are kept (#70). Absent = defaults.
+    var retention: RetentionConfig?
     /// macOS notification on run finish: "failure" (default) | "all" | "none".
     var notifyOn: String?
     /// Hermes-style preference lists (IDEAS #52). `auto` is the ordered pool

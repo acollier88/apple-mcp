@@ -37,6 +37,8 @@ struct DoctorOut: Codable {
     let heals: HealReport?
     /// Gatehouse probe. Missing gatehouse fills this in; it does not fail doctor.
     let gatehouse: GatehouseDoctorStatus
+    /// Retention windows, what `runs/` and the ledger occupy, oldest kept log (#70).
+    let retention: Retention.Status
     /// `--fix-modes` only: every chmod it made beyond the secret files
     /// (config dir, ledger DB/WAL/SHM, logs/, runs/*, agents.json[.bak-*]).
     let fixedModes: [ConfigPermissions.ModeChange]?
@@ -1085,6 +1087,9 @@ struct Doctor: AsyncParsableCommand {
             issues: issues,
             heals: heals,
             gatehouse: Self.gatehouseStatus(),
+            retention: Retention.status(
+                policy: .init((try? AgentsConfig.load())?.retention),
+                runs: layout.runs, ledger: AuditDB.url),
             fixedModes: fixedModes
         ))
     }

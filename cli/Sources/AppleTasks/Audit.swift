@@ -963,3 +963,89 @@ final class AuditDB {
     }
 
 }
+
+// MARK: - Retention (#70)
+
+extension AuditDB {
+    /// Finished rows whose run log is past `finishedBefore`. Rows that still
+    /// carry a worktree (pending review, or not yet collected) are skipped:
+    /// the log goes with the deliverable.
+    func runLogsToPrune(statuses: [String], finishedBefore: String, limit: Int = 500) -> [DispatchRow] {
+        guard !statuses.isEmpty else { return [] }
+        let marks = Array(repeating: "?", count: statuses.count).joined(separator: ",")
+        return selectDispatches(
+            where: "run_log_path IS NOT NULL AND worktree IS NULL AND finished_at IS NOT NULL "
+                + "AND finished_at < ? AND status IN (\(marks))",
+            binds: [finishedBefore] + statuses, limit: limit)
+    }
+
+    @discardableResult
+    func clearRunLogPath(id: Int64) -> Bool {
+        runUpdate("UPDATE dispatches SET run_log_path = NULL WHERE id = ?1", binds: [.int(id)]) != nil
+    }
+
+    /// Clear free text older than `before`, keeping every row: agent summaries
+    /// on finished runs, audit details, and answered approval questions.
+    func scrubText(before: String) -> Int? {
+        var total = 0
+        for sql in [
+            "UPDATE dispatches SET summary = NULL WHERE summary IS NOT NULL AND status != 'running' "
+                + "AND finished_at IS NOT NULL AND finished_at < ?1",
+            "UPDATE audit SET detail = NULL WHERE detail IS NOT NULL AND ts < ?1",
+            "UPDATE approvals SET question = '' WHERE question != '' AND status != 'pending' "
+                + "AND requested_at < ?1",
+        ] {
+            guard let changed = runUpdate(sql, binds: [.text(before)]) else { return nil }
+            total += changed
+        }
+        return total
+    }
+
+    /// Earliest finish time among runs that still have a log on record.
+    func oldestRetainedRunLog() -> String? {
+        guard db != nil else { return nil }
+        var stmt: OpaquePointer?
+        let sql = "SELECT MIN(finished_at) FROM dispatches WHERE run_log_path IS NOT NULL"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) else { return nil }
+        return String(cString: text)
+    }
+
+    /// Truncate the WAL and rebuild the file. Fails harmlessly (SQLITE_BUSY)
+    /// while another process holds a transaction.
+    func compact() -> Bool {
+        guard db != nil else { return false }
+        let checkpoint = sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil) == SQLITE_OK
+        let vacuum = sqlite3_exec(db, "VACUUM", nil, nil, nil) == SQLITE_OK
+        if !vacuum { noteSQLiteFailure("VACUUM") }
+        return checkpoint && vacuum
+    }
+
+    enum Bind {
+        case text(String)
+        case int(Int64)
+    }
+
+    /// One UPDATE; returns rows changed, or nil on failure.
+    private func runUpdate(_ sql: String, binds: [Bind]) -> Int? {
+        guard db != nil else { return nil }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            noteSQLiteFailure("retention prepare")
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        for (index, bind) in binds.enumerated() {
+            switch bind {
+            case .text(let value): sqlite3_bind_text(stmt, Int32(index + 1), value, -1, SQLITE_TRANSIENT)
+            case .int(let value): sqlite3_bind_int64(stmt, Int32(index + 1), value)
+            }
+        }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            noteSQLiteFailure("retention update")
+            return nil
+        }
+        return Int(sqlite3_changes(db))
+    }
+}
