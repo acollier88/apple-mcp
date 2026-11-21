@@ -380,7 +380,20 @@ make install-digest HOUR=7 MINUTE=30
 make uninstall-digest
 
 make install                    # redeploy after pulling; the job picks it up next pass
+make rollback                   # swap back to the previous install (run again to undo)
+make deploy-log                 # cli/ commits between the previous and current install
 ```
+
+`make install` keeps the replaced binaries as `apple-tasks.prev` and
+`apple-tasks-private.prev`, then smoke-checks the new one: `--version` must
+report the built commit, and `dispatch-status` must open the ledger. If the
+check fails, the previous build goes back automatically. Reinstalling the
+same commit leaves `.prev` alone, so the last different build stays one
+`make rollback` away. Every install, automatic restore and rollback appends
+a line to `~/.config/apple-tasks/installs.log` (time, commit, replaced
+commit, host, outcome). The `refs/deploy/current` and `refs/deploy/previous`
+refs track the deployed commits, so `make deploy-log` shows what changed.
+`doctor`'s `deployment` block adds `previousCommit` and `recentInstalls`.
 
 Both targets run `make install` first. The plists point at the installed
 `~/.local/bin/apple-tasks` (or `$(BINDIR)/apple-tasks`), not `cli/.build/`, so

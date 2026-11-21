@@ -26,7 +26,7 @@ MINUTE ?= 0
 
 # sign-identity: once-per-machine self-signed "AgentTasks Dev" cert so TCC
 # and Keychain ACLs survive rebuilds (ad-hoc identities change every link).
-.PHONY: all cli helper install mcp app server install-server clean betacheck mail-rule \
+.PHONY: all cli helper install rollback deploy-log mcp app server install-server clean betacheck mail-rule \
 	install-agent uninstall-agent install-digest uninstall-digest \
 	install-watchdog uninstall-watchdog test sign-identity
 
@@ -48,21 +48,21 @@ helper: cli
 # then mv'd into place: a same-directory rename(2), so a dispatch pass never
 # execs a half-written file. A pre-#33 symlink into cli/.build is replaced by
 # the real file. Helper first, so the new main binary never sees an old one.
+#
+# The replaced binaries are kept as *.prev. A smoke check runs the new
+# apple-tasks and puts the previous build back if it fails. Each install is
+# logged to $(CONFIG_DIR)/installs.log and moves the deploy/current and
+# deploy/previous refs (#69). See tools/install.sh.
 install: cli helper
-	@mkdir -p "$(BINDIR)"
-	@set -e; for name in apple-tasks-private apple-tasks; do \
-	  stage=$$(mktemp -d "$(BINDIR)/.install-$$name.XXXXXX"); \
-	  if cp -p "$(RELEASE_DIR)/$$name" "$$stage/$$name" \
-	     && tools/sign.sh "$$stage/$$name" \
-	     && mv -f "$$stage/$$name" "$(BINDIR)/$$name"; then \
-	    rmdir "$$stage"; \
-	  else \
-	    rm -f "$$stage/$$name"; rmdir "$$stage"; \
-	    echo "error: installing $$name into $(BINDIR) failed" >&2; exit 1; \
-	  fi; \
-	done
-	@echo "installed: $(BINDIR)/apple-tasks — $$("$(BINDIR)/apple-tasks" --version)"
-	@echo "installed: $(BINDIR)/apple-tasks-private"
+	@tools/install.sh "$(RELEASE_DIR)" "$(BINDIR)" "$(CONFIG_DIR)"
+
+# Swap the installed binaries with their *.prev copies. Run again to undo.
+rollback:
+	@tools/rollback.sh "$(BINDIR)" "$(CONFIG_DIR)"
+
+# What changed in cli/ between the previous and the current install.
+deploy-log:
+	@git log --oneline refs/deploy/previous..refs/deploy/current -- cli
 
 # Persistent self-signed codesigning identity in the login keychain (idempotent).
 # KEYCHAIN=/tmp/foo.keychain-db KEYCHAIN_PASSWORD=... for a throwaway keychain.

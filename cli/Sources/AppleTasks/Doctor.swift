@@ -76,6 +76,10 @@ struct DoctorOut: Codable {
         /// "commit" | "mtime" | "none" — which check produced the verdict.
         let comparison: String
         let note: String
+        /// Commit of `<binary>.prev`, the build `make rollback` restores (#69).
+        var previousCommit: String? = nil
+        /// Last lines of installs.log: time, commit, replaced commit, host, outcome.
+        var recentInstalls: [String]? = nil
     }
 }
 
@@ -835,7 +839,18 @@ struct Doctor: AsyncParsableCommand {
                          binaryOlderThanCliCommit: nil, comparison: "none",
                          note: "launchd dispatch not loaded; nothing to compare")
         }
-        return deploymentStatus(binary: bin, sourceTreeHint: BuildInfo.sourceRoot)
+        var status = deploymentStatus(binary: bin, sourceTreeHint: BuildInfo.sourceRoot)
+        status.previousCommit = capture(bin + ".prev", ["--version"]).flatMap(BuildInfo.commit(fromVersionOutput:))
+        status.recentInstalls = recentInstalls(
+            log: AppleTasksLayout.resolve().config.appendingPathComponent("installs.log"))
+        return status
+    }
+
+    /// Newest last, at most `limit` lines of installs.log.
+    static func recentInstalls(log: URL, limit: Int = 5) -> [String]? {
+        guard let text = try? String(contentsOf: log, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        return lines.isEmpty ? nil : Array(lines.suffix(limit))
     }
 
     /// Compare `binary` with its source checkout (#33). Preferred: the commit
