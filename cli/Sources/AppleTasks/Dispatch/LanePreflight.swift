@@ -219,11 +219,19 @@ final class LaneReadiness: @unchecked Sendable {
     private var auth: [String: LanePreflight.AuthKind] = [:]
     let uptime: TimeInterval
 
+    /// End-to-end tests (#67): past boot settle and online, without probing.
+    nonisolated(unsafe) static var assumeSettledAndOnline = false
+
     init(config: AgentsConfig, env: [String: String],
          uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         self.config = config
         self.env = env
-        self.uptime = uptime
+        if Self.assumeSettledAndOnline {
+            self.uptime = max(uptime, LanePreflight.bootSettleSeconds + 1)
+            self.network = true
+        } else {
+            self.uptime = uptime
+        }
     }
 
     var networkUp: Bool {

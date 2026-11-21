@@ -22,8 +22,7 @@ struct NotifyConfig: Codable {
     let approvalsReplyTopic: String?
 
     static var url: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/apple-tasks/notify.json")
+        AppleTasksLayout.resolve().config.appendingPathComponent("notify.json")
     }
 
     static func load() -> NotifyConfig? {
