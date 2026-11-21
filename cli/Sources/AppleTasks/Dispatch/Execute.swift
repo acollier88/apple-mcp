@@ -143,7 +143,8 @@ extension Dispatch {
                 stdin: spec.promptVia == .stdin ? Data((spec.stdinPrompt ?? "").utf8) : nil,
                 captureStdout: logHandle != nil,
                 captureStderr: logHandle != nil,
-                timeout: spec.timeoutMinutes.map { TimeInterval($0) * 60 },
+                timeout: spec.timeoutSeconds.map { TimeInterval($0) }
+                    ?? spec.timeoutMinutes.map { TimeInterval($0) * 60 },
                 onSpawn: { pid in
                     // Leave pid set after exit (informational). The dispatcher
                     // pid lets reap tell a stuck pass from a dead one.

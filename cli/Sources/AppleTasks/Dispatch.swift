@@ -102,6 +102,8 @@ struct Dispatch: AsyncParsableCommand {
         let worktree: String?
         let branch: String?
         let timeoutMinutes: Int?
+        /// Lane `timeoutSeconds`; wins over `timeoutMinutes`.
+        var timeoutSeconds: Int? = nil
         /// envMode / envPassthrough / lane env, applied by `AgentEnv.build`.
         let envPolicy: AgentEnv.Policy
         /// argv with the prompt replaced by `ledgerPromptMarker`, for the
@@ -180,7 +182,7 @@ struct Dispatch: AsyncParsableCommand {
         }
         let requireAuto = config.requireAutoTag ?? true
 
-        let store = Store()
+        let store = Self.makeStore()
         try await store.requestAccess()
 
         var reports: [DispatchReport] = []
@@ -291,4 +293,10 @@ private final class PassWatchdog: @unchecked Sendable {
         AgentProcess.killTracked()
         _exit(75)
     }
+}
+
+extension Dispatch {
+    /// The store a pass reads and writes. End-to-end tests swap in an
+    /// in-memory one (#67).
+    nonisolated(unsafe) static var makeStore: () -> Store = { Store() }
 }

@@ -512,6 +512,7 @@ extension Dispatch {
                                  agentTag: agentTag, argv: finalArgv, repo: cwd, runCwd: runCwd,
                                  worktree: worktreePath, branch: branchName,
                                  timeoutMinutes: agent.timeoutMinutes,
+                                 timeoutSeconds: agent.timeoutSeconds,
                                  envPolicy: AgentEnv.Policy.resolve(lane: agent, config: config),
                                  displayCommand: displayArgv.joined(separator: " "),
                                  logPath: logURL.path,

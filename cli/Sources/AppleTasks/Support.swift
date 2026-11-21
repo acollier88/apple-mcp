@@ -297,7 +297,9 @@ func emit(_ value: some Encodable) {
 
 // MARK: - EventKit store wrapper
 
-final class Store {
+/// Subclassed by the end-to-end rig's in-memory store (#67); dispatch code
+/// goes through these methods, never `ek` directly.
+class Store {
     let ek = EKEventStore()
 
     func requestAccess() async throws {

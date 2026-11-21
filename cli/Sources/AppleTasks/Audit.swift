@@ -4,7 +4,8 @@ import SQLite3
 // Machine-side memory: append-only audit of mutations + mutable dispatch
 // ledger. Reminders remains the source of truth for task state.
 final class AuditDB {
-    static let shared = AuditDB(url: url)
+    /// Replaceable so end-to-end tests run a whole pass against a temp ledger (#67).
+    nonisolated(unsafe) static var shared = AuditDB(url: url)
 
     private var db: OpaquePointer?
     private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -20,9 +21,10 @@ final class AuditDB {
         case unavailable
     }
 
+    /// `<config>/apple-tasks.db`; honours APPLE_TASKS_CONFIG_DIR like the rest
+    /// of the layout (#67).
     static var url: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/apple-tasks/apple-tasks.db")
+        AppleTasksLayout.resolve().config.appendingPathComponent("apple-tasks.db")
     }
 
     init(url: URL) {

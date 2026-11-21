@@ -20,6 +20,8 @@ struct AgentsConfig: Codable {
         let worktree: Bool?
         /// Kill the agent and mark the run 'timeout' after this many minutes.
         let timeoutMinutes: Int?
+        /// Same in seconds; wins over `timeoutMinutes` (short lanes, tests).
+        var timeoutSeconds: Int? = nil
         /// Max simultaneous runs for THIS agent (default: no per-agent cap).
         let maxConcurrent: Int?
         /// Extra environment variables for the agent process (IDEAS #51) —
@@ -249,8 +251,7 @@ struct AgentsConfig: Codable {
     }
 
     static var url: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/apple-tasks/agents.json")
+        AppleTasksLayout.resolve().config.appendingPathComponent("agents.json")
     }
 
     /// Path of the running binary, for BYOM lanes to call back into. A bare
