@@ -55,7 +55,7 @@ enum ProposalsInbox {
     /// A named lane is what makes an accepted proposal eligible to dispatch.
     static func tags(lane: String?) -> [String] {
         guard let lane, !lane.isEmpty else { return [] }
-        return ["auto", lane]
+        return lane.lowercased() == "auto" ? ["auto"] : ["auto", lane]
     }
 
     static func visible(_ rows: [AuditDB.FindingRow], muted: Set<String>) -> [AuditDB.FindingRow] {

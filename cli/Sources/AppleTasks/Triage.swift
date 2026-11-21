@@ -192,7 +192,7 @@ struct Triage: AsyncParsableCommand {
                 continue
             }
 
-            var addTags = (c.tags ?? []).filter { (try? Tags.validate($0)) != nil }
+            var addTags = DispatchableGuard.modelTags(c.tags)
             if c.kind == "personal" {
                 addTags = ["personal"]
             } else if !addTags.contains(where: { $0.caseInsensitiveCompare("personal") == .orderedSame }) {
@@ -286,7 +286,7 @@ struct Triage: AsyncParsableCommand {
             let title = decision.title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty, seenTitles.insert(title.lowercased()).inserted else { continue }
             let source = decision.source ?? "note"
-            let tags = (decision.tags ?? []).filter { (try? Tags.validate($0)) != nil }
+            let tags = DispatchableGuard.modelTags(decision.tags)
             let due = decision.due.flatMap { try? Dates.parseDateTime($0) }
 
             var downgrade: String?
@@ -305,7 +305,7 @@ struct Triage: AsyncParsableCommand {
                     }
                     let event = EKEvent(eventStore: store.ek)
                     event.calendar = calendar
-                    event.title = Tags.compose(tags: tags, title: title)
+                    event.title = Tags.compose(tags: tags, title: Tags.literal(title))
                     event.startDate = due.date
                     if due.dateOnly {
                         event.isAllDay = true
@@ -327,7 +327,7 @@ struct Triage: AsyncParsableCommand {
                 if apply {
                     let reminder = EKReminder(eventStore: store.ek)
                     reminder.calendar = try store.calendar(named: listName)
-                    reminder.title = Tags.compose(tags: tags, title: title)
+                    reminder.title = Tags.compose(tags: tags, title: Tags.literal(title))
                     if let due {
                         var components: Set<Calendar.Component> = [.year, .month, .day]
                         if !due.dateOnly { components.formUnion([.hour, .minute]) }

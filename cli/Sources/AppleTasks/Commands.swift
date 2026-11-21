@@ -209,6 +209,15 @@ struct Add: AsyncParsableCommand {
     var title: String
 
     func run() async throws {
+        let context = DispatchableGuard.Context.live()
+        let composed = Tags.compose(tags: tags, title: title)
+        if let caller = CallerGuard.currentCaller,
+           DispatchableGuard.shouldPropose(caller: caller, title: composed, context: context) {
+            for tag in tags { try Tags.validate(tag) }
+            emit(DispatchableGuard.propose(caller: caller, list: listName, title: composed,
+                                           notes: notes, context: context))
+            return
+        }
         let store = Store()
         try await store.requestAccess()
         let out = try createTask(store: store, listName: listName, title: title, tags: tags,
@@ -253,6 +262,8 @@ struct AddBatch: AsyncParsableCommand {
     struct BatchOut: Codable {
         let created: [TaskOut]
         let failed: [FailureOut]
+        /// Items a dispatched agent marked for dispatch, filed as proposals (#66).
+        let proposed: [DispatchableGuard.ProposedOut]
     }
 
     func run() async throws {
@@ -280,8 +291,18 @@ struct AddBatch: AsyncParsableCommand {
         // Per-item outcomes: one bad date must not sink the rest of the batch.
         var created: [TaskOut] = []
         var failed: [FailureOut] = []
+        var proposed: [DispatchableGuard.ProposedOut] = []
+        let context = DispatchableGuard.Context.live()
+        let caller = CallerGuard.currentCaller
         for (index, item) in items.enumerated() {
             do {
+                let composed = Tags.compose(tags: item.tags ?? [], title: item.title)
+                if let caller, DispatchableGuard.shouldPropose(caller: caller, title: composed, context: context) {
+                    for tag in item.tags ?? [] { try Tags.validate(tag) }
+                    proposed.append(DispatchableGuard.propose(
+                        caller: caller, list: item.list, title: composed, notes: item.notes, context: context))
+                    continue
+                }
                 var priority: PriorityArg?
                 if let raw = item.priority {
                     guard let parsed = PriorityArg(rawValue: raw) else {
@@ -299,7 +320,7 @@ struct AddBatch: AsyncParsableCommand {
                 failed.append(FailureOut(index: index, title: item.title, error: message))
             }
         }
-        emit(BatchOut(created: created, failed: failed))
+        emit(BatchOut(created: created, failed: failed, proposed: proposed))
     }
 }
 
@@ -385,6 +406,7 @@ struct Update: AsyncParsableCommand {
         let store = Store()
         try await store.requestAccess()
         let reminder = try await store.reminder(id: id)
+        let titleBefore = reminder.title ?? ""
 
         var (tags, cleanTitle) = Tags.parse(reminder.title ?? "")
         if let title { cleanTitle = title }
@@ -393,7 +415,12 @@ struct Update: AsyncParsableCommand {
         for tag in addTags where !tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
             tags.append(tag)
         }
-        reminder.title = Tags.compose(tags: tags, title: cleanTitle)
+        let titleAfter = Tags.compose(tags: tags, title: cleanTitle)
+        try CallerGuard.enforce(
+            DispatchableGuard.updateRefusal(caller: CallerGuard.currentCaller, before: titleBefore,
+                                            after: titleAfter, context: .live()),
+            command: "update", detail: id)
+        reminder.title = titleAfter
 
         if let notes { reminder.notes = notes }
         if let appendNotes {

@@ -67,6 +67,9 @@ struct SyncGitHub: AsyncParsableCommand {
 
     func run() async throws {
         for tag in tags { try Tags.validate(tag) }
+        try CallerGuard.enforce(
+            DispatchableGuard.syncRefusal(caller: CallerGuard.currentCaller, tags: tags, context: .live()),
+            command: "sync-github", detail: repo)
         guard repo.contains("/") else {
             throw AppleTasksError.invalidInput("--repo must be owner/repo, got '\(repo)'")
         }
@@ -103,7 +106,7 @@ struct SyncGitHub: AsyncParsableCommand {
                 }
                 let notes = "github:\(repo)#\(issue.number)\n\n"
                     + String((issue.body ?? "").prefix(1000))
-                let out = try createTask(store: store, listName: listName, title: issue.title,
+                let out = try createTask(store: store, listName: listName, title: Tags.literal(issue.title),
                                          tags: ["github"] + tags, notes: notes, due: nil,
                                          priority: nil, url: issue.url, recurrence: nil,
                                          mirrorNativeTags: true, auditCommand: "sync-github")
